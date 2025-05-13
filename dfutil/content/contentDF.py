@@ -46,7 +46,7 @@ def content_es_dataframe(spark_session, primary_categories: list, prefix: str = 
 
     return processed_df
 
-def content_course_dataframe(spark_session, primary_categories: list) -> DataFrame:
+def all_course_program_es_data_frame(spark_session, primary_categories: list) -> DataFrame:
     # Directly load the Parquet file using Spark (replace with the actual path)
     content_parquet_path = ParquetFileConstants.ESCONTENT_PARQUET_FILE  # Replace with the actual path
     content_df = spark_session.read.parquet(content_parquet_path) \
@@ -81,3 +81,40 @@ def content_course_dataframe(spark_session, primary_categories: list) -> DataFra
 
     return processed_df
 
+def assessment_es_dataframe(spark_session: SparkSession, primary_categories: list) -> DataFrame:
+    """
+    Creates an assessment DataFrame from Elasticsearch content with specified primary categories.
+
+    Args:
+        spark_session (SparkSession): The active Spark session.
+        primary_categories (list): List of primary categories for filtering.
+
+    Returns:
+        DataFrame: Processed DataFrame with assessment data.
+    """
+    # Load the ElasticSearch Content DataFrame
+    content_parquet_path = ParquetFileConstants.ESCONTENT_PARQUET_FILE  # Replace with the actual path
+    content_df = spark_session.read.parquet(content_parquet_path) \
+        .filter(col("primaryCategory").isin(primary_categories))
+    
+    # Process the DataFrame for assessments
+    processed_df = (
+        content_df
+        .withColumn("assessOrgID", explode_outer(col("createdFor")))
+        .select(
+            col("identifier").alias("assessID"),
+            col("primaryCategory").alias("assessCategory"),
+            col("name").alias("assessName"),
+            col("status").alias("assessStatus"),
+            col("reviewStatus").alias("assessReviewStatus"),
+            col("channel").alias("assessChannel"),
+            col("duration").cast("float").alias("assessDuration"),
+            col("leafNodesCount").alias("assessChildCount"),
+            col("lastPublishedOn").alias("assessLastPublishedOn"),
+            col("assessOrgID")
+        )
+        .dropDuplicates(["assessID", "assessCategory"])
+        .na.fill({"assessDuration": 0.0, "assessChildCount": 0})
+    )
+
+    return processed_df
