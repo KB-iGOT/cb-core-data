@@ -58,33 +58,44 @@ def getAcbpDetailsDataFrame(duckdb_conn):
     queryToExecute = QueryConstants.FETCH_COMPUTED_ACBP_DETAILS
     return duckutil.executeQuery(duckdb_conn,queryToExecute)
 
-def explodedACBPDetailsDataFrame(duckdb_conn):
+def getExplodedACBPDetailsDataFrame(duckdb_conn):
     """ Fetch Exploded ACBPDetails with union of Custom User, Designation & All User Based ACBP"""
 
-def contentHierarchyDataFrame(duckdb_conn):
+def getContentHierarchyDataFrame(duckdb_conn):
     queryToExecute = QueryConstants.FETCH_CONTENT_ID_BY_HIERARCHY
     return duckutil.executeQuery(duckdb_conn,queryToExecute)
 
-def allCourseProgramESDataFrame(duckdb_conn):
+def getAllCourseProgramESDataFrame(duckdb_conn):
     queryToExecute = QueryConstants.FETCH_CONTENT_ID_BY_HIERARCHY
     return duckutil.executeQuery(duckdb_conn,queryToExecute)
 
-def orgCompleteHierarchyDataFrame(duckdb_conn):
+def getOrgCompleteHierarchyDataFrame(duckdb_conn):
     queryToExecute = QueryConstants.FETCH_ALL_ORG_HIERARCHY
     return duckutil.executeQuery(duckdb_conn,queryToExecute)
 
-def userOrgRoleDataFrame(duckdb_conn):
+def getUserOrgRoleDataFrame(duckdb_conn):
      """Joins user,organization and role data using a LEFT JOIN."""
      queryToExecute = QueryConstants.FETCH_USER_ORG_ROLE_DATA
      return duckutil.executeQuery(duckdb_conn,queryToExecute)
 
-def roleCountDataFrame(duckdb_conn):
+def getRoleCountDataFrame(duckdb_conn):
     """Count Role For Data Frame"""
     queryToExecute  = QueryConstants.FETCH_ROLE_COUNT
     return duckutil.executeQuery(duckdb_conn,queryToExecute)
 
-def orgRoleCountDataFrame(duckdb_conn):
+def getOrgRoleCountDataFrame(duckdb_conn):
     """Count Org User Role Count For Data Frame"""
     queryToExecute  = QueryConstants.FETCH_USER_ORG_ROLE_COUNT_ACTIVE_DATA
     return duckutil.executeQuery(duckdb_conn,queryToExecute)
+
+def getOrgUserCountDataFrame(duckdb_conn):
+    """Count Org User Count"""
+    queryToExecute  = QueryConstants.FETCH_ACTIVE_ORG_USER_COUNT
+    return duckutil.executeQuery(duckdb_conn,queryToExecute)
+
+def getElasticSearchCourseProgramDataFrame(duckdb_conn,primaryCategories):
+    queryToExecute = "select * from read_parquet('{ParquetFileConstants.ESCONTENT_PARQUET_FILE}') where primaryCategory in [{primaryCategories}]"
+    return duckutil.executeQuery(duckdb_conn,queryToExecute)
+
+
 

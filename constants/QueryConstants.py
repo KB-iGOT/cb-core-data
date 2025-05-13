@@ -300,6 +300,73 @@ class QueryConstants:
         r.roleName;
         """
     
+    FETCH_ACTIVE_ORG_USER_COUNT =f"""
+            WITH active_users AS (
+            SELECT 
+            id AS userID,
+            COALESCE(firstname, '') AS firstName,
+            COALESCE(lastname, '') AS lastName,
+            maskedemail AS maskedEmail,
+            maskedphone AS maskedPhone,
+            COALESCE(rootorgid, '') AS orgID,
+            status AS userStatus,
+            COALESCE(profiledetails, '{{}}') AS userProfileDetails,
+            createddate AS userCreatedTimestamp,
+            updateddate AS userUpdatedTimestamp,
+            createdby AS userCreatedBy,
+
+            -- Parsing JSON fields directly
+            JSON(profiledetails) AS profileDetails,
+            profileDetails->>'personalDetails' AS personalDetails,
+            profileDetails->>'employmentDetails' AS employmentDetails,
+            profileDetails->>'professionalDetails' AS professionalDetails,
+
+            -- Extracting userVerified (handling null as false)
+            COALESCE(CAST(profileDetails->>'verifiedKarmayogi' AS BOOLEAN), FALSE) AS userVerified,
+            profileDetails->>'mandatoryFieldsExists' AS userMandatoryFieldsExists,
+            profileDetails->>'profileImageUrl' AS userProfileImgUrl,
+            profileDetails->>'profileStatus' AS userProfileStatus,
+
+            -- Checking if phone is verified
+            LOWER(COALESCE(profileDetails->>'personalDetails.phoneVerified', 'false')) = 'true' AS userPhoneVerified,
+
+            -- Concatenating full name
+            RTRIM(CONCAT_WS(' ', COALESCE(firstname, ''), COALESCE(lastname, ''))) AS fullName
+
+            FROM 
+            read_parquet('{ParquetFileConstants.USER_PARQUET_FILE}') 
+            WHERE 
+            status = 1
+            ),
+
+            -- Join with Active Organization Data
+            org_user_counts AS (
+            SELECT 
+            o.orgID,
+            o.orgName,
+            COUNT(DISTINCT u.userID) AS registeredCount,
+            10000 AS totalCount -- Fixed value as per your requirement
+            FROM 
+            read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}') AS o
+            LEFT JOIN 
+            active_users AS u 
+            ON 
+            o.orgID = u.orgID
+            GROUP BY 
+            o.orgID, o.orgName
+            )
+
+            -- Final Output
+            SELECT 
+            orgID, 
+            orgName, 
+            registeredCount, 
+            totalCount
+            FROM 
+            org_user_counts;
+    """
+    
+    
     def main():
         print("Defined Static Parquet File Constants:")
 
