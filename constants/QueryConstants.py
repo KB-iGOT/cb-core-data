@@ -224,6 +224,82 @@ class QueryConstants:
         select * from read_parquet('{ParquetFileConstants.ACBP_COMPUTED_PARQUET_FILE}')
     """
     
+    FETCH_CONTENT_ID_BY_HIERARCHY = f"""
+        SELECT 
+        identifier, hierarchy 
+        FROM read_parquet('{ParquetFileConstants.HIERARCHY_PARQUET_FILE}');
+    """
+    
+    FETCH_ALL_ORG_HIERARCHY = f"""
+        select * from read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}')
+    """
+
+    FETCH_USER_ORG_ROLE_DATA = f"""
+        SELECT 
+        u.userID, 
+        u.userStatus,
+        u.userOrgID, 
+        o.orgName AS userOrgName, 
+        o.orgStatus AS userOrgStatus,
+        r.roleID,
+        r.roleName,
+        r.roleType
+        FROM 
+        read_parquet('{ParquetFileConstants.USER_PARQUET_FILE}') AS u -- Replace with actual path
+        LEFT JOIN 
+        read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}') AS o -- Replace with actual path
+        ON u.userOrgID = o.orgID
+        LEFT JOIN 
+        read_parquet('{ParquetFileConstants.ROLE_PARQUET_FILE}') AS r -- Replace with actual path
+        ON u.userID = r.userID;
+        """
+    
+    FETCH_ROLE_COUNT = f"""
+        SELECT 
+        role, 
+        COUNT(DISTINCT userID) AS count
+        FROM 
+        read_parquet('output/user_combined_data.parquet') AS u
+        LEFT JOIN 
+        read_parquet('output/org_combined_data.parquet') AS o 
+        ON 
+        u.userOrgID = o.orgID
+        LEFT JOIN 
+        read_parquet('output/role_combined_data.parquet') AS r 
+        ON 
+        u.userID = r.userID
+        WHERE 
+        u.userStatus = 1 
+        AND o.orgStatus = 1
+        GROUP BY 
+        role;
+    """
+
+    FETCH_USER_ORG_ROLE_COUNT_ACTIVE_DATA = f"""
+        SELECT 
+        u.userOrgID AS orgID,
+        o.orgName AS orgName,
+        r.roleName AS role,
+        COUNT(DISTINCT u.userID) AS count
+        FROM 
+        read_parquet('{ParquetFileConstants.USER_PARQUET_FILE}') AS u 
+        LEFT JOIN 
+        read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}') AS o 
+        ON 
+        u.userOrgID = o.orgID
+        LEFT JOIN 
+        read_parquet('{ParquetFileConstants.ROLE_PARQUET_FILE}') AS r 
+        ON 
+        u.userID = r.userID
+        WHERE 
+        u.userStatus = 1 
+        AND o.orgStatus = 1
+        GROUP BY 
+        u.userOrgID, 
+        o.orgName, 
+        r.roleName;
+        """
+    
     def main():
         print("Defined Static Parquet File Constants:")
 

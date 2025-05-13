@@ -53,10 +53,38 @@ def getOrgUserDataFrame(duckdb_conn):
 def getOrgUserRoleDataFrame(duckdb_conn):
      """Joins organization and user data using a LEFT JOIN."""
 
-def getAcbpDetailsDF(duckdb_conn):
+def getAcbpDetailsDataFrame(duckdb_conn):
     """Fetch ACBPDetails"""
     queryToExecute = QueryConstants.FETCH_COMPUTED_ACBP_DETAILS
     return duckutil.executeQuery(duckdb_conn,queryToExecute)
 
-def explodedACBPDetails(duckdb_conn):
+def explodedACBPDetailsDataFrame(duckdb_conn):
     """ Fetch Exploded ACBPDetails with union of Custom User, Designation & All User Based ACBP"""
+
+def contentHierarchyDataFrame(duckdb_conn):
+    queryToExecute = QueryConstants.FETCH_CONTENT_ID_BY_HIERARCHY
+    return duckutil.executeQuery(duckdb_conn,queryToExecute)
+
+def allCourseProgramESDataFrame(duckdb_conn):
+    queryToExecute = QueryConstants.FETCH_CONTENT_ID_BY_HIERARCHY
+    return duckutil.executeQuery(duckdb_conn,queryToExecute)
+
+def orgCompleteHierarchyDataFrame(duckdb_conn):
+    queryToExecute = QueryConstants.FETCH_ALL_ORG_HIERARCHY
+    return duckutil.executeQuery(duckdb_conn,queryToExecute)
+
+def userOrgRoleDataFrame(duckdb_conn):
+     """Joins user,organization and role data using a LEFT JOIN."""
+     queryToExecute = QueryConstants.FETCH_USER_ORG_ROLE_DATA
+     return duckutil.executeQuery(duckdb_conn,queryToExecute)
+
+def roleCountDataFrame(duckdb_conn):
+    """Count Role For Data Frame"""
+    queryToExecute  = QueryConstants.FETCH_ROLE_COUNT
+    return duckutil.executeQuery(duckdb_conn,queryToExecute)
+
+def orgRoleCountDataFrame(duckdb_conn):
+    """Count Org User Role Count For Data Frame"""
+    queryToExecute  = QueryConstants.FETCH_USER_ORG_ROLE_COUNT_ACTIVE_DATA
+    return duckutil.executeQuery(duckdb_conn,queryToExecute)
+

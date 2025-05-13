@@ -17,6 +17,9 @@ def main():
     # obtain and save user org data
     # orgDF, userDF, userOrgDF = datautil.getOrgUserDataFrames(duckdb_conn, True)
      acbpAllEnrolmentDF = datautil.getAcbpDetailsDF(duckdb_conn).df()
+     hierarchyDF = datautil.contentHierarchyDataFrame().df() 
+     allCourseProgramESDF = datautil.fetchCourseProgramDataFrame()
+     datautil.orgCompleteHierarchyDataFrame()
      print(len(acbpAllEnrolmentDF))
     
 if __name__ == "__main__":
