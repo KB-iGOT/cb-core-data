@@ -17,8 +17,9 @@ class ParquetFileConstants:
     LEARNER_LEADERBOARD_PARQUET_FILE = str(OUTPUT_DIR / "learnerLeaderBoard_combined_data.parquet")
     NLW_CONTENT_CERTIFICATE_GENERATED_COUNT_PARQUET_FILE = str(OUTPUT_DIR / "nlwContentCertificateGeneratedCount_combined_data.parquet")
     NLW_CONTENT_LEARNING_HOURS_PARQUET_FILE = str(OUTPUT_DIR / "nlwContentLearningHours_combined_data.parquet")
+    ORG_PARQUET_FILE=str(OUTPUT_DIR / "org_combined_data.parquet")
     ORG_COMPLETE_HIERARCHY_PARQUET_FILE = str(OUTPUT_DIR / "orgCompleteHierarchy_combined_data.parquet")
-    ORG_PARQUET_FILE = str(OUTPUT_DIR / "orgHierarchy_combined_data.parquet")
+    ORG_HIERARCHY_PARQUET_FILE = str(OUTPUT_DIR / "orgHierarchy_combined_data.parquet")
     RATING_PARQUET_FILE = str(OUTPUT_DIR / "rating_combined_data.parquet")
     RATING_SUMMARY_PARQUET_FILE = str(OUTPUT_DIR / "ratingSummary_combined_data.parquet")
     ROLE_PARQUET_FILE = str(OUTPUT_DIR / "role_combined_data.parquet")
@@ -30,7 +31,10 @@ class ParquetFileConstants:
     ###
     ###  Computed Parquet File
     ###
+    USER_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_computed_data.parquet")
     ACBP_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "acbp_computed_data.parquet")
+    USER_ORG_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_computed_data.parquet")
+    USER_ORG_ROLE_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_role_computed_data.parquet")
 
 # Example Usage:
 def main():

@@ -26,12 +26,6 @@ def getOrgUserDataFrames(duckdb_conn):
 
 
 def getOrgDataFrame(duckdb_conn):
-    """Reads and processes organization data."""
-    parquet_file_path = ParquetFileConstants.ORG_COMPLETE_HIERARCHY_PARQUET_FILE
-
-    if not Path(parquet_file_path).exists():
-        raise FileNotFoundError(f"Organization file not found: {parquet_file_path}")
-
     query = QueryConstants.FETCH_ALL_ORG_DATA
     return duckutil.executeQuery(duckdb_conn, query).fetchdf()
 

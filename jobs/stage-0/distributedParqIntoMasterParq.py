@@ -13,10 +13,10 @@ from duckutil import duckutil  # Assuming duckutil is in the parent directory
 
 # Set BASE_DATA_DIR two folders above the script location
 BASE_DATA_DIR = Path(__file__).resolve().parents[2] / 'data-res/pq_files/cache_pq'
-LARGE_DUCK_MEMORY_LIMIT = '10GB'  # Adjusted for efficient memory usage
+LARGE_DUCK_MEMORY_LIMIT = '14GB'  # Adjusted for efficient memory usage
 SMALL_DUCK_MEMORY_LIMIT= "4GB"    # Smaller Threshold for Efficient Storage
-BATCH_SIZE_SMALL = 15             # Larger for smaller folders
-BATCH_SIZE_LARGE = 10             # Smaller for larger folders
+BATCH_SIZE_SMALL = 10             # Larger for smaller folders
+BATCH_SIZE_LARGE = 15             # Smaller for larger folders
 
 # Lists of data folders categorized by size
 LARGE_DATA_FOLDERS = ["enrolment", "user"]
@@ -74,7 +74,7 @@ def process_directory_data_into_db(folder_type: str, batch_size: int, memoryLimi
     duckutil.executeQuery(conn,f"COPY {folder_type}_combined TO '{output_file}' (FORMAT PARQUET, COMPRESSION ZSTD);")
     
     # Cleanup: Drop the temporary combined table to free memory
-    duckutil.executeQuery(conn,f"DROP TABLE {folder_type}_combined")
+    # duckutil.executeQuery(conn,f"DROP TABLE {folder_type}_combined")
     duckutil.close_duck_db(conn)
 
     # Display processing duration
@@ -89,12 +89,12 @@ def process_directory_data_into_db(folder_type: str, batch_size: int, memoryLimi
 def main():
     # Process small data folders
     for folder in SMALL_DATA_FOLDERS:
-        process_directory_data_into_db(folder, BATCH_SIZE_SMALL,SMALL_DUCK_MEMORY_LIMIT)
+        process_directory_data_into_db(folder, BATCH_SIZE_LARGE,SMALL_DUCK_MEMORY_LIMIT)
 
     # Process large data folders
     for folder in LARGE_DATA_FOLDERS:
         #print("Hello")
-        process_directory_data_into_db(folder, BATCH_SIZE_LARGE,LARGE_DUCK_MEMORY_LIMIT)
+        process_directory_data_into_db(folder, BATCH_SIZE_SMALL,LARGE_DUCK_MEMORY_LIMIT)
 
 if __name__ == "__main__":
     main()
