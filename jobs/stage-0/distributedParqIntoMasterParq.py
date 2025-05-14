@@ -14,7 +14,7 @@ from duckutil import duckutil  # Assuming duckutil is in the parent directory
 # Set BASE_DATA_DIR two folders above the script location
 BASE_DATA_DIR = Path(__file__).resolve().parents[2] / 'data-res/pq_files/cache_pq'
 LARGE_DUCK_MEMORY_LIMIT = '14GB'  # Adjusted for efficient memory usage
-SMALL_DUCK_MEMORY_LIMIT= "4GB"    # Smaller Threshold for Efficient Storage
+SMALL_DUCK_MEMORY_LIMIT= "8GB"    # Smaller Threshold for Efficient Storage
 BATCH_SIZE_SMALL = 10             # Larger for smaller folders
 BATCH_SIZE_LARGE = 15             # Smaller for larger folders
 

@@ -19,8 +19,8 @@ def main():
 
     prefetchUserData(duck_conn)
     prejoinUserOrgData(duck_conn)
-    #prejoinuserorgroledata(duck_conn)
-    #prejoinACBPData(duck_conn)
+    prejoinuserorgroledata(duck_conn)
+    prejoinACBPData(duck_conn)
 
     duckutil.close_duck_db(duck_conn)
     print("[INFO] DuckDB connection closed.")
@@ -68,7 +68,7 @@ def prejoinUserOrgData(duckdb_conn):
 
     print(f"[SUCCESS] User-Org data fetched and saved to {ParquetFileConstants.USER_ORG_COMPUTED_PARQUET_FILE}.")
     
-    fetchPrintDFCount(duckdb_conn,ParquetFileConstants.ACBP_COMPUTED_PARQUET_FILE,"User and Org")
+    fetchPrintDFCount(duckdb_conn,ParquetFileConstants.USER_ORG_COMPUTED_PARQUET_FILE,"User and Org")
   
 
     print(f"[INFO] User-Org Data Prefetch Completed in {round(time.time() - start_time, 2)} seconds.")
@@ -85,7 +85,7 @@ def prejoinuserorgroledata(duckdb_conn):
     
     print(f"[SUCCESS] User-Org-Role data fetched and saved to {ParquetFileConstants.USER_ORG_ROLE_COMPUTED_PARQUET_FILE}.")
     
-    fetchPrintDFCount(duckdb_conn,ParquetFileConstants.ACBP_COMPUTED_PARQUET_FILE,"User, Org & Role")
+    fetchPrintDFCount(duckdb_conn,ParquetFileConstants.USER_ORG_ROLE_COMPUTED_PARQUET_FILE,"User, Org & Role")
 
     print(f"[INFO] User-Org-Role Data Prefetch Completed in {round(time.time() - start_time, 2)} seconds.")
 

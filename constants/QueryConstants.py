@@ -102,21 +102,20 @@ class QueryConstants:
     PRE_FETCH_USER_ORG_ROLE_DATA = f"""
         SELECT 
         u.userID, 
-        u.userStatus,
-        u.userOrgID, 
-        o.orgName AS userOrgName, 
-        o.orgStatus AS userOrgStatus,
-        r.roleID,
-        r.roleName,
-        r.roleType
+        u.status,
+        u.regorgid, 
+        o.orgname AS userOrgName, 
+        o.status AS userOrgStatus,
+        r.userid,
+        r.role
         FROM 
         read_parquet('{ParquetFileConstants.USER_PARQUET_FILE}') AS u -- Replace with actual path
         LEFT JOIN 
         read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}') AS o -- Replace with actual path
-        ON u.userOrgID = o.orgID
+        ON u.regorgid = o.id
         LEFT JOIN 
         read_parquet('{ParquetFileConstants.ROLE_PARQUET_FILE}') AS r -- Replace with actual path
-        ON u.userID = r.userID;
+        ON u.userID = r.userid
         """
 
     PRE_FETCH_USER_DATA =f"""
