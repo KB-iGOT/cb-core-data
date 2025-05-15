@@ -51,7 +51,10 @@ def all_course_program_es_data_frame(spark_session, primary_categories: list) ->
     # Directly load the Parquet file using Spark (replace with the actual path)
     content_parquet_path = ParquetFileConstants.ESCONTENT_PARQUET_FILE  # Replace with the actual path
     content_df = spark_session.read.parquet(content_parquet_path) \
-        .filter(F.col("primaryCategory").isin(primary_categories))
+        .filter(F.col("primaryCategory").isin(primary_categories)).withColumn("competencyAreaRefId", F.col("competencies_v6")["competencyAreaRefId"]) \
+            .withColumn("competencyThemeRefId", F.col("competencies_v6")["competencyThemeRefId"]) \
+            .withColumn("competencySubThemeRefId", F.col("competencies_v6")["competencySubThemeRefId"])
+
 
     # Process DataFrame without Pandas
     processed_df = (
@@ -70,16 +73,15 @@ def all_course_program_es_data_frame(spark_session, primary_categories: list) ->
             F.col("leafNodesCount").alias("courseResourceCount"),
             F.col("lastStatusChangedOn").alias("lastStatusChangedOn"),
             F.col("courseOrgID"),
-            F.col("competencies_v6.competencyAreaRefId"),
-            F.col("competencies_v6.competencyThemeRefId"),
-            F.col("competencies_v6.competencySubThemeRefId"),
+            F.col("competencyAreaRefId"),
+            F.col("competencyThemeRefId"),
+            F.col("competencySubThemeRefId"),
             F.col("contentLanguage"),
             F.col("courseCategory")
         )
         .dropDuplicates(["courseID", "category"])
         .na.fill({"courseDuration": 0.0, "courseResourceCount": 0})
     )
-
     return processed_df
 
 def assessment_es_dataframe(spark_session: SparkSession, primary_categories: list) -> DataFrame:
