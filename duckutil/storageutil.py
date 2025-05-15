@@ -2,7 +2,7 @@ import os
 import duckdb
 import pandas as pd
 import glob
-from typing import List, Optional, Union, Any
+from typing import List, Optional, Union, Any, Dict
 from enum import Enum
 import shutil
 
@@ -11,6 +11,11 @@ class SaveMode(Enum):
     Append = "append"
     ErrorIfExists = "error_if_exists"
     Ignore = "ignore"
+
+class OutputFormat(Enum):
+    CSV = "csv"
+    PARQUET = "parquet"
+    BOTH = "both"
 
 class FrameworkContext:
     # Placeholder for compatibility with original code
@@ -28,25 +33,30 @@ class StorageUtil:
             os.remove(path)
     
     @staticmethod
-    def renameCSVWithoutPartitions(directory: str, new_name: str) -> None:
-        """Rename the CSV file in the directory to the provided name."""
-        csv_files = glob.glob(os.path.join(directory, "*.csv"))
-        if csv_files:
-            # Get the first CSV file (should be only one without partitions)
-            csv_file = csv_files[0]
-            new_path = os.path.join(directory, f"{new_name}.csv")
-            os.rename(csv_file, new_path)
+    def removeDirectory(path: str) -> None:
+        """Remove a directory if it exists."""
+        if os.path.exists(path):
+            shutil.rmtree(path)
     
     @staticmethod
-    def renameCSV(ids: List[str], base_directory: str, new_name: str, partition_key: str) -> None:
-        """Rename CSV files in partitioned directories."""
+    def renameFileWithoutPartitions(directory: str, new_name: str, extension: str = "csv") -> None:
+        """Rename the file in the directory to the provided name."""
+        files = glob.glob(os.path.join(directory, f"*.{extension}"))
+        if files:
+            old_file = files[0]
+            new_path = os.path.join(directory, f"{new_name}.{extension}")
+            os.rename(old_file, new_path)
+    
+    @staticmethod
+    def renameFiles(ids: List[str], base_directory: str, new_name: str, partition_key: str, extension: str = "csv") -> None:
+        """Rename files in partitioned directories."""
         for id_value in ids:
             partition_dir = os.path.join(base_directory, f"{partition_key}={id_value}")
             if os.path.exists(partition_dir):
-                csv_files = glob.glob(os.path.join(partition_dir, "*.csv"))
-                for csv_file in csv_files:
-                    new_path = os.path.join(partition_dir, f"{new_name}.csv")
-                    os.rename(csv_file, new_path)
+                files = glob.glob(os.path.join(partition_dir, f"*.{extension}"))
+                for file in files:
+                    new_path = os.path.join(partition_dir, f"{new_name}.{extension}")
+                    os.rename(file, new_path)
 
 def generate_report(
     data: Any,
@@ -54,134 +64,154 @@ def generate_report(
     partition_key: Optional[str] = None,
     file_name: Optional[str] = None,
     file_save_mode: SaveMode = SaveMode.Overwrite,
+    output_format: OutputFormat = OutputFormat.CSV,
     config: Optional[DashboardConfig] = None,
-    framework_context: Optional[FrameworkContext] = None
+    framework_context: Optional[FrameworkContext] = None,
+    parquet_compression: str = "snappy",
+    csv_options: Optional[Dict[str, Any]] = None,
+    parquet_options: Optional[Dict[str, Any]] = None,
+    parquet_output_path: Optional[str] = None
 ) -> None:
     """
-    Generate a report using DuckDB for fast CSV export.
+    Generate a report using DuckDB for fast CSV/Parquet export.
     
     Args:
-        data: PySpark DataFrame, Pandas DataFrame, or SQL query string to be used for the report
-        report_path: Path where the report should be saved (relative to config.localReportDir)
-        partition_key: Column name to partition the data by (optional)
-        file_name: Name for the output file without extension (optional)
-        file_save_mode: Save mode for the file (Overwrite, Append, ErrorIfExists, Ignore)
-        config: Dashboard configuration object
-        framework_context: Framework context object
+        data: Input data (PySpark DF, Pandas DF, or SQL query string)
+        report_path: Base path for output files
+        partition_key: Column to partition by (optional)
+        file_name: Base name for output files
+        file_save_mode: How to handle existing files
+        output_format: CSV, PARQUET, or BOTH
+        config: Dashboard configuration
+        framework_context: Framework context
+        parquet_compression: Compression for Parquet files
+        csv_options: Additional CSV options
+        parquet_options: Additional Parquet options
+        parquet_output_path: Custom path for Parquet files
     """
-    # Initialize DuckDB connection
     conn = duckdb.connect(database=':memory:')
     
-    # Determine the full path for the report
     local_report_dir = config.localReportDir if config else "reports"
     report_full_path = os.path.join(local_report_dir, report_path)
     
-    print(f"REPORT: Writing report to {report_full_path} ...")
-    
-    # Ensure the directory exists
+    print(f"REPORT: Writing report to {report_full_path}...")
     os.makedirs(report_full_path, exist_ok=True)
     
-    # Check if data is a PySpark DataFrame
-    is_pyspark_df = False
-    try:
-        from pyspark.sql import DataFrame as PySparkDataFrame
-        if isinstance(data, PySparkDataFrame):
-            is_pyspark_df = True
-    except ImportError:
-        pass  # PySpark not available, continue with other data types
-    
-    # Load data into DuckDB
-    if is_pyspark_df:
-        # Handle PySpark DataFrame - write to temp CSV and load into DuckDB
+    # Handle different input data types
+    if hasattr(data, '_jdf'):  # PySpark DataFrame
         temp_csv_path = os.path.join(report_full_path, "temp_spark_data.csv")
-        
-        # Use PySpark's CSV writer to create the temp file
         data.coalesce(1).write.option("header", "true").mode("overwrite").csv(temp_csv_path)
-        
-        # Find the actual CSV file (PySpark creates a directory)
         actual_csv_files = glob.glob(os.path.join(temp_csv_path, "*.csv"))
         if actual_csv_files:
-            actual_csv_file = actual_csv_files[0]
-            # Load into DuckDB
-            conn.execute(f"CREATE TABLE input_data AS SELECT * FROM read_csv_auto('{actual_csv_file}')")
-            table_name = 'input_data'
-            
-            # Clean up temporary files
+            conn.execute(f"CREATE TABLE input_data AS SELECT * FROM read_csv_auto('{actual_csv_files[0]}')")
             shutil.rmtree(temp_csv_path)
         else:
-            raise ValueError("Failed to create temporary CSV file from PySpark DataFrame")
-    
+            raise ValueError("Failed to create temporary CSV from PySpark DataFrame")
     elif isinstance(data, pd.DataFrame):
-        # Register the DataFrame as a view in DuckDB
         conn.register('input_data', data)
-        table_name = 'input_data'
-    
     elif isinstance(data, str):
-        # Assume it's a SQL query to execute
         conn.execute(f"CREATE TABLE input_data AS {data}")
-        table_name = 'input_data'
-    
     else:
-        raise ValueError("Data must be a PySpark DataFrame, pandas DataFrame, or a SQL query string")
+        raise ValueError("Unsupported data type")
     
-    # Determine save mode
-    save_mode_str = file_save_mode.value
-    if save_mode_str == SaveMode.Overwrite.value and os.path.exists(report_full_path):
+    table_name = 'input_data'
+    
+    # Handle save mode
+    if file_save_mode == SaveMode.Overwrite and os.path.exists(report_full_path):
         if partition_key is None:
-            # Remove existing files for overwrite mode
-            for file in glob.glob(os.path.join(report_full_path, "*.csv")):
-                os.remove(file)
+            for file in glob.glob(os.path.join(report_full_path, "*.*")):
+                if not file.endswith(".tmp"):
+                    os.remove(file)
+    
+    # Set default options
+    default_csv_options = {"header": True, "delimiter": ","}
+    if csv_options:
+        default_csv_options.update(csv_options)
+    
+    default_parquet_options = {"compression": parquet_compression}
+    if parquet_options:
+        default_parquet_options.update(parquet_options)
+    
+    def export_data(query: str, output_path: str, fmt: str) -> None:
+        """Helper to export data in specified format."""
+        if fmt == "csv":
+            options = ",".join([f"{k} {repr(v)}" if isinstance(v, str) else f"{k} {v}" 
+                              for k, v in default_csv_options.items()])
+            conn.execute(f"COPY ({query}) TO '{output_path}' ({options})")
+        elif fmt == "parquet":
+            options = ",".join([f"{k} {repr(v)}" if isinstance(v, str) else f"{k} {v}" 
+                              for k, v in default_parquet_options.items()])
+            conn.execute(f"COPY ({query}) TO '{output_path}' (FORMAT PARQUET, {options})")
+    
+    def get_output_path(base_path: str, fmt: str) -> str:
+        """Determine output path considering custom Parquet location."""
+        if fmt == "parquet" and parquet_output_path:
+            if partition_key:
+                rel_path = os.path.relpath(base_path, report_full_path)
+                return os.path.join(parquet_output_path, rel_path)
+            return parquet_output_path
+        return base_path
     
     if partition_key is None:
         # Non-partitioned export
-        output_file = os.path.join(report_full_path, "output.csv")
-        conn.execute(f"COPY (SELECT * FROM {table_name}) TO '{output_file}' (HEADER, DELIMITER ',')")
+        formats = []
+        if output_format in [OutputFormat.CSV, OutputFormat.BOTH]:
+            formats.append(("csv", "output.csv"))
+        if output_format in [OutputFormat.PARQUET, OutputFormat.BOTH]:
+            formats.append(("parquet", "output.parquet"))
         
-        # Rename the file if a name is provided
-        if file_name is not None:
-            StorageUtil.renameCSVWithoutPartitions(report_full_path, file_name)
+        for fmt, output_file in formats:
+            output_dir = get_output_path(report_full_path, fmt)
+            os.makedirs(output_dir, exist_ok=True)
+            full_path = os.path.join(output_dir, output_file)
+            export_data(f"SELECT * FROM {table_name}", full_path, fmt)
+            
+            if file_name:
+                if fmt == "csv":
+                    StorageUtil.renameFileWithoutPartitions(report_full_path, file_name, "csv")
+                elif fmt == "parquet":
+                    parquet_dir = get_output_path(report_full_path, "parquet")
+                    StorageUtil.renameFileWithoutPartitions(parquet_dir, file_name, "parquet")
     else:
-        # Get unique values in the partition column
-        distinct_values = conn.execute(f"SELECT DISTINCT {partition_key} FROM {table_name} WHERE {partition_key} IS NOT NULL AND {partition_key} != ''").fetchall()
+        # Partitioned export
+        distinct_values = conn.execute(
+            f"SELECT DISTINCT {partition_key} FROM {table_name} "
+            f"WHERE {partition_key} IS NOT NULL AND {partition_key} != ''"
+        ).fetchall()
         ids = [str(row[0]) for row in distinct_values]
         
-        # Generate partitioned report
         for id_value in ids:
-            # Create directory for this partition
-            partition_dir = os.path.join(report_full_path, f"{partition_key}={id_value}")
-            os.makedirs(partition_dir, exist_ok=True)
+            formats = []
+            if output_format in [OutputFormat.CSV, OutputFormat.BOTH]:
+                formats.append(("csv", "part-0.csv"))
+            if output_format in [OutputFormat.PARQUET, OutputFormat.BOTH]:
+                formats.append(("parquet", "part-0.parquet"))
             
-            # Export data for this partition
-            output_file = os.path.join(partition_dir, "part-0.csv")
-            conn.execute(f"""
-                COPY (SELECT * FROM {table_name} WHERE {partition_key} = '{id_value}')
-                TO '{output_file}' (HEADER, DELIMITER ',')
-            """)
+            for fmt, output_file in formats:
+                base_dir = os.path.join(report_full_path, f"{partition_key}={id_value}")
+                output_dir = get_output_path(base_dir, fmt)
+                os.makedirs(output_dir, exist_ok=True)
+                full_path = os.path.join(output_dir, output_file)
+                export_data(
+                    f"SELECT * FROM {table_name} WHERE {partition_key} = '{id_value}'",
+                    full_path,
+                    fmt
+                )
         
-        # Rename files if a name is provided
-        if file_name is not None:
-            StorageUtil.renameCSV(ids, report_full_path, file_name, partition_key)
+        if file_name:
+            if output_format in [OutputFormat.CSV, OutputFormat.BOTH]:
+                StorageUtil.renameFiles(ids, report_full_path, file_name, partition_key, "csv")
+            if output_format in [OutputFormat.PARQUET, OutputFormat.BOTH]:
+                parquet_base = parquet_output_path if parquet_output_path else report_full_path
+                StorageUtil.renameFiles(ids, parquet_base, file_name, partition_key, "parquet")
     
-    # Remove success file if it exists
     StorageUtil.removeFile(os.path.join(report_full_path, "_SUCCESS"))
-    
-    print(f"REPORT: Finished Writing report to {report_full_path}")
-    
-    # Close the connection
+    print(f"REPORT: Finished writing to {report_full_path}")
     conn.close()
 
-# Alternative function names that follow the original naming convention
-def generateReport(
-    data: Any,
-    reportPath: str,
-    partitionKey: Optional[str] = None,
-    fileName: Optional[str] = None,
-    fileSaveMode: SaveMode = SaveMode.Overwrite,
-    config: Optional[DashboardConfig] = None,
-    framework_context: Optional[FrameworkContext] = None
-) -> None:
-    """Alias for generate_report with camelCase naming to match original."""
-    return generate_report(data, reportPath, partitionKey, fileName, fileSaveMode, config, framework_context)
+# Alternative naming conventions
+def generateReport(*args, **kwargs):
+    return generate_report(*args, **kwargs)
 
 def csv_write_partition(
     data: Any,
@@ -190,21 +220,30 @@ def csv_write_partition(
     header: bool = True,
     save_mode: SaveMode = SaveMode.Overwrite
 ) -> None:
-    """
-    Write data to CSV files partitioned by the specified key.
-    
-    This is a simplified version that just calls generate_report with appropriate parameters.
-    """
     config = DashboardConfig(os.path.dirname(path))
     report_path = os.path.basename(path)
-    generate_report(data, report_path, partition_key, None, save_mode, config)
+    generate_report(
+        data, report_path, partition_key, None, save_mode, OutputFormat.CSV, config
+    )
 
-def csvWritePartition(
+def csvWritePartition(*args, **kwargs):
+    return csv_write_partition(*args, **kwargs)
+
+def parquet_write_partition(
     data: Any,
     path: str,
-    partitionKey: str,
-    header: bool = True,
-    saveMode: SaveMode = SaveMode.Overwrite
+    partition_key: str,
+    save_mode: SaveMode = SaveMode.Overwrite,
+    compression: str = "snappy",
+    options: Optional[Dict[str, Any]] = None,
+    output_path: Optional[str] = None
 ) -> None:
-    """Alias for csv_write_partition with camelCase naming to match original."""
-    return csv_write_partition(data, path, partitionKey, header, saveMode)
+    config = DashboardConfig(os.path.dirname(path))
+    report_path = os.path.basename(path)
+    generate_report(
+        data, report_path, partition_key, None, save_mode, OutputFormat.PARQUET,
+        config, None, compression, None, options, output_path
+    )
+
+def parquetWritePartition(*args, **kwargs):
+    return parquet_write_partition(*args, **kwargs)
