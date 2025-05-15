@@ -155,6 +155,46 @@ class QueryConstants:
         FROM read_parquet('{ParquetFileConstants.USER_PARQUET_FILE}')
     """
     
+    PRE_FETCH_ENROLLMENT_DATA=f"""
+        SELECT 
+            userid AS userID,
+            courseid AS courseID,
+            batchid AS batchID,
+            progress AS courseProgress,
+            status AS dbCompletionStatus,
+            contentstatus AS courseContentStatus,
+            
+            
+           -- Convert to LONG (UNIX Timestamp)
+            EPOCH(CAST(completedon AS TIMESTAMP)) AS courseCompletedTimestamp,
+            EPOCH(CAST(enrolled_date AS TIMESTAMP)) AS courseEnrolledTimestamp,
+            EPOCH(CAST(lastcontentaccesstime AS TIMESTAMP)) AS lastContentAccessTimestamp,
+
+            -- Issued Certificate Metrics
+            COALESCE(array_length(issued_certificates), 0) AS issuedCertificateCount,
+            CASE WHEN array_length(issued_certificates) > 0 THEN 1 ELSE 0 END AS issuedCertificateCountPerContent,
+            
+            -- Certificate Details
+            CASE 
+                WHEN issued_certificates IS NULL THEN '' 
+                ELSE issued_certificates[array_length(issued_certificates) - 1]->>'lastIssuedOn' 
+            END AS certificateGeneratedOn,
+            CASE 
+                WHEN issued_certificates IS NULL THEN '' 
+                WHEN array_length(issued_certificates) > 0 THEN issued_certificates[0]->>'lastIssuedOn' 
+                ELSE '' 
+            END AS firstCompletedOn,
+            CASE 
+                WHEN issued_certificates IS NULL THEN '' 
+                ELSE issued_certificates[array_length(issued_certificates) - 1]->>'identifier' 
+            END AS certificateID,
+            *
+
+        FROM 
+            read_parquet('{ParquetFileConstants.ENROLMENT_PARQUET_FILE}')
+        WHERE 
+            active = TRUE
+    """
     
     #Static Constants for each PreJoin Parquet File
     FETCH_ALL_USERS = f"""

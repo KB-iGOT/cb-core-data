@@ -35,7 +35,6 @@ def getUserDataFrame(duckdb_conn, isActive: bool = False):
     
     return duckutil.executeQuery(duckdb_conn, query)
 
-
 def getOrgUserDataFrame(duckdb_conn):
     """Joins organization and user data using a LEFT JOIN."""
 

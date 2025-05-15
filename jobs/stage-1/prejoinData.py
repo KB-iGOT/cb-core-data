@@ -21,8 +21,8 @@ def main():
     prejoinUserOrgData(duck_conn)
     prejoinuserorgroledata(duck_conn)
     prejoinACBPData(duck_conn)
+    prejoinusercourseprogramenrollment(duck_conn)
 
-    duckutil.close_duck_db(duck_conn)
     print("[INFO] DuckDB connection closed.")
 
 def prefetchUserData(duckdb_conn):
@@ -87,6 +87,19 @@ def prejoinuserorgroledata(duckdb_conn):
     
     fetchPrintDFCount(duckdb_conn,ParquetFileConstants.USER_ORG_ROLE_COMPUTED_PARQUET_FILE,"User, Org & Role")
 
+    print(f"[INFO] User-Org-Role Data Prefetch Completed in {round(time.time() - start_time, 2)} seconds.")
+
+def prejoinusercourseprogramenrollment(duckdb_conn):
+    print("\n[INFO] Prefetching User-Org-Role Data...")
+    start_time = time.time()
+    query = QueryConstants.PRE_FETCH_ENROLLMENT_DATA
+    duckutil.executeQuery(duckdb_conn, f"""
+        COPY ({query}) TO '{ParquetFileConstants.USER_COURSE_PROGRAM_ENROLMENT_FILE}' 
+        (FORMAT PARQUET, COMPRESSION ZSTD);
+        """)
+    print(f"[SUCCESS] User-Org-Role data fetched and saved to {ParquetFileConstants.USER_COURSE_PROGRAM_ENROLMENT_FILE}.")
+    
+    fetchPrintDFCount(duckdb_conn,ParquetFileConstants.USER_COURSE_PROGRAM_ENROLMENT_FILE,"User, Course Program Enrolment")
     print(f"[INFO] User-Org-Role Data Prefetch Completed in {round(time.time() - start_time, 2)} seconds.")
 
 def fetchPrintDFCount(duckdb_conn,tableName,type):
