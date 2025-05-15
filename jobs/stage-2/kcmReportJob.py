@@ -226,7 +226,11 @@ class KCMModel:
             # # Generate report
             # self.generate_report(competency_reporting, report_path_content_competency_mapping, file_name=file_name)
 
-            storageutil.generate_report(competency_reporting, report_path_content_competency_mapping, file_name=file_name)
+            storageutil.generate_report(
+                competency_reporting, 
+                report_path_content_competency_mapping, 
+                file_name=file_name,
+                output_format=storageutil.OutputFormat.CSV)
 
             # Report sync if enabled
             # if conf.report_sync_enable:
