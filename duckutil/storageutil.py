@@ -91,7 +91,7 @@ def generate_report(
     """
     conn = duckdb.connect(database=':memory:')
     
-    local_report_dir = config.localReportDir if config else "reports"
+    local_report_dir = config.localReportDir if config else ""
     report_full_path = os.path.join(local_report_dir, report_path)
     
     print(f"REPORT: Writing report to {report_full_path}...")

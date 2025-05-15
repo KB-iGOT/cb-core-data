@@ -53,8 +53,7 @@ class KCMModel:
         try:
             duckdb_conn = duckutil.initialize_duckdb()
             today = self.get_date()
-            report_path_content_competency_mapping = f"standalone-reports/kcm-report/{today}/ContentCompetencyMapping"
-            report_path_competency_hierarchy = f"standalone-reports/kcm-report/{today}/CompetencyHierarchy"
+            report_path_content_competency_mapping = f"reports/standalone-reports/kcm-report/{today}/ContentCompetencyMapping"
             file_name = "ContentCompetencyMapping"
 
             # Content - Competency Mapping data
@@ -101,9 +100,10 @@ class KCMModel:
 
             # content_mapping_df.show()
             # # # changes for creating avro file for warehouse
-            # # self.warehouse_cache_write(content_mapping_df.distinct().coalesce(1), conf.dw_kcm_content_table)
-            # # self.warehouse_pq_cache_write(content_mapping_df.distinct().coalesce(1), conf.dw_kcm_content_table)
-
+            storageutil.generate_report(
+                content_mapping_df.distinct().coalesce(1), 
+               "warehouse_pq/kcm_content_mapping/",
+                output_format=storageutil.OutputFormat.PARQUET)
             # # Load KCM v6 data
             # 1. Read the data
             kcmv6 = spark.read.parquet(ParquetFileConstants.KCMV6_PARQUET_FILE)
@@ -201,9 +201,10 @@ class KCMModel:
            
 
             # # Write to warehouse cache
-            # # self.warehouse_cache_write(competency_details_df.distinct().coalesce(1), conf.dw_kcm_dictionary_table)
-            # # self.warehouse_pq_cache_write(competency_details_df.distinct().coalesce(1), conf.dw_kcm_dictionary_table)
-
+            storageutil.generate_report(
+                competency_details_df.distinct(), 
+               "warehouse_pq/kcm_dictionary/",
+                output_format=storageutil.OutputFormat.PARQUET)
             # # Competency reporting
             competency_reporting = competency_content_mapping_df \
                 .join(competency_details_df, ["competency_area_id", "competency_theme_id", "competency_sub_theme_id"]) \
@@ -222,9 +223,7 @@ class KCMModel:
                 .orderBy("content_id") \
                 .distinct()
 
-            competency_reporting.show()
             # # Generate report
-            # self.generate_report(competency_reporting, report_path_content_competency_mapping, file_name=file_name)
 
             storageutil.generate_report(
                 competency_reporting, 
@@ -282,6 +281,12 @@ if __name__ == "__main__":
     spark = SparkSession.builder.appName("KCM Model").getOrCreate()
     
     # Create model instance
+    start_time = datetime.now()
+    print(f"[START] KCMModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = KCMModel()
     model.process_data( spark=spark)
+    end_time = datetime.now()
+    duration = end_time - start_time
+    print(f"[END] KCMModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"[INFO] Total duration: {duration}")
     
