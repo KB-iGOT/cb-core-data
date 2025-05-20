@@ -215,7 +215,10 @@ class QueryConstants:
             org_user_counts;
     """
     
-    
+    FETCH_KCMV6_DATA = f"""
+    select * from read_parquet('{ParquetFileConstants.KCMV6_PARQUET_FILE}')
+    """
+
     def main():
         print("Defined Static Parquet File Constants:")
 
