@@ -2,6 +2,7 @@ import duckdb
 import time
 import os
 from pathlib import Path
+from constants.ParquetFileConstants import ParquetFileConstants
 
 
 def log_step(start_time, step_name):
@@ -10,9 +11,10 @@ def log_step(start_time, step_name):
     return now
 
 def initialize_duckdb(memory_limit="8GB"):
+    OUTPUT_DIR = Path(__file__).resolve().parents[1] / "duckFolder/temp_duckdb"
     conn = duckdb.connect()
-    conn.execute(f"PRAGMA memory_limit='{memory_limit}'")
-    conn.execute("PRAGMA temp_directory = 'temp_duckdb';")
+    conn.execute(f"PRAGMA memory_limit='{memory_limit}';")
+    conn.execute("PRAGMA temp_directory = '{OUTPUT_DIR}';")
     conn.execute(f"PRAGMA max_temp_directory_size='50GB'")
     conn.execute("LOAD icu;") 
     #conn.execute("PRAGMA mmap = true;")

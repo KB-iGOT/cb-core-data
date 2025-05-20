@@ -35,8 +35,9 @@ class ParquetFileConstants:
     ACBP_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "acbp_computed_data.parquet")
     USER_ORG_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_computed_data.parquet")
     USER_ORG_ROLE_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_role_computed_data.parquet")
-    USER_COURSE_PROGRAM_ENROLMENT_FILE = str(OUTPUT_COMPUTED_DIR / "user_course_program_enrolment_computed_data.parquet")
-
+    COURSE_PROGRAM_ENROLMENT_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user_course_program_enrolment_computed_data.parquet")
+    USER_ORG_COURSE_PROGRAM_ENROLMENT_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_course_program_enrolment_computed_data.parquet")
+    #ACBP_USER_COURSE_PROGRAM_ENROLMENT_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "acbp_user_course_program_enrolment_computed_data.parquet")
 # Example Usage:
 def main():
     print("Defined Static Parquet File Constants:")

@@ -25,7 +25,7 @@ SMALL_DATA_FOLDERS = [
     "hierarchy", "kcmV6", "learnerLeaderBoard", "nlwContentCertificateGeneratedCount",
     "nlwContentLearningHours", "orgCompleteHierarchy", "orgHierarchy",
     "rating", "ratingSummary", "role", "userKarmaPoints",
-    "userKarmaPointsSummary","org","externalContent","eventDetails","eventEnrolmentDetails"
+    "userKarmaPointsSummary","org","externalContent","eventDetails","eventEnrolmentDetails","weeklyClaps"
 ]
 
 # ==============================

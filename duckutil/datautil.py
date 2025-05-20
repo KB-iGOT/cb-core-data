@@ -51,6 +51,7 @@ def getAcbpDetailsDataFrame(duckdb_conn):
 
 def getExplodedACBPDetailsDataFrame(duckdb_conn):
     """ Fetch Exploded ACBPDetails with union of Custom User, Designation & All User Based ACBP"""
+    queryToExecute = "select * from read_parquet('{ParquetFileConstants.ACBP_COMPUTED_PARQUET_FILE}')"
 
 def getContentHierarchyDataFrame(duckdb_conn):
     queryToExecute = QueryConstants.FETCH_CONTENT_ID_BY_HIERARCHY
@@ -151,3 +152,8 @@ def course_batch_data_frame(duckdb_conn):
         FROM 
         batch;"""
      return duckutil.executeQuery(duckdb_conn,queryToExecute)
+
+def get_user_course_program_completion_data_frame(duckdb_conn):
+    queryToExecute = """SELECT * FROM read_parquet
+    ('{ParquetFileConstants.USER_COURSE_PROGRAM_ENROLMENT_FILE}')"""
+    return duckutil.executeQuery(duckdb_conn,queryToExecute)
