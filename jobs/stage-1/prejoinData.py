@@ -17,30 +17,37 @@ def main():
     duck_conn = duckutil.initialize_duckdb("12GB")
     print("[INFO] DuckDB connection initialized.")
 
-    print('########################################################## \
-    ###            \
-    ###             Content \
-    ### \
-    ##########################################################')
+    print(f"""
+        ##########################################################
+        ###            
+        ###             Content
+        ### 
+        ##########################################################
+    """)
     aggregateContentRatingsData(duck_conn)
     prejoinContentWithRatingsData(duck_conn)
     prejoinContentWithRatingsAndOrgData(duck_conn)
 
-    print('########################################################## \
-    ###            \
-    ###             User \
-    ### \
-    ##########################################################')
+    print(f"""
+        ##########################################################
+        ###            
+        ###             User
+        ### 
+        ##########################################################
+    """)
     prefetchUserOrgData(duck_conn)
     prejoinUserOrgRoleData(duck_conn)
     prejoinUserOrgRoleKarmaPointsAndClaps(duck_conn)
-    print('########################################################## \
-    ###            \
-    ###             Enrollment \
-    ### \
-    ##########################################################')
+    print(f"""
+        ##########################################################
+        ###            
+        ###             Enrolment
+        ### 
+        ##########################################################
+    """)
     prejoinEnrolmentContentData(duck_conn)
     prejoinUserOrgContentEnrolmentData(duck_conn)
+    prejoinEnrolmentBatch(duck_conn)
     print("[INFO] DuckDB connection closed.")
 
 def prefetchUserOrgData(duckdb_conn):
@@ -74,6 +81,10 @@ def prejoinContentWithRatingsAndOrgData(duckdb_conn):
 def prejoinUserOrgRoleKarmaPointsAndClaps(duckdb_conn):
     prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_USER_WITH_CLAPS_AND_POINTS,
             ParquetFileConstants.USER_MASTER,"User Master Created")
+
+def prejoinEnrolmentBatch(duckdb_conn):
+    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_ENROLMENT_WITH_BATCH,
+            ParquetFileConstants.ENROLMENT_MASTER,"User Master Created")
 
 def prefetchDataAndOutputToComputeFile(duckdb_conn,query,output,category):
     output_path = Path(output)

@@ -87,10 +87,20 @@ class QueryConstants:
     """
 
     PREFETCH_MASTER_USER_WITH_CLAPS_AND_POINTS = f"""
-        select uor.*,kar.* from read_parquet('{ParquetFileConstants.USER_ORG_ROLE_COMPUTED_PARQUET_FILE}') AS uor
+        select uor.*,kar.*,cl.* from read_parquet('{ParquetFileConstants.USER_ORG_ROLE_COMPUTED_PARQUET_FILE}') AS uor
         LEFT JOIN
         read_parquet('{ParquetFileConstants.USER_KARMA_POINTS_SUMMARY_PARQUET_FILE}') As kar
         ON uor.userid = kar.userid
+        LEFT JOIN
+        read_parquet('{ParquetFileConstants.CLAPS_PARQUET_FILE}') As cl
+        ON uor.userid = cl.userid
+    """
+
+    PREFETCH_MASTER_ENROLMENT_WITH_BATCH = f"""
+        select en.*,b.* from read_parquet('{ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE}') AS en
+        LEFT JOIN
+        read_parquet('{ParquetFileConstants.BATCH_PARQUET_FILE}') As b
+        ON en.batchid = b.batchid
     """
 
 

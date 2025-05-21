@@ -24,6 +24,7 @@ class ParquetFileConstants:
     RATING_SUMMARY_PARQUET_FILE = str(OUTPUT_DIR / "ratingSummary_combined_data.parquet")
     ROLE_PARQUET_FILE = str(OUTPUT_DIR / "role_combined_data.parquet")
     USER_PARQUET_FILE = str(OUTPUT_DIR / "user_combined_data.parquet")
+    CLAPS_PARQUET_FILE = str(OUTPUT_DIR / "weeklyClaps_combined_data.parquet")
     USER_KARMA_POINTS_PARQUET_FILE = str(OUTPUT_DIR / "userKarmaPoints_combined_data.parquet")
     USER_KARMA_POINTS_SUMMARY_PARQUET_FILE = str(OUTPUT_DIR / "userKarmaPointsSummary_combined_data.parquet")
 
