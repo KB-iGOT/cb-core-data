@@ -17,10 +17,37 @@ def main():
     duck_conn = duckutil.initialize_duckdb("12GB")
     print("[INFO] DuckDB connection initialized.")
 
+    print(f"""
+        ##########################################################
+        ###            
+        ###             Content
+        ### 
+        ##########################################################
+    """)
+    aggregateContentRatingsData(duck_conn)
+    prejoinContentWithRatingsData(duck_conn)
+    prejoinContentWithRatingsAndOrgData(duck_conn)
+
+    print(f"""
+        ##########################################################
+        ###            
+        ###             User
+        ### 
+        ##########################################################
+    """)
     prefetchUserOrgData(duck_conn)
     prejoinUserOrgRoleData(duck_conn)
-    prejoinEnrolmentCourseData(duck_conn)
-    prejoinUserOrgEnrolmentData(duck_conn)
+    prejoinUserOrgRoleKarmaPointsAndClaps(duck_conn)
+    print(f"""
+        ##########################################################
+        ###            
+        ###             Enrolment
+        ### 
+        ##########################################################
+    """)
+    prejoinEnrolmentContentData(duck_conn)
+    prejoinUserOrgContentEnrolmentData(duck_conn)
+    prejoinEnrolmentBatch(duck_conn)
     print("[INFO] DuckDB connection closed.")
 
 def prefetchUserOrgData(duckdb_conn):
@@ -31,18 +58,38 @@ def prejoinUserOrgRoleData(duckdb_conn):
    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PRE_FETCH_USER_ORG_ROLE_DATA,
         ParquetFileConstants.USER_ORG_ROLE_COMPUTED_PARQUET_FILE,"User, Org & Role")
 
-def prejoinEnrolmentCourseData(duckdb_conn):
-    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_ENROLMENT_WITH_COURSE_DATA,
-            ParquetFileConstants.COURSE_PROGRAM_ENROLMENT_COMPUTED_FILE,"Enrolment & Course Data")
+def prejoinEnrolmentContentData(duckdb_conn):
+    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_ENROLMENT_WITH_CONTENT_DATA,
+            ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE,"Enrolment & Content Data")
 
-def prejoinUserOrgEnrolmentData(duckdb_conn):
-    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_ENROLMENT_WITH_COURSE_DATA_USER_ORG_ROLE_DATA,
-            ParquetFileConstants.USER_ORG_COURSE_PROGRAM_ENROLMENT_COMPUTED_FILE,"User Org Enrolment & Course Data")
+def prejoinUserOrgContentEnrolmentData(duckdb_conn):
+    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_ENROLMENT_WITH_CONTENT_DATA_USER_ORG_ROLE_DATA,
+            ParquetFileConstants.USER_ORG_CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE,"User Org Enrolment & Content Data")
+
+def aggregateContentRatingsData(duckdb_conn):
+    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_CONTENT_RATINGS,
+            ParquetFileConstants.CONTENT_RATINGS_COMPUTED_FILE,"Content Ratings Pre Compute")
+
+def prejoinContentWithRatingsData(duckdb_conn):
+    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_CONTENT_WITH_RATINGS,
+            ParquetFileConstants.CONTENT_WITH_RATINGS_COMPUTED_FILE,"Content Ratings Joined Data")
+
+def prejoinContentWithRatingsAndOrgData(duckdb_conn):
+     prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_CONTENT_WITH_RATINGS_ORG_OWNERSHIP,
+            ParquetFileConstants.CONTENT_MASTER,"Content Master Created")
+
+def prejoinUserOrgRoleKarmaPointsAndClaps(duckdb_conn):
+    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_USER_WITH_CLAPS_AND_POINTS,
+            ParquetFileConstants.USER_MASTER,"User Master Created")
+
+def prejoinEnrolmentBatch(duckdb_conn):
+    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_ENROLMENT_WITH_BATCH,
+            ParquetFileConstants.ENROLMENT_MASTER,"User Master Created")
 
 def prefetchDataAndOutputToComputeFile(duckdb_conn,query,output,category):
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    print("\n[INFO] Prefetching {category} Data...")
+    print(f"\n[INFO] Prefetching {category} Data...")
     print(output)
     start_time = time.time()
 
