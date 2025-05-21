@@ -36,7 +36,7 @@ class QueryConstants:
         ) AS r ON TRUE
     """
     
-    PREFETCH_ENROLMENT_WITH_COURSE_DATA = f"""
+    PREFETCH_ENROLMENT_WITH_CONTENT_DATA = f"""
         SELECT en.*,con.* FROM 
         read_parquet('{ParquetFileConstants.ENROLMENT_PARQUET_FILE}') AS en
         LEFT JOIN
@@ -44,14 +44,56 @@ class QueryConstants:
         ON en.courseid = con.identifier
     """
 
-    PREFETCH_ENROLMENT_WITH_COURSE_DATA_USER_ORG_ROLE_DATA = f"""
+    PREFETCH_ENROLMENT_WITH_CONTENT_DATA_USER_ORG_ROLE_DATA = f"""
         select cpe.*,uo.userid,uo.email,uo.emailverified,uo.firstname,uo.lastname,
         uo.roles,uo.regorgid,uo.orgname,uo.status,uo.organisationtype,uo.organisationsubtype FROM 
-        read_parquet('{ParquetFileConstants.COURSE_PROGRAM_ENROLMENT_COMPUTED_FILE}') AS cpe
+        read_parquet('{ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE}') AS cpe
         LEFT JOIN
         read_parquet('{ParquetFileConstants.USER_ORG_COMPUTED_PARQUET_FILE}') AS uo
         ON cpe.userID = uo.userID
     """
+
+    PREFETCH_CONTENT_RATINGS = f"""
+        SELECT 
+        activityid,
+        COUNT(rating) AS total_ratings,
+        AVG(rating) AS average_rating
+        FROM 
+        read_parquet('{ParquetFileConstants.RATING_PARQUET_FILE}')
+        WHERE 
+        rating IS NOT NULL
+        GROUP BY 
+        activityid
+    """
+
+    PREFETCH_CONTENT_WITH_RATINGS = f"""
+        SELECT 
+        e.*,
+        r.* 
+        FROM
+        read_parquet('{ParquetFileConstants.ESCONTENT_PARQUET_FILE}') AS e
+        LEFT JOIN
+        read_parquet('{ParquetFileConstants.CONTENT_RATINGS_COMPUTED_FILE}') AS r
+        ON e.identifier = r.activityId
+    """
+
+    PREFETCH_MASTER_CONTENT_WITH_RATINGS_ORG_OWNERSHIP = f"""
+        select cwr.* FROM read_parquet('{ParquetFileConstants.CONTENT_WITH_RATINGS_COMPUTED_FILE}') AS cwr
+        LEFT JOIN
+        read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}') As o
+        ON cwr.createdFor[0] = o.id 
+        WHERE 
+        array_length(cwr.createdFor) > 0
+    """
+
+    PREFETCH_MASTER_USER_WITH_CLAPS_AND_POINTS = f"""
+        select uor.*,kar.* from read_parquet('{ParquetFileConstants.USER_ORG_ROLE_COMPUTED_PARQUET_FILE}') AS uor
+        LEFT JOIN
+        read_parquet('{ParquetFileConstants.USER_KARMA_POINTS_SUMMARY_PARQUET_FILE}') As kar
+        ON uor.userid = kar.userid
+    """
+
+
     
 
 
