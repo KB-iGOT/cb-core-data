@@ -36,7 +36,7 @@ class ParquetFileConstants:
     ACBP_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "acbp_computed_data.parquet")
     
     ## PreJoins
-    USER_ORG_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_computed_data.parquet")
+    USER_ORG_HIERARCHY_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_hierarchy_computed_data.parquet")
     USER_ORG_ROLE_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_role_computed_data.parquet")
     CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user_content_program_enrolment_computed_data.parquet")
     USER_ORG_CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_content_program_enrolment_computed_data.parquet")

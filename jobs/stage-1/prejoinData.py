@@ -51,8 +51,8 @@ def main():
     print("[INFO] DuckDB connection closed.")
 
 def prefetchUserOrgData(duckdb_conn):
-   prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PRE_FETCH_USER_ORG_DATA,
-        ParquetFileConstants.USER_ORG_COMPUTED_PARQUET_FILE,"User & Org")
+   prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PRE_FETCH_USER_ORG_HIERARCHY_DATA,
+        ParquetFileConstants.USER_ORG_HIERARCHY_COMPUTED_PARQUET_FILE,"User & Org and hierarchy")
 
 def prejoinUserOrgRoleData(duckdb_conn):
    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PRE_FETCH_USER_ORG_ROLE_DATA,

@@ -7,16 +7,21 @@ from ParquetFileConstants import ParquetFileConstants
 class QueryConstants:
 
     #Static Constants for each PreJoin Stage
-    PRE_FETCH_USER_ORG_DATA = f"""
+    PRE_FETCH_USER_ORG_HIERARCHY_DATA = f"""
     SELECT 
         u.*,
-        o.*
+        o.*,
+        h.*
     FROM 
         read_parquet('{ParquetFileConstants.USER_PARQUET_FILE}') AS u
     LEFT JOIN 
         read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}') AS o 
     ON 
         u.regorgid = o.id
+    LEFT JOIN 
+        read_parquet('{ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE}') AS h 
+    ON 
+        o.id = h.mdo_id
     """
 
     PRE_FETCH_USER_ORG_ROLE_DATA = f"""
@@ -49,7 +54,7 @@ class QueryConstants:
         uo.roles,uo.regorgid,uo.orgname,uo.status,uo.organisationtype,uo.organisationsubtype FROM 
         read_parquet('{ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE}') AS cpe
         LEFT JOIN
-        read_parquet('{ParquetFileConstants.USER_ORG_COMPUTED_PARQUET_FILE}') AS uo
+        read_parquet('{ParquetFileConstants.USER_ORG_HIERARCHY_COMPUTED_PARQUET_FILE}') AS uo
         ON cpe.userID = uo.userID
     """
 
@@ -131,7 +136,7 @@ class QueryConstants:
     """
 
     FETCH_ALL_USER_ORG_ACTIVE_DATA = f"""
-        select * from read_parquet('{ParquetFileConstants.USER_ORG_COMPUTED_PARQUET_FILE}')
+        select * from read_parquet('{ParquetFileConstants.USER_ORG_HIERARCHY_COMPUTED_PARQUET_FILE}')
         where u.userStatus == 1
     """
 
