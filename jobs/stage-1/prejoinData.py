@@ -14,7 +14,7 @@ from constants.QueryConstants import QueryConstants
 # ==============================
 
 def main():
-    duck_conn = duckutil.initialize_duckdb("12GB")
+    duck_conn = duckutil.initialize_duckdb("14GB")
     print("[INFO] DuckDB connection initialized.")
 
     print(f"""
@@ -63,8 +63,8 @@ def prejoinEnrolmentContentData(duckdb_conn):
             ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE,"Enrolment & Content Data")
 
 def prejoinUserOrgContentEnrolmentData(duckdb_conn):
-    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_ENROLMENT_WITH_CONTENT_DATA_USER_ORG_ROLE_DATA,
-            ParquetFileConstants.USER_ORG_CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE,"User Org Enrolment & Content Data")
+    prefetchDataAndOutputToComputeFileInChunks(duckdb_conn,ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE,
+        ParquetFileConstants.USER_ORG_ROLE_COMPUTED_PARQUET_FILE,ParquetFileConstants.USER_ORG_CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE,"")
 
 def aggregateContentRatingsData(duckdb_conn):
     prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_CONTENT_RATINGS,
@@ -85,6 +85,19 @@ def prejoinUserOrgRoleKarmaPointsAndClaps(duckdb_conn):
 def prejoinEnrolmentBatch(duckdb_conn):
     prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_ENROLMENT_WITH_BATCH,
             ParquetFileConstants.ENROLMENT_MASTER,"User Master Created")
+
+def prefetchDataAndOutputToComputeFileInChunks(duckdb_conn,table1,table2,output,category):
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"\n[INFO] Prefetching {table1} {table2} Data...")
+    print(output)
+    start_time = time.time()
+
+    duckutil.chunkedQueryExecution(duckdb_conn,ParquetFileConstants.USER_ORG_CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE,ParquetFileConstants.USER_MASTER,ParquetFileConstants.USER_MASTER)
+    print(f"[SUCCESS] User data fetched and saved to {output}.")
+    
+    print(f"[INFO] User Data Prefetch Completed in {round(time.time() - start_time, 2)} seconds.")
+
 
 def prefetchDataAndOutputToComputeFile(duckdb_conn,query,output,category):
     output_path = Path(output)

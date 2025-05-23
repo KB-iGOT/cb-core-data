@@ -46,7 +46,7 @@ def getOrgUserRoleDataFrame(duckdb_conn):
 
 def getAcbpDetailsDataFrame(duckdb_conn):
     """Fetch ACBPDetails"""
-    queryToExecute = QueryConstants.FETCH_COMPUTED_ACBP_DETAILS
+    queryToExecute = QueryConstants.FETCH_ACBP_DETAILS
     return duckutil.executeQuery(duckdb_conn,queryToExecute)
 
 def getExplodedACBPDetailsDataFrame(duckdb_conn):

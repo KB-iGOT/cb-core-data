@@ -17,7 +17,7 @@ class QueryConstants:
     LEFT JOIN 
         read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}') AS o 
     ON 
-        u.regorgid = o.id
+        u.rootorgid = o.id
     LEFT JOIN 
         read_parquet('{ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE}') AS h 
     ON 
@@ -33,7 +33,7 @@ class QueryConstants:
         read_parquet('{ParquetFileConstants.USER_PARQUET_FILE}') AS u
         LEFT JOIN 
         read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}') AS o
-        ON u.regorgid = o.id
+        ON u.rootorgid = o.id
         LEFT JOIN LATERAL (
         SELECT ARRAY_AGG(role) AS roles
         FROM read_parquet('{ParquetFileConstants.ROLE_PARQUET_FILE}') AS r
@@ -50,8 +50,8 @@ class QueryConstants:
     """
 
     PREFETCH_ENROLMENT_WITH_CONTENT_DATA_USER_ORG_ROLE_DATA = f"""
-        select cpe.*,uo.userid,uo.email,uo.emailverified,uo.firstname,uo.lastname,
-        uo.roles,uo.regorgid,uo.orgname,uo.status,uo.organisationtype,uo.organisationsubtype FROM 
+        select cpe.*,uo.userid,uo.email,uo.emailverified,uo.firstname,uo.lastname,uo.profiledetails,
+        uo.roles,uo.rootorgid,uo.orgname,uo.status,uo.organisationtype,uo.organisationsubtype FROM 
         read_parquet('{ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE}') AS cpe
         LEFT JOIN
         read_parquet('{ParquetFileConstants.USER_ORG_HIERARCHY_COMPUTED_PARQUET_FILE}') AS uo
@@ -159,8 +159,8 @@ class QueryConstants:
         
     """
     
-    FETCH_COMPUTED_ACBP_DETAILS = f"""
-        select * from read_parquet('{ParquetFileConstants.ACBP_COMPUTED_PARQUET_FILE}')
+    FETCH_ACBP_DETAILS = f"""
+        select * from read_parquet('{ParquetFileConstants.ACBP_PARQUET_FILE}')
     """
     
     FETCH_CONTENT_ID_BY_HIERARCHY = f"""
