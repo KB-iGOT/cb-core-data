@@ -113,6 +113,10 @@ class QueryConstants:
         ON en.courseId = ra.activityId AND en.userId = ra.userId
     """
 
+    PREFETCH_ACBP_ENROLMENT_WITH_CONTENT = f"""
+        select 
+    """
+
 
     
 
