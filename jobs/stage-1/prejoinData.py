@@ -56,7 +56,7 @@ def main():
         ### 
         ##########################################################
     """)
-    preFetchACBPDataWithContentEnrolments(duck_conn)
+    #preFetchACBPDataWithContentEnrolments(duck_conn)
 
     print("[INFO] DuckDB connection closed.")
 
