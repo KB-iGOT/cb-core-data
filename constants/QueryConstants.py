@@ -26,18 +26,14 @@ class QueryConstants:
 
     PRE_FETCH_USER_ORG_ROLE_DATA = f"""
         SELECT 
-        u.*,
-        o.*,
+        uoh.*,
         r.roles
         FROM 
-        read_parquet('{ParquetFileConstants.USER_PARQUET_FILE}') AS u
-        LEFT JOIN 
-        read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}') AS o
-        ON u.rootorgid = o.id
+        read_parquet('{ParquetFileConstants.USER_ORG_HIERARCHY_COMPUTED_PARQUET_FILE}') AS uoh
         LEFT JOIN LATERAL (
         SELECT ARRAY_AGG(role) AS roles
         FROM read_parquet('{ParquetFileConstants.ROLE_PARQUET_FILE}') AS r
-        WHERE r.userid = u.userID
+        WHERE r.userid = uoh.userID
         ) AS r ON TRUE
     """
     
@@ -71,15 +67,19 @@ class QueryConstants:
         activityid
     """
 
-    PREFETCH_CONTENT_WITH_RATINGS = f"""
+    PREFETCH_CONTENT_WITH_RATINGS_WITH_HIERARCHY = f"""
         SELECT 
         e.*,
-        r.* 
+        r.*, 
+        h.hierarchy
         FROM
         read_parquet('{ParquetFileConstants.ESCONTENT_PARQUET_FILE}') AS e
         LEFT JOIN
         read_parquet('{ParquetFileConstants.CONTENT_RATINGS_COMPUTED_FILE}') AS r
         ON e.identifier = r.activityId
+        LEFT JOIN
+        read_parquet('{ParquetFileConstants.HIERARCHY_PARQUET_FILE}') AS h
+        ON e.identifier= h.identifier
     """
 
     PREFETCH_MASTER_CONTENT_WITH_RATINGS_ORG_OWNERSHIP = f"""
@@ -101,11 +101,16 @@ class QueryConstants:
         ON uor.userid = cl.userid
     """
 
-    PREFETCH_MASTER_ENROLMENT_WITH_BATCH = f"""
-        select en.*,b.* from read_parquet('{ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE}') AS en
+    PREFETCH_ENROLMENT_WITH_BATCH_AND_RATING = f"""
+        select en.*,b.name as courseBatchName,b.createdby as courseBatchCreatedBy,
+        b.start_date as courseBatchStartDate,b.enddate as courseBatchEndDate,
+        COALESCE(batch_attributes, '{{}}') AS courseBatchAttrs,ra.* from read_parquet('{ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE}') AS en
         LEFT JOIN
         read_parquet('{ParquetFileConstants.BATCH_PARQUET_FILE}') As b
         ON en.batchid = b.batchid
+        LEFT JOIN
+        read_parquet('{ParquetFileConstants.RATING_PARQUET_FILE}') As ra
+        ON en.courseId = ra.activityId AND en.userId = ra.userId
     """
 
 

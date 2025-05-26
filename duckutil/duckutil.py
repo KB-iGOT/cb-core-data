@@ -2,6 +2,7 @@ import duckdb
 import time
 import os
 from pathlib import Path
+import pandas as pd
 from constants.ParquetFileConstants import ParquetFileConstants
 
 
@@ -126,3 +127,28 @@ def chunkedQueryExecution(duckdb_conn, table1, table2, output):
         batch_num += 1
 
     print("All batches processed.")
+
+
+def write_to_parquet_with_duckdb(df, output_path):
+    """
+    Writes a Spark or Pandas DataFrame to a Parquet file using DuckDB.
+
+    Parameters:
+    df (pyspark.sql.DataFrame or pandas.DataFrame): The input DataFrame.
+    output_path (str): The path to write the Parquet file.
+    """
+    if isinstance(df, pd.DataFrame):
+        pdf = df
+    else:
+        try:
+            # Assuming it's a Spark DataFrame
+            pdf = df.toPandas()
+        except Exception as e:
+            raise TypeError("Input must be a Pandas or Spark DataFrame") from e
+
+    # Use DuckDB to write the DataFrame to a Parquet file
+    con = duckdb.connect()
+    con.register("temp_df", pdf)
+    con.execute(f"COPY temp_df TO '{output_path}' (FORMAT 'parquet')")
+    con.unregister("temp_df")
+    con.close()

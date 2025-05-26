@@ -46,8 +46,18 @@ def main():
         ##########################################################
     """)
     prejoinEnrolmentContentData(duck_conn)
-    prejoinUserOrgContentEnrolmentData(duck_conn)
-    prejoinEnrolmentBatch(duck_conn)
+    prejoinEnrolmentContentBatchData(duck_conn)
+    #prejoinUserOrgContentEnrolmentData(duck_conn)
+    #prejoinEnrolmentBatch(duck_conn)
+    print(f"""
+        ##########################################################
+        ###            
+        ###             ACBP Enrolment
+        ### 
+        ##########################################################
+    """)
+    preFetchACBPDataWithContentEnrolments(duck_conn)
+
     print("[INFO] DuckDB connection closed.")
 
 def prefetchUserOrgData(duckdb_conn):
@@ -71,8 +81,8 @@ def aggregateContentRatingsData(duckdb_conn):
             ParquetFileConstants.CONTENT_RATINGS_COMPUTED_FILE,"Content Ratings Pre Compute")
 
 def prejoinContentWithRatingsData(duckdb_conn):
-    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_CONTENT_WITH_RATINGS,
-            ParquetFileConstants.CONTENT_WITH_RATINGS_COMPUTED_FILE,"Content Ratings Joined Data")
+    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_CONTENT_WITH_RATINGS_WITH_HIERARCHY,
+            ParquetFileConstants.CONTENT_WITH_RATINGS_COMPUTED_FILE,"Content Ratings Hierarchy Joined Data")
 
 def prejoinContentWithRatingsAndOrgData(duckdb_conn):
      prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_CONTENT_WITH_RATINGS_ORG_OWNERSHIP,
@@ -82,10 +92,13 @@ def prejoinUserOrgRoleKarmaPointsAndClaps(duckdb_conn):
     prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_USER_WITH_CLAPS_AND_POINTS,
             ParquetFileConstants.USER_MASTER,"User Master Created")
 
-def prejoinEnrolmentBatch(duckdb_conn):
-    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_ENROLMENT_WITH_BATCH,
-            ParquetFileConstants.ENROLMENT_MASTER,"User Master Created")
+def prejoinEnrolmentContentBatchData(duckdb_conn):
+    prefetchDataAndOutputToComputeFile(duckdb_conn, QueryConstants.PREFETCH_ENROLMENxT_WITH_BATCH_AND_RATING,
+            ParquetFileConstants.ENROLMENT_MASTER,"Enrolment Batch Updated")
 
+
+    
+            
 def prefetchDataAndOutputToComputeFileInChunks(duckdb_conn,table1,table2,output,category):
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

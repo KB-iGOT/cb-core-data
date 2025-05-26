@@ -19,10 +19,11 @@ from constants.QueryConstants import QueryConstants
 def content_es_dataframe(spark_session, primary_categories: list, prefix: str = "course") -> DataFrame:
 
     # Fetch the ElasticSearch data directly as DuckDB Parquet Path
-    content_parquet_path = ParquetFileConstants.ESCONTENT_PARQUET_FILE  # Replace with the actual path
+    content_parquet_path = ParquetFileConstants.CONTENT_MASTER  # Replace with the actual path
     contentForPrimaryCategoryDF = spark_session.read.parquet(content_parquet_path) \
         .filter(F.col("primaryCategory").isin(primary_categories))
-
+    print("Content For Primary")
+    print(contentForPrimaryCategoryDF.count())
     # Process DataFrame
     processed_df = (
         contentForPrimaryCategoryDF
@@ -49,7 +50,7 @@ def content_es_dataframe(spark_session, primary_categories: list, prefix: str = 
 
 def all_course_program_es_data_frame(spark_session, primary_categories: list) -> DataFrame:
     # Directly load the Parquet file using Spark (replace with the actual path)
-    content_parquet_path = ParquetFileConstants.ESCONTENT_PARQUET_FILE  # Replace with the actual path
+    content_parquet_path = ParquetFileConstants.CONTENT_MASTER  # Replace with the actual path
     content_df = spark_session.read.parquet(content_parquet_path) \
         .filter(F.col("primaryCategory").isin(primary_categories)).withColumn("competencyAreaRefId", F.col("competencies_v6")["competencyAreaRefId"]) \
             .withColumn("competencyThemeRefId", F.col("competencies_v6")["competencyThemeRefId"]) \

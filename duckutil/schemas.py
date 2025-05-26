@@ -110,6 +110,38 @@ frac_competency_schema = StructType([
     StructField("competencyName", StringType(), True),
     StructField("competencyStatus", StringType(), True)
 ])
+
+# 1. profileCompetencySchema
+profile_competency_schema = StructType([
+    StructField("id", StringType(), True),
+    StructField("name", StringType(), True),
+    StructField("status", StringType(), True),
+    StructField("competencyType", StringType(), True),
+    StructField("competencySelfAttestedLevel", StringType(), True),  # handles both string/int safely
+    StructField("competencySelfAttestedLevelValue", StringType(), True)
+])
+
+# 2. professionalDetailsSchema
+professional_details_schema = StructType([
+    StructField("designation", StringType(), True),
+    StructField("group", StringType(), True)
+])
+
+# 3. employmentDetailsSchema
+employment_details_schema = StructType([
+    StructField("departmentName", StringType(), True),
+    StructField("employeeCode", StringType(), True)
+])
+
+# 4. personalDetailsSchema
+personal_details_schema = StructType([
+    StructField("phoneVerified", StringType(), True),
+    StructField("gender", StringType(), True),
+    StructField("category", StringType(), True),
+    StructField("mobile", StringType(), True),
+    StructField("primaryEmail", StringType(), True)
+])
+
 # Function to define child schema (recursive)
 def make_hierarchy_child_schema(include_children=False):
     fields = [
