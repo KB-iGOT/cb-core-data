@@ -46,9 +46,9 @@ def main():
         ##########################################################
     """)
     prejoinEnrolmentContentData(duck_conn)
-    prejoinEnrolmentContentBatchData(duck_conn)
+    prejoinEnrolmentBatchData(duck_conn)
+    # prejoinEnrolmentContentBatchData(duck_conn)
     #prejoinUserOrgContentEnrolmentData(duck_conn)
-    #prejoinEnrolmentBatch(duck_conn)
     print(f"""
         ##########################################################
         ###            
@@ -92,10 +92,14 @@ def prejoinUserOrgRoleKarmaPointsAndClaps(duckdb_conn):
     prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_USER_WITH_CLAPS_AND_POINTS,
             ParquetFileConstants.USER_MASTER,"User Master Created")
 
-def prejoinEnrolmentContentBatchData(duckdb_conn):
-    prefetchDataAndOutputToComputeFile(duckdb_conn, QueryConstants.PREFETCH_ENROLMENxT_WITH_BATCH_AND_RATING,
-            ParquetFileConstants.ENROLMENT_MASTER,"Enrolment Batch Updated")
+# def prejoinEnrolmentContentBatchData(duckdb_conn):
+#     prefetchDataAndOutputToComputeFile(duckdb_conn, QueryConstants.PREFETCH_ENROLMENxT_WITH_BATCH_AND_RATING,
+#             ParquetFileConstants.ENROLMENT_MASTER,"Enrolment Batch Updated")
 
+
+def prejoinEnrolmentBatchData(duckdb_conn):
+    prefetchDataAndOutputToComputeFile(duckdb_conn,QueryConstants.PREFETCH_MASTER_ENROLMENT_WITH_BATCH,
+            ParquetFileConstants.ENROLMENT_MASTER,"Enrolment Master with batch Created")
 
     
             

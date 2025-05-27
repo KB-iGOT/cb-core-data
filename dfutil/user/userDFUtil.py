@@ -1,72 +1,127 @@
 import sys
 from pathlib import Path
-from pyspark.sql import DataFrame, SparkSession, functions as F
-from pyspark.sql.types import *
+import pandas as pd
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import (
+    col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace
+)
+from pyspark.sql.types import LongType
 
 
-
-
-# ==============================
-# 1. Configuration and Constants
-# ==============================
-
-# Ensure the parent directory is in sys.path for absolute imports
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from duckutil import duckutil, datautil,schemas  # Assuming duckutil is in the parent directory
-from constants.ParquetFileConstants import ParquetFileConstants
-from constants.QueryConstants import QueryConstants
+from duckutil import schemas
+from ParquetFileConstants import ParquetFileConstants
 
-def getUserOrgHierarchy(spark: SparkSession):
-    user_org_with_hierarchy = spark.read.parquet(ParquetFileConstants.USER_ORG_HIERARCHY_COMPUTED_PARQUET_FILE)
-    print(user_org_with_hierarchy.count())
-    profile_details_schema = make_profile_details_schema(professional_details=True)
-
-    parsed_df = user_org_with_hierarchy.withColumn(
-        "profileDetailsParsed", F.from_json(F.col("profiledetails"), profile_details_schema)
+def getUserOrgHierarchy(spark: SparkSession) -> DataFrame:
+    """
+    Process user organization hierarchy data from parquet file
+    
+    Args:
+        spark: SparkSession instance
+    
+    Returns:
+        DataFrame: Processed user organization hierarchy DataFrame
+    """
+    
+    # Read parquet file
+    user_org_hierarchy = spark.read.parquet(ParquetFileConstants.USER_ORG_HIERARCHY_COMPUTED_PARQUET_FILE)
+    
+    # Parse profiledetails JSON and extract designation from professionalDetails
+    profile_details_schema = schemas.makeProfileDetailsSchema(
+        additionalProperties=True, 
+        professionalDetails=True
     )
-    print(parsed_df)
-    user_org_with_hierarchy_df = (
-        parsed_df
-        .withColumn("designation", F.coalesce(F.col("profileDetailsParsed.professionalDetails.designation"), F.lit("")))
-        .withColumn("group", F.coalesce(F.col("profileDetailsParsed.professionalDetails.group"), F.lit("")))
-        .withColumn("userPrimaryEmail", F.col("profileDetailsParsed.personalDetails.primaryEmail"))
-        .withColumn("userMobile", F.col("profileDetailsParsed.personalDetails.mobile"))
-        .withColumn("fullName", F.rtrim(F.concat_ws(" ", F.col("firstName"), F.col("lastName"))))
-        .withColumn('userStatus',F.col('status'))
-        .withColumn('userOrgID',F.col('rootorgid'))
-        .withColumn('ministry_name',F.col('ministry'))
-        .withColumn('dept_name',F.col('deptname'))
-        .withColumn('userOrgName',F.col('orgname'))
-        .select(
-            "userID", "fullName", "userStatus", "userPrimaryEmail", "userMobile",
-            "userOrgID", "ministry_name", "dept_name", "userOrgName", "designation", "group"
-        )
+    
+    # Select and transform columns
+    result_df = user_org_hierarchy.select(
+        # User columns
+        col("id").alias("userID"),
+        col("firstname").alias("firstName"), 
+        col("lastname").alias("lastName"),
+        col("maskedemail").alias("maskedEmail"),
+        col("maskedphone").alias("maskedPhone"),
+        col("rootorgid").alias("userOrgID"),
+        col("status").alias("userStatus"),
+        col("createddate").alias("userCreatedTimestamp"),
+        col("updateddate").alias("userUpdatedTimestamp"),
+        col("profiledetails").alias("userProfileDetails"),
+        col("createdby").alias("userCreatedBy"),
+
+        # Organization columns   
+        # col("id_1").alias("orgID"),
+        # col("orgname").alias("orgName"),
+        # col("status_1").alias("orgStatus"),
+        # col("createddate_1").alias("orgCreatedDate"),
+        # col("organisationtype").alias("orgType"),
+        # col("organisationsubtype").alias("orgSubType"),
+
+        # col("id_1").alias("userOrgID"),
+        col("orgname").alias("userOrgName"),
+        col("status_1").alias("userOrgStatus"),
+        col("createddate_1").alias("userOrgCreatedDate"),
+        col("organisationtype").alias("userOrgType"),
+        col("organisationsubtype").alias("userOrgSubType"),
+
+        # Hierarchy columns
+        col("department").alias("dept_name"),
+        col("ministry").alias("ministry_name")
+    ).na.fill("", ["userOrgID", "firstName", "lastName", "userOrgName"]) \
+    .na.fill("{}", ["userProfileDetails"]) \
+    .withColumn("profileDetails", from_json(col("userProfileDetails"), profile_details_schema)) \
+    .withColumn("personalDetails", col("profileDetails.personalDetails")) \
+    .withColumn("employmentDetails", col("profileDetails.employmentDetails")) \
+    .withColumn("professionalDetails", explode_outer(col("profileDetails.professionalDetails"))) \
+    .withColumn("designation", coalesce(col("professionalDetails.designation"), lit(""))) \
+    .withColumn("userVerified", 
+        when(col("profileDetails.verifiedKarmayogi").isNull(), False)
+        .otherwise(col("profileDetails.verifiedKarmayogi"))) \
+    .withColumn("userMandatoryFieldsExists", col("profileDetails.mandatoryFieldsExists")) \
+    .withColumn("userProfileImgUrl", col("profileDetails.profileImageUrl")) \
+    .withColumn("userProfileStatus", col("profileDetails.profileStatus")) \
+    .withColumn("userPhoneVerified", expr("LOWER(personalDetails.phoneVerified) = 'true'")) \
+    .withColumn("fullName", rtrim(concat_ws(" ", col("firstName"), col("lastName"))))
+    
+    # Try to add additionalProperties (handle potential typo in column name)
+    try:
+        result_df = result_df.withColumn("additionalProperties", col("profileDetails.additionalPropertis"))
+    except:
+        result_df = result_df.withColumn("additionalProperties", col("profileDetails.additionalProperties"))
+    
+    # Drop intermediate columns
+    result_df = result_df.drop("profileDetails", "userProfileDetails")
+
+    # result_df = result_df \
+    # .withColumn("personalDetails", col("personalDetails").cast("string")) \
+    # .withColumn("employmentDetails", col("employmentDetails").cast("string")) \
+    # .withColumn("professionalDetails", col("professionalDetails").cast("string")) \
+    # .withColumn("additionalProperties", col("additionalProperties").cast("string"))
+    
+    # # Convert timestamps to long (Unix timestamp)
+    result_df = result_df \
+       .withColumn("userCreatedTimestamp", 
+                regexp_replace(col("userCreatedTimestamp"), r":(\d{3})\+", r".$1+")) \
+    .withColumn("userUpdatedTimestamp", 
+                regexp_replace(col("userUpdatedTimestamp"), r":(\d{3})\+", r".$1+")) \
+    .withColumn("userOrgCreatedDate", 
+                regexp_replace(col("userOrgCreatedDate"), r":(\d{3})\+", r".$1+")) \
+    .withColumn("userCreatedTimestamp", 
+                regexp_replace(col("userCreatedTimestamp"), r"\+0000$", r"Z")) \
+    .withColumn("userUpdatedTimestamp", 
+                regexp_replace(col("userUpdatedTimestamp"), r"\+0000$", r"Z")) \
+    .withColumn("userOrgCreatedDate", 
+                regexp_replace(col("userOrgCreatedDate"), r"\+0000$", r"Z")) \
+    .withColumn("userCreatedTimestamp", unix_timestamp(col("userCreatedTimestamp")).cast(LongType())) \
+    .withColumn("userUpdatedTimestamp", unix_timestamp(col("userUpdatedTimestamp")).cast(LongType())) \
+    .withColumn("userOrgCreatedDate", unix_timestamp(col("userOrgCreatedDate")).cast(LongType()))
+    
+    return result_df
+
+def userCourseRatingDataframe(spark):
+    df = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE).select(
+    col("activityid").alias("courseID"),
+    col("userid").alias("userID"),
+    col("rating").alias("userRating"),
+    col("activitytype").alias("cbpType"),
+    col("createdon").alias("createdOn")
     )
-    return user_org_with_hierarchy_df
-
-
-def make_profile_details_schema(
-    competencies=False,
-    additional_properties=False,
-    professional_details=False
-):
-    fields = [
-        StructField("verifiedKarmayogi", BooleanType(), True),
-        StructField("mandatoryFieldsExists", BooleanType(), True),
-        StructField("profileImageUrl", StringType(), True),
-        StructField("personalDetails", schemas.personal_details_schema, True),
-        StructField("employmentDetails", schemas.employment_details_schema, True),
-        StructField("profileStatus", StringType(), True)
-    ]
-
-    if competencies:
-        fields.append(StructField("competencies", ArrayType(schemas.profile_competency_schema), True))
-
-    if additional_properties:
-        fields.append(StructField("additionalProperties", schemas.additional_properties_schema, True))
-        fields.append(StructField("additionalPropertis", schemas.additional_properties_schema, True))  # Preserving typo?
-
-    if professional_details:
-        fields.append(StructField("professionalDetails", schemas.professional_details_schema, True))
-
-    return StructType(fields)
+    return df
