@@ -11,7 +11,7 @@ profile_competency_schema = StructType([
     StructField("competencySelfAttestedLevelValue", StringType(), True)
 ])
 
-professional_details_schema = StructType([
+professionalDetailsSchema = StructType([
     StructField("designation", StringType(), True),
     StructField("group", StringType(), True)
 ])
@@ -24,12 +24,13 @@ employment_details_schema = StructType([
 personal_details_schema = StructType([
     StructField("phoneVerified", StringType(), True),
     StructField("gender", StringType(), True),
+    StructField("pincode", StringType(), True),
     StructField("category", StringType(), True),
     StructField("mobile", StringType(), True),
     StructField("primaryEmail", StringType(), True)
 ])
 
-additional_properties_schema = StructType([
+additionalPropertiesSchema = StructType([
     StructField("tag", ArrayType(StringType()), True),
     StructField("externalSystemId", StringType(), True),
     StructField("externalSystem", StringType(), True)
@@ -38,8 +39,8 @@ additional_properties_schema = StructType([
 # Method to build the profileDetails schema
 def makeProfileDetailsSchema(
     competencies=False,
-    additional_properties=False,
-    professional_details=False
+    additionalProperties=False,
+    professionalDetails=False
 ) -> StructType:
     fields = [
         StructField("verifiedKarmayogi", BooleanType(), True),
@@ -53,12 +54,12 @@ def makeProfileDetailsSchema(
     if competencies:
         fields.append(StructField("competencies", ArrayType(profile_competency_schema), True))
 
-    if additional_properties:
-        fields.append(StructField("additionalProperties", additional_properties_schema, True))
-        fields.append(StructField("additionalPropertis", additional_properties_schema, True))  
+    if additionalProperties:
+        fields.append(StructField("additionalProperties", additionalPropertiesSchema, True))
+        fields.append(StructField("additionalPropertis", additionalPropertiesSchema, True))  
 
-    if professional_details:
-        fields.append(StructField("professionalDetails", ArrayType(professional_details_schema), True))
+    if additionalProperties:
+        fields.append(StructField("professionalDetails", ArrayType(professionalDetailsSchema), True))
 
     return StructType(fields)
 
@@ -110,38 +111,6 @@ frac_competency_schema = StructType([
     StructField("competencyName", StringType(), True),
     StructField("competencyStatus", StringType(), True)
 ])
-
-# 1. profileCompetencySchema
-profile_competency_schema = StructType([
-    StructField("id", StringType(), True),
-    StructField("name", StringType(), True),
-    StructField("status", StringType(), True),
-    StructField("competencyType", StringType(), True),
-    StructField("competencySelfAttestedLevel", StringType(), True),  # handles both string/int safely
-    StructField("competencySelfAttestedLevelValue", StringType(), True)
-])
-
-# 2. professionalDetailsSchema
-professional_details_schema = StructType([
-    StructField("designation", StringType(), True),
-    StructField("group", StringType(), True)
-])
-
-# 3. employmentDetailsSchema
-employment_details_schema = StructType([
-    StructField("departmentName", StringType(), True),
-    StructField("employeeCode", StringType(), True)
-])
-
-# 4. personalDetailsSchema
-personal_details_schema = StructType([
-    StructField("phoneVerified", StringType(), True),
-    StructField("gender", StringType(), True),
-    StructField("category", StringType(), True),
-    StructField("mobile", StringType(), True),
-    StructField("primaryEmail", StringType(), True)
-])
-
 # Function to define child schema (recursive)
 def make_hierarchy_child_schema(include_children=False):
     fields = [
@@ -382,3 +351,16 @@ kcm_schema = StructType([
         ])), False)
     ])), False)
 ])
+
+cios_data_schema = StructType([
+        StructField("content", StructType([
+            StructField("name", StringType(), True),
+            StructField("duration", StringType(), True),
+            StructField("lastUpdatedOn", StringType(), True),
+            StructField("contentPartner", StructType([
+                StructField("id", StringType(), True),
+                StructField("contentPartnerName", StringType(), True)
+            ]), True)
+        ]), True)
+    ])
+

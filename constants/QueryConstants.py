@@ -33,7 +33,7 @@ class QueryConstants:
         LEFT JOIN LATERAL (
         SELECT ARRAY_AGG(role) AS roles
         FROM read_parquet('{ParquetFileConstants.ROLE_PARQUET_FILE}') AS r
-        WHERE r.userid = uoh.userID
+        WHERE r.userid = uoh.userid
         ) AS r ON TRUE
     """
     
@@ -41,8 +41,17 @@ class QueryConstants:
         SELECT en.*,con.* FROM 
         read_parquet('{ParquetFileConstants.ENROLMENT_PARQUET_FILE}') AS en
         LEFT JOIN
-        read_parquet('{ParquetFileConstants.ESCONTENT_PARQUET_FILE}') AS con
+        read_parquet('{ParquetFileConstants.CONTENT_MASTER}') AS con
         ON en.courseid = con.identifier
+    """
+
+    PREFETCH_USER_ORG_ENROLMENT_RATINGS_CONTENT_DATA = f"""
+        SELECT uoce.*,cr.* FROM 
+        read_parquet('{ParquetFileConstants.USER_ORG_CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE}') AS uoce
+        LEFT JOIN
+        read_parquet('{ParquetFileConstants.USER_RATINGS_COMPUTED_FILE}') AS cr
+        ON uoce.identifier = cr.activityId and uoce.userID = cr.userId
+
     """
 
     PREFETCH_ENROLMENT_WITH_CONTENT_DATA_USER_ORG_ROLE_DATA = f"""
@@ -67,23 +76,34 @@ class QueryConstants:
         activityid
     """
 
+    PREFETCH_USER_RATINGS = f"""
+        SELECT 
+        activityid,
+        userid,
+        rating,
+        activitytype,
+        createdon,
+        FROM 
+        read_parquet('{ParquetFileConstants.RATING_PARQUET_FILE}')
+        WHERE 
+        rating IS NOT NULL
+    """
+
     PREFETCH_CONTENT_WITH_RATINGS_WITH_HIERARCHY = f"""
         SELECT 
         e.*,
         r.*, 
-        h.hierarchy
+
         FROM
         read_parquet('{ParquetFileConstants.ESCONTENT_PARQUET_FILE}') AS e
         LEFT JOIN
         read_parquet('{ParquetFileConstants.CONTENT_RATINGS_COMPUTED_FILE}') AS r
         ON e.identifier = r.activityId
-        LEFT JOIN
-        read_parquet('{ParquetFileConstants.HIERARCHY_PARQUET_FILE}') AS h
-        ON e.identifier= h.identifier
+       
     """
 
     PREFETCH_MASTER_CONTENT_WITH_RATINGS_ORG_OWNERSHIP = f"""
-        select cwr.* FROM read_parquet('{ParquetFileConstants.CONTENT_WITH_RATINGS_COMPUTED_FILE}') AS cwr
+        select cwr.*,o.* FROM read_parquet('{ParquetFileConstants.CONTENT_WITH_RATINGS_COMPUTED_FILE}') AS cwr
         LEFT JOIN
         read_parquet('{ParquetFileConstants.ORG_PARQUET_FILE}') As o
         ON cwr.createdFor[0] = o.id 
@@ -101,20 +121,11 @@ class QueryConstants:
         ON uor.userid = cl.userid
     """
 
-    PREFETCH_ENROLMENT_WITH_BATCH_AND_RATING = f"""
-        select en.*,b.name as courseBatchName,b.createdby as courseBatchCreatedBy,
-        b.start_date as courseBatchStartDate,b.enddate as courseBatchEndDate,
-        COALESCE(batch_attributes, '{{}}') AS courseBatchAttrs,ra.* from read_parquet('{ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE}') AS en
+    PREFETCH_MASTER_ENROLMENT_WITH_BATCH = f"""
+        select en.*,b.* from read_parquet('{ParquetFileConstants.CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE}') AS en
         LEFT JOIN
         read_parquet('{ParquetFileConstants.BATCH_PARQUET_FILE}') As b
         ON en.batchid = b.batchid
-        LEFT JOIN
-        read_parquet('{ParquetFileConstants.RATING_PARQUET_FILE}') As ra
-        ON en.courseId = ra.activityId AND en.userId = ra.userId
-    """
-
-    PREFETCH_ACBP_ENROLMENT_WITH_CONTENT = f"""
-        select 
     """
 
 

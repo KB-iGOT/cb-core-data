@@ -1,9 +1,11 @@
+
 import sys
 from pathlib import Path
-from pyspark.sql import DataFrame, SparkSession, functions as F
+from pyspark.sql import SparkSession, DataFrame,functions as F
+from pyspark.sql.functions import col, from_json, lit, explode
 from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType
-
-
+from typing import List
+from functools import reduce
 
 # ==============================
 # 1. Configuration and Constants
@@ -453,4 +455,217 @@ def content_dataframes(
         all_course_program_details_with_rating_df
     )
 
+
+
+def withUserCourseCompletionStatusColumn(df: DataFrame) -> DataFrame:
+    """Calculate completion percentage with boundary checks"""
+    df = df.withColumn(
+        "completionPercentage",
+        F.expr("""
+            CASE 
+                WHEN courseResourceCount = 0 OR courseProgress = 0 OR dbCompletionStatus = 0 THEN 0.0 
+                WHEN dbCompletionStatus = 2 THEN 100.0 
+                ELSE 100.0 * courseProgress / courseResourceCount 
+            END
+        """)
+    )
+    df = df.withColumn(
+        "completionPercentage",
+        F.expr("""
+            CASE 
+                WHEN completionPercentage > 100.0 THEN 100.0 
+                WHEN completionPercentage < 0.0 THEN 0.0  
+                ELSE completionPercentage 
+            END
+        """)
+    )
+    return df
+
+def withCompletionPercentageColumn(df: DataFrame) -> DataFrame:
+    """
+    completionPercentage   completionStatus    IDI status
+    NULL                   not-enrolled        not-started
+    0.0                    enrolled            not-started
+    0.0 < % < 10.0         started             enrolled
+    10.0 <= % < 100.0      in-progress         in-progress
+    100.0                  completed           completed
+    """
+    return df.withColumn(
+        "completionStatus",
+        F.expr("""
+            CASE 
+                WHEN completionPercentage IS NULL THEN 'not-enrolled' 
+                WHEN completionPercentage = 0.0 THEN 'enrolled' 
+                WHEN completionPercentage < 10.0 THEN 'started' 
+                WHEN completionPercentage < 100.0 THEN 'in-progress' 
+                ELSE 'completed' 
+            END
+        """)
+    )
+
+def withOldCompletionStatusColumn(df: DataFrame) -> DataFrame:
+    """
+    dbCompletionStatus     userCourseCompletionStatus
+    NULL                   not-enrolled
+    0                      not-started
+    1                      in-progress
+    2                      completed
+    """
+    return df.withColumn(
+        "userCourseCompletionStatus",
+        F.expr("""
+            CASE 
+                WHEN dbCompletionStatus IS NULL THEN 'not-enrolled' 
+                WHEN dbCompletionStatus = 0 THEN 'not-started' 
+                WHEN dbCompletionStatus = 1 THEN 'in-progress' 
+                ELSE 'completed' 
+            END
+        """)
+    )
+
+def allCourseProgramCompletionWithDetailsDataFrame(
+    user_course_program_completion_df: DataFrame,
+    all_course_program_details_df: DataFrame,
+    user_org_df: DataFrame
+) -> DataFrame:
+    """
+    Get course completion data with details attached
+    
+    Args:
+        user_course_program_completion_df: DataFrame(userID, courseID, batchID, courseCompletedTimestamp, 
+            courseEnrolledTimestamp, lastContentAccessTimestamp, courseProgress, dbCompletionStatus)
+        all_course_program_details_df: DataFrame(courseID, category, courseName, courseStatus,
+            courseReviewStatus, courseOrgID, courseOrgName, courseOrgStatus, courseDuration, courseResourceCount)
+        user_org_df: DataFrame(userID, firstName, lastName, maskedEmail, userStatus, 
+            userOrgID, userOrgName, userOrgStatus)
+    
+    Returns:
+        DataFrame with all joined fields plus calculated completion metrics
+    """
+    # Get distinct non-empty categories
+    category_list = all_course_program_details_df.select("category") \
+        .distinct() \
+        .filter(F.col("category").isNotNull() & (F.col("category") != "")) \
+        .rdd.flatMap(lambda x: x).collect()
+    
+    # Join dataframes
+    df = user_course_program_completion_df.join(
+        all_course_program_details_df, 
+        on=["courseID"], 
+        how="left"
+    ).filter(
+        F.col("category").isin(category_list)
+    ).join(
+        user_org_df, 
+        on=["userID"], 
+        how="left"
+    )
+    
+    # Add calculated columns
+    completion_percentage_df = withCompletionPercentageColumn(df)
+    old_completions_df = withOldCompletionStatusColumn(completion_percentage_df)
+    final_df = withUserCourseCompletionStatusColumn(old_completions_df)
+    
+    return final_df
+
+def calculate_course_progress(user_course_program_completion_df: DataFrame) -> DataFrame:
+    """Calculate course progress metrics"""
+    df = withCompletionPercentageColumn(user_course_program_completion_df)
+    df = withUserCourseCompletionStatusColumn(df)
+    return df
+
+
+
+def acbpDetailsDF(spark: SparkSession) -> DataFrame:
+    """
+    Get ACBP (Adaptive Competency Based Plan) details DataFrame
+    
+    Args:
+        spark: SparkSession instance
+        conf: Dashboard configuration
+        cache: Cache object with load method
+        schema: Schema object containing cbplan_draft_data_schema
+        
+    Returns:
+        DataFrame: Combined ACBP details from draft and non-draft data
+    """
+    
+    # Load and select basic ACBP data
+     # Define final column order
+    final_columns = [
+        "acbpID", "userOrgID", "acbpStatus", "acbpCreatedBy", "cbPlanName",
+        "assignmentType", "assignmentTypeInfo", "completionDueDate", 
+        "allocatedOn", "acbpCourseIDList"
+    ]
+    
+    # Load base data
+    df = spark.read.parquet(ParquetFileConstants.ACBP_PARQUET_FILE) \
+        .select(
+            col("id").alias("acbpID"),
+            col("orgid").alias("userOrgID"),
+            col("draftdata"),
+            col("status").alias("acbpStatus"),
+            col("createdby").alias("acbpCreatedBy"),
+            col("name").alias("cbPlanName"),
+            col("assignmenttype").alias("assignmentType"),
+            col("assignmenttypeinfo").alias("assignmentTypeInfo"),
+            col("enddate").alias("completionDueDate"),
+            col("publishedat").alias("allocatedOn"),
+            col("contentlist").alias("acbpCourseIDList")
+        ) \
+        .fillna("", ["cbPlanName"])
+    
+    # Draft data processing
+    draft_cbp_data = df \
+        .filter((col("acbpStatus") == "DRAFT") & col("draftdata").isNotNull()) \
+        .withColumn("draftData", from_json(col("draftdata"), schemas.cbplan_draft_data_schema)) \
+        .withColumn("cbPlanName", col("draftData.name")) \
+        .withColumn("assignmentType", col("draftData.assignmentType")) \
+        .withColumn("assignmentTypeInfo", col("draftData.assignmentTypeInfo")) \
+        .withColumn("completionDueDate", col("draftData.endDate")) \
+        .withColumn("allocatedOn", lit("not published")) \
+        .withColumn("acbpCourseIDList", col("draftData.contentList")) \
+        .select(*final_columns)  # Select only final columns
+    
+    # Non-draft data
+    non_draft_cbp_data = df \
+        .filter(col("acbpStatus") != "DRAFT") \
+        .select(*final_columns)  # Select only final columns
+    
+    return non_draft_cbp_data.union(draft_cbp_data)
+
+def exploded_acbp_details(acbp_df: DataFrame, user_data_df: DataFrame, columns: List[str]) -> DataFrame:
+    """
+    More concise version using reduce (similar to Scala)
+    """
+    
+    # CustomUser
+    acbp_custom_user_allotment_df = acbp_df \
+        .filter(col("assignmentType") == "CustomUser") \
+        .withColumn("userID", explode(col("assignmentTypeInfo"))) \
+        .join(user_data_df, ["userID", "userOrgID"], "left")
+    
+    # Designation  
+    acbp_designation_allotment_df = acbp_df \
+        .filter(col("assignmentType") == "Designation") \
+        .withColumn("designation", explode(col("assignmentTypeInfo"))) \
+        .join(user_data_df, ["userOrgID", "designation"], "left")
+    
+    # All User
+    acbp_all_user_allotment_df = acbp_df \
+        .filter(col("assignmentType") == "AllUser") \
+        .join(user_data_df, ["userOrgID"], "left")
+    
+    # List of DataFrames
+    dataframes = [
+        acbp_custom_user_allotment_df,
+        acbp_designation_allotment_df, 
+        acbp_all_user_allotment_df
+    ]
+    
+    # Select columns and union using reduce (most similar to Scala)
+    selected_dfs = [df.select(*columns) for df in dataframes]
+    acbp_allotment_df = reduce(lambda a, b: a.union(b), selected_dfs)
+    
+    return acbp_allotment_df
 
