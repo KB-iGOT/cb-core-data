@@ -36,6 +36,11 @@ additionalPropertiesSchema = StructType([
     StructField("externalSystem", StringType(), True)
 ])
 
+profile_schema = StructType([
+    StructField("professionaldetails", professionalDetailsSchema),
+    StructField("personaldetails", personal_details_schema)
+])
+
 # Method to build the profileDetails schema
 def makeProfileDetailsSchema(
     competencies=False,

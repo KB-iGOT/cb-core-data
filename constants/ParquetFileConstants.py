@@ -33,23 +33,7 @@ class ParquetFileConstants:
     ###
     ###  Computed Parquet File
     ###
-    USER_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_computed_data.parquet")
-    ACBP_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "acbp_computed_data.parquet")
-    
-    ## PreJoins
-    USER_ORG_HIERARCHY_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_hierarchy_computed_data.parquet")
-    USER_ORG_ROLE_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_role_computed_data.parquet")
-    CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user_content_program_enrolment_computed_data.parquet")
-    USER_ORG_CONTENT_PROGRAM_ENROLMENT_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_content_program_enrolment_computed_data.parquet")
-    USER_RATINGS_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user_ratings_computed_data.parquet")
-    CONTENT_RATINGS_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "content_ratings_computed_data.parquet")
-    CONTENT_WITH_RATINGS_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "content_with_ratings_computed_data.parquet")
-    USER_ORG_ENROLMENT_RATINGS_CONTENT_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user_org_enrolment_ratings_content_computed_data.parquet")
-    ## Master
-    CONTENT_MASTER = str(OUTPUT_COMPUTED_DIR / "content_master_computed_data.parquet")
-    USER_MASTER = str(OUTPUT_COMPUTED_DIR / "user_master_computed_data.parquet")
-    ENROLMENT_MASTER = str(OUTPUT_COMPUTED_DIR / "enrolment_master_computed_data.parquet")
-    #ACBP_USER_COURSE_PROGRAM_ENROLMENT_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "acbp_user_course_program_enrolment_computed_data.parquet")
+    USER_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "/user-computed/user_computed_data.parquet")
 # Example Usage:
 def main():
     print("Defined Static Parquet File Constants:")

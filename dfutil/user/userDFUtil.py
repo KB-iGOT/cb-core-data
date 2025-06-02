@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-import pandas as pd
+from pyspark.sql.types import *
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
     col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace
@@ -10,118 +10,78 @@ from pyspark.sql.types import LongType
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from duckutil import schemas
-from ParquetFileConstants import ParquetFileConstants
+from constants.ParquetFileConstants import ParquetFileConstants
 
-def getUserOrgHierarchy(spark: SparkSession) -> DataFrame:
-    """
-    Process user organization hierarchy data from parquet file
-    
-    Args:
-        spark: SparkSession instance
-    
-    Returns:
-        DataFrame: Processed user organization hierarchy DataFrame
-    """
-    
-    # Read parquet file
-    user_org_hierarchy = spark.read.parquet(ParquetFileConstants.USER_ORG_HIERARCHY_COMPUTED_PARQUET_FILE)
-    
-    # Parse profiledetails JSON and extract designation from professionalDetails
-    profile_details_schema = schemas.makeProfileDetailsSchema(
-        additionalProperties=True, 
-        professionalDetails=True
-    )
-    
-    # Select and transform columns
-    result_df = user_org_hierarchy.select(
-        # User columns
+def preComputeUser(spark: SparkSession) -> DataFrame:
+    userRawDF = spark.read.parquet(ParquetFileConstants.USER_PARQUET_FILE)
+
+    # Select and rename base fields
+    userDF = userRawDF.select(
         col("id").alias("userID"),
-        col("firstname").alias("firstName"), 
+        col("firstname").alias("firstName"),
         col("lastname").alias("lastName"),
         col("maskedemail").alias("maskedEmail"),
         col("maskedphone").alias("maskedPhone"),
         col("rootorgid").alias("userOrgID"),
         col("status").alias("userStatus"),
+        col("profiledetails").alias("userProfileDetails"),
         col("createddate").alias("userCreatedTimestamp"),
         col("updateddate").alias("userUpdatedTimestamp"),
-        col("profiledetails").alias("userProfileDetails"),
-        col("createdby").alias("userCreatedBy"),
-
-        # Organization columns   
-        # col("id_1").alias("orgID"),
-        # col("orgname").alias("orgName"),
-        # col("status_1").alias("orgStatus"),
-        # col("createddate_1").alias("orgCreatedDate"),
-        # col("organisationtype").alias("orgType"),
-        # col("organisationsubtype").alias("orgSubType"),
-
-        # col("id_1").alias("userOrgID"),
-        col("orgname").alias("userOrgName"),
-        col("status_1").alias("userOrgStatus"),
-        col("createddate_1").alias("userOrgCreatedDate"),
-        col("organisationtype").alias("userOrgType"),
-        col("organisationsubtype").alias("userOrgSubType"),
-
-        # Hierarchy columns
-        col("department").alias("dept_name"),
-        col("ministry").alias("ministry_name")
-    ).na.fill("", ["userOrgID", "firstName", "lastName", "userOrgName"]) \
-    .na.fill("{}", ["userProfileDetails"]) \
-    .withColumn("profileDetails", from_json(col("userProfileDetails"), profile_details_schema)) \
-    .withColumn("personalDetails", col("profileDetails.personalDetails")) \
-    .withColumn("employmentDetails", col("profileDetails.employmentDetails")) \
-    .withColumn("professionalDetails", explode_outer(col("profileDetails.professionalDetails"))) \
-    .withColumn("designation", coalesce(col("professionalDetails.designation"), lit(""))) \
-    .withColumn("userVerified", 
-        when(col("profileDetails.verifiedKarmayogi").isNull(), False)
-        .otherwise(col("profileDetails.verifiedKarmayogi"))) \
-    .withColumn("userMandatoryFieldsExists", col("profileDetails.mandatoryFieldsExists")) \
-    .withColumn("userProfileImgUrl", col("profileDetails.profileImageUrl")) \
-    .withColumn("userProfileStatus", col("profileDetails.profileStatus")) \
-    .withColumn("userPhoneVerified", expr("LOWER(personalDetails.phoneVerified) = 'true'")) \
-    .withColumn("fullName", rtrim(concat_ws(" ", col("firstName"), col("lastName"))))
-    
-    # Try to add additionalProperties (handle potential typo in column name)
-    try:
-        result_df = result_df.withColumn("additionalProperties", col("profileDetails.additionalPropertis"))
-    except:
-        result_df = result_df.withColumn("additionalProperties", col("profileDetails.additionalProperties"))
-    
-    # Drop intermediate columns
-    result_df = result_df.drop("profileDetails", "userProfileDetails")
-
-    # result_df = result_df \
-    # .withColumn("personalDetails", col("personalDetails").cast("string")) \
-    # .withColumn("employmentDetails", col("employmentDetails").cast("string")) \
-    # .withColumn("professionalDetails", col("professionalDetails").cast("string")) \
-    # .withColumn("additionalProperties", col("additionalProperties").cast("string"))
-    
-    # # Convert timestamps to long (Unix timestamp)
-    result_df = result_df \
-       .withColumn("userCreatedTimestamp", 
-                regexp_replace(col("userCreatedTimestamp"), r":(\d{3})\+", r".$1+")) \
-    .withColumn("userUpdatedTimestamp", 
-                regexp_replace(col("userUpdatedTimestamp"), r":(\d{3})\+", r".$1+")) \
-    .withColumn("userOrgCreatedDate", 
-                regexp_replace(col("userOrgCreatedDate"), r":(\d{3})\+", r".$1+")) \
-    .withColumn("userCreatedTimestamp", 
-                regexp_replace(col("userCreatedTimestamp"), r"\+0000$", r"Z")) \
-    .withColumn("userUpdatedTimestamp", 
-                regexp_replace(col("userUpdatedTimestamp"), r"\+0000$", r"Z")) \
-    .withColumn("userOrgCreatedDate", 
-                regexp_replace(col("userOrgCreatedDate"), r"\+0000$", r"Z")) \
-    .withColumn("userCreatedTimestamp", unix_timestamp(col("userCreatedTimestamp")).cast(LongType())) \
-    .withColumn("userUpdatedTimestamp", unix_timestamp(col("userUpdatedTimestamp")).cast(LongType())) \
-    .withColumn("userOrgCreatedDate", unix_timestamp(col("userOrgCreatedDate")).cast(LongType()))
-    
-    return result_df
-
-def userCourseRatingDataframe(spark):
-    df = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE).select(
-    col("activityid").alias("courseID"),
-    col("userid").alias("userID"),
-    col("rating").alias("userRating"),
-    col("activitytype").alias("cbpType"),
-    col("createdon").alias("createdOn")
+        col("createdby").alias("userCreatedBy")
     )
+
+    # Handle nulls
+    userDF = userDF.na.fill("", subset=["userOrgID", "firstName", "lastName"])
+    userDF = userDF.na.fill("{}", subset=["userProfileDetails"])
+
+    # Parse JSON profileDetails string
+    userDF = userDF.withColumn("profileDetails", from_json(col("userProfileDetails"), profileDetailsSchema))
+
+    # Explode and extract nested fields
+    userDF = userDF \
+        .withColumn("personalDetails", col("profileDetails.personalDetails")) \
+        .withColumn("employmentDetails", col("profileDetails.employmentDetails")) \
+        .withColumn("professionalDetails", explode_outer(col("profileDetails.professionalDetails"))) \
+        .withColumn("userVerified", coalesce(col("profileDetails.verifiedKarmayogi"), lit(False))) \
+        .withColumn("userMandatoryFieldsExists", col("profileDetails.mandatoryFieldsExists")) \
+        .withColumn("userProfileImgUrl", col("profileDetails.profileImageUrl")) \
+        .withColumn("userProfileStatus", col("profileDetails.profileStatus")) \
+        .withColumn("userPhoneVerified", expr("LOWER(personalDetails.phoneVerified) = 'true'")) \
+        .withColumn("fullName", rtrim(concat_ws(" ", col("firstName"), col("lastName"))))
+
+    # Handle `additionalProperties` fallback
+    userDF = userDF.withColumn(
+        "additionalProperties",
+        when(col("profileDetails.additionalProperties").isNotNull(), col("profileDetails.additionalProperties"))
+        .otherwise(col("profileDetails.additionalPropertis"))
+    )
+
+    # Drop now-unnecessary JSON fields
+    userDF = userDF.drop("profileDetails", "userProfileDetails")
+
+    # Convert timestamp fields (assuming this function exists)
+    userDF = timestampStringToLong(userDF, ["userCreatedTimestamp", "userUpdatedTimestamp"])
+    exportDFToParquet(userDF,ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
+
+
+def exportDFToParquet(df,outputFile):
+    df.write.parquet(outputFile)
+
+def timestampStringToLong(df: DataFrame, column_names: list, format: str = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'") -> DataFrame:
+    """
+    Converts ISO timestamp string columns to long (epoch milliseconds).
+    
+    Args:
+        df (DataFrame): Input DataFrame.
+        column_names (list): List of column names (timestamp strings).
+        format (str): Timestamp format. Default is ISO-8601 with 'Z'.
+
+    Returns:
+        DataFrame: Modified DataFrame with long timestamps.
+    """
+    for col_name in column_names:
+        df = df.withColumn(
+            col_name,
+            (unix_timestamp(col(col_name), format) * 1000).cast("long")
+        )
     return df
