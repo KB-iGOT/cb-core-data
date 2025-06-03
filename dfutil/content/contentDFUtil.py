@@ -1,9 +1,9 @@
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.user.userDFUtil import exportDFToParquet
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, explode_outer,from_json, lit,when, format_string, expr
-from pyspark.sql.functions import count, avg, col
+from pyspark.sql.functions import col, explode_outer,from_json, lit,when, format_string, expr,lower,avg,count
 from pyspark.sql.types import FloatType
+from constants.ParquetFileConstants import ParquetFileConstants
 from typing import List
 from util import schemas
 
@@ -46,7 +46,27 @@ def preComputeAllCourseProgramESDataFrame(spark: SparkSession,
     
     exportDFToParquet(contentDF,ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE)
 
-def preComputeContentDataFrame(spark: SparkSession):
+def preComputeRatingAndSummaryDataFrame(spark):
+    ratingSummaryDF = spark.read.parquet(ParquetFileConstants.RATING_SUMMARY_PARQUET_FILE) \
+        .where(expr("total_number_of_ratings > 0")) \
+        .withColumn("ratingAverage", expr("sum_of_total_ratings / total_number_of_ratings")) \
+        .select(
+            col("activityid").alias("courseID"),
+            col("activitytype").alias("categoryLower"),
+            col("sum_of_total_ratings").alias("ratingSum"),
+            col("total_number_of_ratings").alias("ratingCount"),
+            col("ratingAverage"),
+            col("totalcount1stars").alias("count1Star"),
+            col("totalcount2stars").alias("count2Star"),
+            col("totalcount3stars").alias("count3Star"),
+            col("totalcount4stars").alias("count4Star"),
+            col("totalcount5stars").alias("count5Star")
+        ) \
+        .withColumn("categoryLower", lower(col("categoryLower"))) \
+        .dropDuplicates(["courseID", "categoryLower"])
+    
+    exportDFToParquet(ratingSummaryDF,ParquetFileConstants.RATING_SUMMARY_COMPUTED_PARQUET_FILE)
+
     ratingRawDF = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)
     ratingDF = ratingRawDF \
         .select(
@@ -56,7 +76,7 @@ def preComputeContentDataFrame(spark: SparkSession):
             col("activitytype").alias("cbpType"),
             col("createdon").alias("createdOn")
         )
-    exportDFToParquet(ratingDF,ParquetFileConstants.RATING_SELECT_PARQUET_FILE)
+    exportDFToParquet(ratingDF,ParquetFileConstants.RATING_COMPUTED_PARQUET_FILE)
 
 
     contentRating = ratingDF.filter(col("userRating").isNotNull()) \
@@ -67,8 +87,12 @@ def preComputeContentDataFrame(spark: SparkSession):
     ) \
     .select("courseID", "totalRatings", "rating")
 
+    exportDFToParquet(contentRating,ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)
+
+def preComputeContentDataFrame(spark: SparkSession):
+    contentRatingDF=spark.read.parquet(ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)
     contentWithRatingDF=spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE).join(
-        contentRating,"courseID","left").drop(contentRating["courseID"])
+        contentRatingDF,"courseID","left").drop(contentRatingDF["courseID"])
     
     orgDF=spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE).select(
       col("orgID").alias("courseOrgID"),
@@ -98,8 +122,6 @@ def preComputeExternalContentDataFrame(spark) -> DataFrame:
             )
         )
         exportDFToParquet(df,ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
-
-
 
 
 @staticmethod

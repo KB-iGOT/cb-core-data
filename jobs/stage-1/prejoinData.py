@@ -39,6 +39,7 @@ def main():
         ### 
         ##########################################################
     """)
+    contentDFUtil.preComputeRatingAndSummaryDataFrame(spark)
     contentDFUtil.preComputeAllCourseProgramESDataFrame(spark)
     contentDFUtil.preComputeContentDataFrame(spark)
     contentDFUtil.preComputeExternalContentDataFrame(spark)
