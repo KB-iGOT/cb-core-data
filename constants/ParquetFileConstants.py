@@ -36,6 +36,7 @@ class ParquetFileConstants:
     ###  Computed Parquet File
     ###
     USER_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user-select/")
+    USER_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user-computed")
     ORG_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "org-select/")
     ORG_HIERARCHY_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "org-hierarchy-select/")
     ORG_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "org-computed/")

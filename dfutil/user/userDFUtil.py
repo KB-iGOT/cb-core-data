@@ -63,7 +63,8 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
     # Convert timestamp fields (assuming this function exists)
     userDF = timestampStringToLong(userDF, ["userCreatedTimestamp", "userUpdatedTimestamp"])
     
-
+    exportDFToParquet(userDF,ParquetFileConstants.USER_SELECT_PARQUET_FILE)
+    
     roleRawDF = spark.read.parquet(ParquetFileConstants.ROLE_PARQUET_FILE)
     roleRawDF = roleRawDF \
         .withColumnRenamed("userID", "rowUserID") \
@@ -88,7 +89,7 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         userDF["userID"] == karma_df["karmaUserID"]
     )
     userDF = userDF.drop("karmaUserID")
-    exportDFToParquet(userDF,ParquetFileConstants.USER_SELECT_PARQUET_FILE)
+    exportDFToParquet(userDF,ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
     # userDF.
     
 
