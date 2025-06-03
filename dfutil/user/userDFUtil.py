@@ -135,7 +135,6 @@ def preComputeOrgWithHierarchy(spark: SparkSession):
 
 def preComputeOrgHierarchyWithUser(spark: SparkSession):
     org_merged_df = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE+f"/**.parquet")
-    org_merged_df.printSchema()
     org_merged_df = org_merged_df.select(col("orgID").alias("usermergedOrgID"),
       col("orgName").alias("userOrgName"),
       col("orgStatus").alias("userOrgStatus"),

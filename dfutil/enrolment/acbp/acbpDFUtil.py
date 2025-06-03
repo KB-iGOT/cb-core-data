@@ -53,7 +53,6 @@ def preComputeACBPData(spark):
     for field in final_df.schema.fields:
         if hasattr(field.dataType, "typeName") and field.dataType.typeName() == "timestamp_ntz":
             final_df = final_df.withColumn(field.name, col(field.name).cast("string"))
-    final_df.printSchema()
     print(final_df.columns)
     #exportDFToParquet(final_df,ParquetFileConstants.ACBP_SELECT_FILE)
     explodeAcbpData(spark, final_df)
@@ -63,7 +62,6 @@ def explodeAcbpData(spark,acbp_df):
     selectColumns = ["userID", "fullName", "userPrimaryEmail", "userMobile", "designation", "group", "userOrgID", "ministry_name", "dept_name", "userOrgName", "userStatus", "acbpID",
       "assignmentType", "completionDueDate", "allocatedOn", "acbpCourseIDList","acbpStatus", "acbpCreatedBy","cbPlanName"]
     user_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-    user_df.printSchema()
     acbp_custom_user_df = acbp_df \
         .filter(col("assignmentType") == "CustomUser") \
         .withColumn("userID", explode(col("assignmentTypeInfo"))) \
@@ -88,7 +86,6 @@ def explodeAcbpData(spark,acbp_df):
 
     print(f"ACBP Allotment DataFrame Count: {acbp_allotment_df.count()}")
     print(acbp_allotment_df.columns)
-    acbp_allotment_df.printSchema()
     #exportDFToParquet(acbp_allotment_df,ParquetFileConstants.ACBP_COMPUTED_FILE)
 
 

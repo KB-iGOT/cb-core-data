@@ -50,6 +50,9 @@ class ParquetFileConstants:
     USER_ORG_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user-org-computed/")
     ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "all-course-program-computed/")
     ACBP_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "acbp-computed")
+    RATING_SUMMARY_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "rating-summary-computed/")
+    RATING_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "rating-computed/")
+    CONTENT_RATING_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content-rating-computed/")
 
     DATE_TIME_WITH_AMPM_FORMAT = "yyyy-MM-dd HH:mm:ss a"
     DATE_TIME_FORMAT = "yyyy-MM-dd HH:mm:ss"
