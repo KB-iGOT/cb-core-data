@@ -48,7 +48,11 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         .withColumn("userProfileImgUrl", col("profileDetails.profileImageUrl")) \
         .withColumn("userProfileStatus", col("profileDetails.profileStatus")) \
         .withColumn("userPhoneVerified", expr("LOWER(personalDetails.phoneVerified) = 'true'")) \
-        .withColumn("fullName", rtrim(concat_ws(" ", col("firstName"), col("lastName"))))
+        .withColumn("fullName", rtrim(concat_ws(" ", col("firstName"), col("lastName")))) \
+        .withColumn("designation", coalesce(col("professionalDetails.designation"), lit(""))) \
+        .withColumn("group", coalesce(col("professionalDetails.group"), lit(""))) \
+        .withColumn("userPrimaryEmail", col("personalDetails.primaryEmail")) \
+        .withColumn("userMobile", col("personalDetails.mobile"))
 
     # Handle `additionalProperties` fallback
     userDF = userDF.withColumn(
@@ -89,6 +93,8 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         userDF["userID"] == karma_df["karmaUserID"]
     )
     userDF = userDF.drop("karmaUserID")
+
+   
     exportDFToParquet(userDF,ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
     # userDF.
     
@@ -129,11 +135,21 @@ def preComputeOrgWithHierarchy(spark: SparkSession):
 
 def preComputeOrgHierarchyWithUser(spark: SparkSession):
     org_merged_df = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE+f"/**.parquet")
+    org_merged_df.printSchema()
+    org_merged_df = org_merged_df.select(col("orgID").alias("usermergedOrgID"),
+      col("orgName").alias("userOrgName"),
+      col("orgStatus").alias("userOrgStatus"),
+      col("orgCreatedDate").alias("userOrgCreatedDate"),
+      col("orgType").alias("userOrgType"),
+      col("orgSubType").alias("userOrgSubType"),
+      col("dept_name"),
+      col("ministry_name"))
     user_merged_df = spark.read.parquet(ParquetFileConstants.USER_SELECT_PARQUET_FILE+f"/**.parquet")
     user_org_merged_df = user_merged_df.join(
         org_merged_df,
-        user_merged_df["userOrgID"] == org_merged_df["orgID"]
+        user_merged_df["userOrgID"] == org_merged_df["usermergedOrgID"]
     )
+    org_merged_df = org_merged_df.drop("usermergedOrgID")
     exportDFToParquet(user_org_merged_df,ParquetFileConstants.USER_ORG_COMPUTED_FILE)
 
 def exportDFToParquet(df,outputFile):

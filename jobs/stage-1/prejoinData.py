@@ -8,6 +8,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.user import userDFUtil
+from dfutil.enrolment.acbp import acbpDFUtil
 
 spark = SparkSession.builder \
     .appName("MySparkApp") \
@@ -64,8 +65,12 @@ def main():
         ### 
         ##########################################################
     """)
+ 
 
     userDFUtil.preComputeOrgHierarchyWithUser(spark)
+
+    acbpDFUtil.preComputeACBPData(spark)
+   
     
 
 if __name__ == "__main__":
