@@ -1,14 +1,20 @@
 import sys
 from pathlib import Path
-import os
-import time
+from pyspark.sql import SparkSession
+
 
 # Ensure the parent directory is in sys.path for absolute imports
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from constants.ParquetFileConstants import ParquetFileConstants
-from constants.QueryConstants import QueryConstants
+from dfutil.user import userDFUtil
 
+spark = SparkSession.builder \
+    .appName("MySparkApp") \
+    .config("spark.executor.memory", "8g") \
+    .config("spark.driver.memory", "4g") \
+    .config("spark.sql.shuffle.partitions", "200") \
+    .getOrCreate()
 # ==============================
 # 1. Configuration and Constants
 # ==============================
@@ -32,7 +38,17 @@ def main():
         ### 
         ##########################################################
     """)
-    
+    userDFUtil.preComputeUser(spark)
+
+    print(f"""
+        ##########################################################
+        ###            
+        ###             Org
+        ### 
+        ##########################################################
+    """)
+    userDFUtil.preComputeOrgWithHierarchy(spark)
+
     print(f"""
         ##########################################################
         ###            
@@ -48,6 +64,8 @@ def main():
         ### 
         ##########################################################
     """)
+
+    userDFUtil.preComputeOrgHierarchyWithUser(spark)
     
 
 if __name__ == "__main__":

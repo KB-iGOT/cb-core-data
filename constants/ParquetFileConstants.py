@@ -1,6 +1,8 @@
 from pathlib import Path
 
 class ParquetFileConstants:
+
+    INPUT_DIR = Path(__file__).resolve().parents[1] / "data-res/pq_files/cache_pq"
     # Define the output directory
     OUTPUT_DIR = Path(__file__).resolve().parents[1] / "output"
     OUTPUT_COMPUTED_DIR = Path(__file__).resolve().parents[1] / "output/computed"
@@ -18,22 +20,26 @@ class ParquetFileConstants:
     LEARNER_LEADERBOARD_PARQUET_FILE = str(OUTPUT_DIR / "learnerLeaderBoard_combined_data.parquet")
     NLW_CONTENT_CERTIFICATE_GENERATED_COUNT_PARQUET_FILE = str(OUTPUT_DIR / "nlwContentCertificateGeneratedCount_combined_data.parquet")
     NLW_CONTENT_LEARNING_HOURS_PARQUET_FILE = str(OUTPUT_DIR / "nlwContentLearningHours_combined_data.parquet")
-    ORG_PARQUET_FILE=str(OUTPUT_DIR / "org_combined_data.parquet")
-    ORG_COMPLETE_HIERARCHY_PARQUET_FILE = str(OUTPUT_DIR / "orgCompleteHierarchy_combined_data.parquet")
-    ORG_HIERARCHY_PARQUET_FILE = str(OUTPUT_DIR / "orgHierarchy_combined_data.parquet")
+    ORG_PARQUET_FILE=str(INPUT_DIR / "org/**.parquet")
+    ORG_COMPLETE_HIERARCHY_PARQUET_FILE = str(INPUT_DIR / "orgCompleteHierarchy/**.parquet")
+    ORG_HIERARCHY_PARQUET_FILE = str(INPUT_DIR / "orgHierarchy/**.parquet")
     RATING_PARQUET_FILE = str(OUTPUT_DIR / "rating_combined_data.parquet")
     RATING_SUMMARY_PARQUET_FILE = str(OUTPUT_DIR / "ratingSummary_combined_data.parquet")
-    ROLE_PARQUET_FILE = str(OUTPUT_DIR / "role_combined_data.parquet")
-    USER_PARQUET_FILE = str(OUTPUT_DIR / "user_combined_data.parquet")
+    ROLE_PARQUET_FILE = str(INPUT_DIR / "role/**.parquet")
+    USER_PARQUET_FILE = str(INPUT_DIR / "user/**.parquet")
     CLAPS_PARQUET_FILE = str(OUTPUT_DIR / "weeklyClaps_combined_data.parquet")
-    USER_KARMA_POINTS_PARQUET_FILE = str(OUTPUT_DIR / "userKarmaPoints_combined_data.parquet")
+    USER_KARMA_POINTS_PARQUET_FILE = str(INPUT_DIR / "userKarmaPoints/**.parquet")
     USER_KARMA_POINTS_SUMMARY_PARQUET_FILE = str(OUTPUT_DIR / "userKarmaPointsSummary_combined_data.parquet")
 
 
     ###
     ###  Computed Parquet File
     ###
-    USER_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "/user-computed/user_computed_data.parquet")
+    USER_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user-select/")
+    ORG_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "org-select/")
+    ORG_HIERARCHY_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "org-hierarchy-select/")
+    ORG_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "org-computed/")
+    USER_ORG_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user-org-computed/")
 # Example Usage:
 def main():
     print("Defined Static Parquet File Constants:")
