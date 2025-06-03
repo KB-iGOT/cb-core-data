@@ -2,7 +2,7 @@ from pathlib import Path
 
 class ParquetFileConstants:
 
-    INPUT_DIR = Path(__file__).resolve().parents[1] / "data-res/cache_pq"
+    INPUT_DIR = Path(__file__).resolve().parents[1] / "data-res/pq_files/cache_pq"
     # Define the output directory
     OUTPUT_DIR = Path(__file__).resolve().parents[1] / "output"
     OUTPUT_COMPUTED_DIR = Path(__file__).resolve().parents[1] / "output/computed"
