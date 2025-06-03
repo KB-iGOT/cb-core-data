@@ -2,7 +2,7 @@ from pathlib import Path
 
 class ParquetFileConstants:
 
-    INPUT_DIR = Path(__file__).resolve().parents[1] / "data-res/pq_files/cache_pq"
+    INPUT_DIR = Path(__file__).resolve().parents[1] / "data-res/cache_pq"
     # Define the output directory
     OUTPUT_DIR = Path(__file__).resolve().parents[1] / "output"
     OUTPUT_COMPUTED_DIR = Path(__file__).resolve().parents[1] / "output/computed"
@@ -37,12 +37,25 @@ class ParquetFileConstants:
     ###
     USER_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user-select/")
     ACBP_SELECT_FILE = str(OUTPUT_COMPUTED_DIR / "acbp-select/")
-    USER_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user-computed/")
+    ENROLMENT_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "enrolment-select/")
+    ENROLMENT_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "enrolment-computed/")
+    EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "external-enrolment-computed/")
+    EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "external-content-computed/")
+    RATING_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "rating-select/")
+    CONTENT_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content-computed/")
+    USER_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user-computed")
     ORG_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "org-select/")
     ORG_HIERARCHY_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "org-hierarchy-select/")
     ORG_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "org-computed/")
     USER_ORG_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "user-org-computed/")
+    ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "all-course-program-computed/")
     ACBP_COMPUTED_FILE = str(OUTPUT_COMPUTED_DIR / "acbp-computed")
+
+    DATE_TIME_WITH_AMPM_FORMAT = "yyyy-MM-dd HH:mm:ss a"
+    DATE_TIME_FORMAT = "yyyy-MM-dd HH:mm:ss"
+    DATE_TIME_WITH_MILLI_SEC_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSS"
+    DATE_FORMAT = "yyyy-MM-dd"
+    TIME_FORMAT = "HH:mm:ss"
 # Example Usage:
 def main():
     print("Defined Static Parquet File Constants:")
