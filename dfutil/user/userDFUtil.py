@@ -93,6 +93,15 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         userDF["userID"] == karma_df["karmaUserID"]
     )
     userDF = userDF.drop("karmaUserID")
+    
+
+    weekly_claps_df = spark.read.parquet(ParquetFileConstants.CLAPS_PARQUET_FILE) \
+    .withColumnRenamed("userid", "userID") \
+    .withColumnRenamed("total_claps", "weekly_claps_day_before_yesterday") \
+    .select("userID", "weekly_claps_day_before_yesterday")
+
+    userDF = userDF.join(weekly_claps_df, on="userID", how="left")
+    userDF = userDF.drop("weeklyClaspUserID")
 
    
     exportDFToParquet(userDF,ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
