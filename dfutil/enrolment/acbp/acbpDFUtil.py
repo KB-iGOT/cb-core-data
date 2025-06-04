@@ -16,6 +16,7 @@ from constants.ParquetFileConstants import ParquetFileConstants
 
 def preComputeACBPData(spark):
     acbp_df = spark.read.parquet(ParquetFileConstants.ACBP_PARQUET_FILE)
+    print("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
     acbp_select_df = acbp_df \
         .select(
             col("id").alias("acbpID"),
@@ -26,12 +27,17 @@ def preComputeACBPData(spark):
             col("name").alias("cbPlanName"),
             col("assignmenttype").alias("assignmentType"),
             col("assignmenttypeinfo").alias("assignmentTypeInfo"),
-            col("enddate").alias("completionDueDate"),
-            col("publishedat").alias("allocatedOn"),
+            col("enddate").alias("completionDueDate").cast('string'),
+            col("publishedat").alias("allocatedOn").cast('string'),
+            col("createdat").cast('string'),
+            col('updatedat').cast('string'),
             col("contentlist").alias("acbpCourseIDList")
         ) \
         .na.fill({"cbPlanName": ""})
-
+    print("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+    acbp_select_df.printSchema()
+    exportDFToParquet(acbp_select_df,ParquetFileConstants.ACBP_SELECT_FILE)
+    print("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
     # Draft data
     draft_cbp_data = acbp_select_df.filter((col("acbpStatus") == "DRAFT") & col("draftdata").isNotNull()) \
         .select("acbpID", "userOrgID", "draftdata", "acbpStatus", "acbpCreatedBy") \
@@ -39,11 +45,11 @@ def preComputeACBPData(spark):
         .withColumn("cbPlanName", col("draftData.name")) \
         .withColumn("assignmentType", col("draftData.assignmentType")) \
         .withColumn("assignmentTypeInfo", col("draftData.assignmentTypeInfo")) \
-        .withColumn("completionDueDate", col("draftData.endDate")) \
+        .withColumn("completionDueDate", col("draftData.endDate").cast("string")) \
         .withColumn("allocatedOn", lit("not published")) \
         .withColumn("acbpCourseIDList", col("draftData.contentList")) \
         .drop("draftData")
-
+    draft_cbp_data.printSchema()
     # Non-draft data
     non_draft_cbp_data = acbp_select_df.filter(col("acbpStatus") != "DRAFT")
     draft_cbp_data = draft_cbp_data.withColumn("draftdata", lit(None).cast("string"))
@@ -53,8 +59,8 @@ def preComputeACBPData(spark):
     for field in final_df.schema.fields:
         if hasattr(field.dataType, "typeName") and field.dataType.typeName() == "timestamp_ntz":
             final_df = final_df.withColumn(field.name, col(field.name).cast("string"))
-    print(final_df.columns)
-    #exportDFToParquet(final_df,ParquetFileConstants.ACBP_SELECT_FILE)
+    print_nested_schema(final_df)
+    exportDFToParquet(acbp_df,ParquetFileConstants.ACBP_SELECT_FILE)
     explodeAcbpData(spark, final_df)
 
 def explodeAcbpData(spark,acbp_df):
@@ -84,21 +90,27 @@ def explodeAcbpData(spark,acbp_df):
     selected_dfs = [df.select([col(c) for c in selectColumns]) for df in dfs]
     acbp_allotment_df = selected_dfs[0]
 
-    print(f"ACBP Allotment DataFrame Count: {acbp_allotment_df.count()}")
-    print(acbp_allotment_df.columns)
-    #exportDFToParquet(acbp_allotment_df,ParquetFileConstants.ACBP_COMPUTED_FILE)
+    
+    print_nested_schema(acbp_allotment_df)
+    exportDFToParquet(acbp_allotment_df,ParquetFileConstants.ACBP_COMPUTED_FILE)
 
 
 def exportDFToParquet(df,outputFile):
-   df_cleaned = recastTimeStampToString(df)
+   df_cleaned = cast_ntz_to_string(df)
    df_cleaned.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
 
-def recastTimeStampToString(df: DataFrame) -> DataFrame:
-    """
-    Converts all timestamp_ntz columns in the DataFrame to string format.
-    This is necessary to avoid Parquet INT96 error.
-    """
+def cast_ntz_to_string(df):
     for field in df.schema.fields:
-        if field.dataType.typeName() == "timestamp_ntz":
+        if field.dataType.simpleString() == "timestamp_ntz":
             df = df.withColumn(field.name, col(field.name).cast("string"))
     return df
+
+def print_nested_schema(df, prefix=""):
+    for field in df.schema.fields:
+        dt = field.dataType
+        name = prefix + field.name
+        if isinstance(dt, StructType):
+            print_nested_schema(df.select(f"{name}.*"), prefix=name + ".")
+        else:
+            print(f"{name}: {dt}")
+

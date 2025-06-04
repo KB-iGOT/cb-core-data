@@ -16,6 +16,7 @@ spark = SparkSession.builder \
     .config("spark.executor.memory", "8g") \
     .config("spark.driver.memory", "4g") \
     .config("spark.sql.shuffle.partitions", "200") \
+    .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
     .getOrCreate()
 # ==============================
 # 1. Configuration and Constants
@@ -30,7 +31,7 @@ def main():
         ### 
         ##########################################################
     """)
-    userDFUtil.preComputeOrgWithHierarchy(spark)
+    # userDFUtil.preComputeOrgWithHierarchy(spark)
 
     print(f"""
         ##########################################################
@@ -39,10 +40,10 @@ def main():
         ### 
         ##########################################################
     """)
-    contentDFUtil.preComputeRatingAndSummaryDataFrame(spark)
-    contentDFUtil.preComputeAllCourseProgramESDataFrame(spark)
-    contentDFUtil.preComputeContentDataFrame(spark)
-    contentDFUtil.preComputeExternalContentDataFrame(spark)
+    # contentDFUtil.preComputeRatingAndSummaryDataFrame(spark)
+    # contentDFUtil.preComputeAllCourseProgramESDataFrame(spark)
+    # contentDFUtil.preComputeContentDataFrame(spark)
+    # contentDFUtil.preComputeExternalContentDataFrame(spark)
    
 
     print(f"""
@@ -52,7 +53,7 @@ def main():
         ### 
         ##########################################################
     """)
-    userDFUtil.preComputeUser(spark)
+    # userDFUtil.preComputeUser(spark)
 
     print(f"""
         ##########################################################
@@ -61,8 +62,8 @@ def main():
         ### 
         ##########################################################
     """)
-    enrolmentDFUtil.preComputeEnrolment(spark)
-    enrolmentDFUtil.preComputeExternalEnrolment(spark)
+    # enrolmentDFUtil.preComputeEnrolment(spark)
+    # enrolmentDFUtil.preComputeExternalEnrolment(spark)
    
     print(f"""
         ##########################################################
@@ -72,7 +73,7 @@ def main():
         ##########################################################
     """)
 
-    userDFUtil.preComputeOrgHierarchyWithUser(spark)
+    # userDFUtil.preComputeOrgHierarchyWithUser(spark)
 
     acbpDFUtil.preComputeACBPData(spark)
    
