@@ -56,6 +56,11 @@ class ParquetFileConstants:
     RATING_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "rating-computed/")
     CONTENT_RATING_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content-rating-computed/")
 
+    ###
+    ###  Output CSV File
+    ###
+    USER_REPORT_CSV = str(OUTPUT_COMPUTED_DIR / "user-report/")
+
     DATE_TIME_WITH_AMPM_FORMAT = "yyyy-MM-dd HH:mm:ss a"
     DATE_TIME_FORMAT = "yyyy-MM-dd HH:mm:ss"
     DATE_TIME_WITH_MILLI_SEC_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSS"
