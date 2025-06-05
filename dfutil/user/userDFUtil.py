@@ -3,7 +3,7 @@ from pathlib import Path
 from pyspark.sql.types import *
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
-    sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace
+    bround,countDistinct,sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace
 )
 from pyspark.sql.types import LongType
 
@@ -15,7 +15,7 @@ from constants.ParquetFileConstants import ParquetFileConstants
 def preComputeUser(spark: SparkSession) -> DataFrame:
     profileDetailsSchema = schemas.makeProfileDetailsSchema(False,True,True)
     userRawDF = spark.read.parquet(ParquetFileConstants.USER_PARQUET_FILE)
-
+    
     # Select and rename base fields
     userDF = userRawDF.select(
         col("id").alias("userID"),
@@ -63,7 +63,7 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
 
     # Drop now-unnecessary JSON fields
     userDF = userDF.drop("profileDetails", "userProfileDetails")
-
+    print(f"%%%%%%%%%%%%%%%%%%%%%%%%%% User Profile Details DF Count: {userDF.count()}")
     # Convert timestamp fields (assuming this function exists)
     userDF = timestampStringToLong(userDF, ["userCreatedTimestamp", "userUpdatedTimestamp"])
     
@@ -77,10 +77,11 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
 
     userDF = userDF.join(
         roleRawDF,
-        userDF["userID"] == roleRawDF["rowUserID"]
+        userDF["userID"] == roleRawDF["rowUserID"],
+        how="left"
     )
     userDF = userDF.drop("rowUserID")
-
+    print(f"%%%%%%%%%%%%%%%%%%%%%%%%%% User Role DF Count: {userDF.count()}")
 
     karma_df = spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE)
 
@@ -88,9 +89,11 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
     karma_df = karma_df.groupBy(col("userid").alias("karmaUserID")) \
            .agg(sum(col("points")).alias("total_points"))
 
+
     userDF = userDF.join(
         karma_df,
-        userDF["userID"] == karma_df["karmaUserID"]
+        userDF["userID"] == karma_df["karmaUserID"],
+        how="left"
     )
     userDF = userDF.drop("karmaUserID")
     
@@ -103,7 +106,7 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
     userDF = userDF.join(weekly_claps_df, on="userID", how="left")
     userDF = userDF.drop("weeklyClaspUserID")
 
-   
+    print(f"%%%%%%%%%%%%%%%%%%%%%%%%%% User Clap DF Count: {userDF.count()}")
     exportDFToParquet(userDF,ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
     # userDF.
     
@@ -159,6 +162,94 @@ def preComputeOrgHierarchyWithUser(spark: SparkSession):
     )
     org_merged_df = org_merged_df.drop("usermergedOrgID")
     exportDFToParquet(user_org_merged_df,ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+
+def appendContentDurationCompletionForEachUser(spark: SparkSession,user_master_df,user_enrolment_df,content_duration_df):
+    userdf_with_enrolment_counts = user_enrolment_df \
+    .join(content_duration_df, user_enrolment_df["courseid"] == content_duration_df["content_id"], how="left") \
+    .groupBy("userID") \
+    .agg(
+        # Count all valid enrolments
+        countDistinct(
+            when(
+                col("user_consumption_status").isin("not-started", "in-progress", "completed"),
+                col("content_id")
+            )
+        ).alias("total_content_enrolments"),
+
+        # Count all completed courses with a certificate
+        countDistinct(
+            when(
+                (col("user_consumption_status") == "completed") & col("certificateID").isNotNull(),
+                col("content_id")
+            )
+        ).alias("total_content_completions"),
+
+        # Sum course durations for completed courses with certificates and category = 'Course'
+        sum(
+            when(
+                (col("user_consumption_status") == "completed") &
+                col("certificateID").isNotNull() &
+                (col("category") == "Course"),
+                coalesce(col("courseDuration"), lit(0.0))
+            )
+        ).alias("total_content_duration")
+    ) \
+    .withColumn(
+        "total_content_duration",
+        bround(col("total_content_duration") / 3600.0, 2)  # convert to hours
+    )
+    user_enrolment_df = user_enrolment_df.join(
+        userdf_with_enrolment_counts,
+        on="userID",
+        how="left"
+    )
+    user_enrolment_master_df = user_master_df.join(
+        userdf_with_enrolment_counts,
+        on="userID",
+        how="left"
+    )
+    return user_enrolment_master_df
+
+
+def appendEventDurationCompletionForEachUser(spark: SparkSession,user_enrolment_df):
+    user_event_details_df = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE) \
+        .withColumnRenamed("user_id", "userID") \
+        .groupBy("userID") \
+        .agg(
+            countDistinct(
+                when(
+                    col("status").isin("not-started", "in-progress", "completed"),
+                    col("event_id")
+                )
+            ).alias("total_event_enrolments"),
+
+            countDistinct(
+                when(
+                    col("status") == "completed",
+                    col("event_id")
+                )
+            ).alias("total_event_completions"),
+
+            sum(
+                when(
+                    (col("status") == "completed") & (col("certificate_id").isNotNull()),
+                    col("event_duration_seconds")
+                )
+            ).alias("total_event_learning_hours_with_certificates")
+        ) \
+        .withColumn(
+            "total_event_learning_hours_with_certificates",
+            bround(col("total_event_learning_hours_with_certificates") / 3600.0, 2)
+        )
+    print(user_event_details_df.count())
+    user_event_details_df.printSchema()
+    user_enrolment_df = user_enrolment_df.join(
+        user_event_details_df,
+        on="userID",
+        how="left"
+    )
+    return user_enrolment_df
+    
 
 def exportDFToParquet(df,outputFile):
    df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)

@@ -15,6 +15,8 @@ class ParquetFileConstants:
     ESCONTENT_PARQUET_FILE = str(INPUT_DIR / "esContent/**.parquet")
     EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE = str(INPUT_DIR / "externalCourseEnrolments/**.parquet")
     EXTERNAL_CONTENT_PARQUET_FILE = str(INPUT_DIR / "externalContent/**.parquet")
+    EVENT_PARQUET_FILE = str(INPUT_DIR / "eventDetails/**.parquet")
+    EVENT_ENROLMENT_PARQUET_FILE = str(INPUT_DIR / "eventEnrolmentDetails/**.parquet")
     HIERARCHY_PARQUET_FILE = str(INPUT_DIR / "hierarchy/**.parquet")
     KCMV6_PARQUET_FILE = str(INPUT_DIR / "kcmV6/**.parquet")
     LEARNER_LEADERBOARD_PARQUET_FILE = str(INPUT_DIR / "learnerLeaderBoard/**.parquet")
