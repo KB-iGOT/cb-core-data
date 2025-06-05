@@ -16,6 +16,7 @@ from dfutil.user import userDFUtil
 from dfutil.enrolment.acbp import acbpDFUtil
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
+from dfutil.dfexport import dfexportutil
 
 # Initialize the Spark Session with tuning configurations
 spark = SparkSession.builder \
@@ -131,7 +132,7 @@ def processUserReport():
 
         print(f"✅ Final Report Row Count: {user_complete_df.count()}")
         user_complete_df.printSchema()
-        write_csv_per_mdo_id(user_complete_df,ParquetFileConstants.USER_REPORT_CSV,'mdo_id')
+        dfexportutil.write_csv_per_mdo_id(user_complete_df,ParquetFileConstants.USER_REPORT_CSV,'mdo_id')
 
         # Optional: Save the output
         # user_complete_df.write.mode("overwrite").parquet("/your/output/path")
@@ -141,53 +142,7 @@ def processUserReport():
         print(str(e))
 
 
-def write_csv_per_mdo_id(df, output_dir, groupByAttr,isIndividualWrite=False,threshold=100000):
-    """
-    Hybrid write strategy: partition small/medium groups via partitionBy, large groups via fallback.
-    
-    Args:
-        df (DataFrame): Source DataFrame
-        output_dir (str): Output directory path
-        threshold (int): Max row count per mdo_id to consider for fast write
-    """
-    if isIndividualWrite == False:
-        # Step 1: Get group counts
-        group_counts = df.groupBy(groupByAttr).count()
-        group_counts.printSchema()
-        # Step 2: Collect IDs for fast + fallback paths
-        small_ids = [row[groupByAttr] for row in group_counts.filter(col("count") <= threshold).collect()]
-        large_ids = [row[groupByAttr] for row in group_counts.filter(col("count") > threshold).collect()]
         
-        print(f"Small groups (fast write): {len(small_ids)}")
-        # Step 3: Fast write for small/medium mdo_ids
-        if small_ids:
-            df.filter(col(groupByAttr).isin(small_ids)) \
-            .repartition(groupByAttr) \
-            .write \
-            .mode("overwrite") \
-            .partitionBy(groupByAttr) \
-            .option("header", True) \
-            .csv(output_dir)
-
-        print(f"Large groups (manual write): {len(large_ids)}")
-        # Step 4: Manual write for large mdo_ids (one folder per group)
-        for mdo in large_ids:
-            print(f"Writing large group mdo_id={mdo} separately...")
-            df.filter(col(groupByAttr) == mdo) \
-            .coalesce(1) \
-            .write \
-            .mode("overwrite") \
-            .option("header", True) \
-            .csv(f"{output_dir}/mdo_id_large={mdo}")
-    else:
-        df.repartition(groupByAttr) \
-            .write \
-            .mode("overwrite") \
-            .partitionBy(groupByAttr) \
-            .option("header", True) \
-            .option("compression", "snappy") \
-            .parquet(output_dir)
-          
     
 
 
