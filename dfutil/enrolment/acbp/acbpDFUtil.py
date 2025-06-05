@@ -19,25 +19,20 @@ def preComputeACBPData(spark):
     print("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
     acbp_select_df = acbp_df \
         .select(
-            col("id").alias("acbpID"),
-            col("orgid").alias("userOrgID"),
-            col("draftdata"),
-            col("status").alias("acbpStatus"),
-            col("createdby").alias("acbpCreatedBy"),
-            col("name").alias("cbPlanName"),
-            col("assignmenttype").alias("assignmentType"),
-            col("assignmenttypeinfo").alias("assignmentTypeInfo"),
-            col("enddate").alias("completionDueDate").cast('string'),
-            col("publishedat").alias("allocatedOn").cast('string'),
-            col("createdat").cast('string'),
-            col('updatedat').cast('string'),
-            col("contentlist").alias("acbpCourseIDList")
+        col("id").alias("acbpID"),
+        col("orgid").alias("userOrgID"),
+        col("draftdata"),
+        col("status").alias("acbpStatus"),
+        col("createdby").alias("acbpCreatedBy"),
+        col("name").alias("cbPlanName"),
+        col("assignmenttype").alias("assignmentType"),
+        col("assignmenttypeinfo").alias("assignmentTypeInfo"),
+        col("enddate").alias("completionDueDate"),
+        col("publishedat").alias("allocatedOn"),
+        col("contentlist").alias("acbpCourseIDList")
         ) \
         .na.fill({"cbPlanName": ""})
-    print("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
     acbp_select_df.printSchema()
-    exportDFToParquet(acbp_select_df,ParquetFileConstants.ACBP_SELECT_FILE)
-    print("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
     # Draft data
     draft_cbp_data = acbp_select_df.filter((col("acbpStatus") == "DRAFT") & col("draftdata").isNotNull()) \
         .select("acbpID", "userOrgID", "draftdata", "acbpStatus", "acbpCreatedBy") \

@@ -3,12 +3,10 @@ from pathlib import Path
 from typing import List
 
 from dfutil.user.userDFUtil import exportDFToParquet
-from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import SparkSession, DataFrame,functions as F
 from pyspark.sql.functions import (
-    col, from_json, lit, explode, element_at, size, when, coalesce,
-    expr, date_format, current_timestamp
+    col, lit, element_at, size, when, coalesce
 )
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from constants.ParquetFileConstants import ParquetFileConstants
@@ -110,60 +108,120 @@ def preComputeEnrolment(
     on=["courseID", "batchID"],
     how="left"
 )
-    exportDFToParquet(enrolmentDF,ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+
+    userRatingDF= spark.read.parquet(ParquetFileConstants.RATING_COMPUTED_PARQUET_FILE)
+    enrolmentUserBatchRatingDF=enrolmentDF.join(userRatingDF, on=["userID", "courseID"], how="left") 
+
+    userKarmaPointsDF= spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE).select(
+                            col("userid").alias("userID"),     
+                            col("context_id").alias("courseID"),
+                            col("points").alias("karma_points")
+                        )
+    enrolmentUserBatchRatingKarmaDF=enrolmentUserBatchRatingDF.join(userKarmaPointsDF, on=["userID", "courseID"], how="left") 
+
+    exportDFToParquet(enrolmentUserBatchRatingKarmaDF,ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+
 
 def preComputeExternalEnrolment(spark: SparkSession,) -> DataFrame:
-    currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
-
-
     externalEnrolmentDF= spark.read.parquet(ParquetFileConstants.EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE) \
-        .withColumnRenamed("userid", "userID") \
-        .withColumnRenamed("courseid", "content_id") \
-        .withColumnRenamed("content_id", "courseID") \
-        .withColumnRenamed("progress", "courseProgress") \
-        .withColumnRenamed("status", "dbCompletionStatus") \
-        .withColumn(
-            "courseCompletedTimestamp",
-            date_format(col("completedon"), ParquetFileConstants.DATE_TIME_FORMAT)
-        ) \
-        .withColumn(
-            "courseEnrolledTimestamp",
-            date_format(col("enrolled_date"), ParquetFileConstants.DATE_TIME_FORMAT)
-        ) \
-        .withColumn("lastContentAccessTimestamp", lit("Not Available")) \
-        .withColumn("userRating", lit("Not Available")) \
-        .withColumn("live_cbp_plan_mandate", lit(False)) \
-        .withColumn("batchID", lit("Not Available")) \
-        .withColumn("issuedCertificateCount", size(col("issued_certificates"))) \
-        .withColumn(
-            "certificate_generated",
-            expr("CASE WHEN issuedCertificateCount > 0 THEN 'Yes' ELSE 'No' END")
-        ) \
-        .withColumn(
-            "certificateGeneratedOn",
-            when(col("issued_certificates").isNull(), "")
-            .otherwise(
-                col("issued_certificates")[size(col("issued_certificates")) - 1].getItem("lastIssuedOn")
-            )
-        ) \
-        .withColumn(
-            "firstCompletedOn",
-            when(col("issued_certificates").isNull(), "")
-            .otherwise(
-                when(size(col("issued_certificates")) > 0,
-                     col("issued_certificates")[0].getItem("lastIssuedOn"))
-                .otherwise("")
-            )
-        ) \
-        .withColumn(
-            "certificateID",
-            when(col("issued_certificates").isNull(), "")
-            .otherwise(
-                col("issued_certificates")[size(col("issued_certificates")) - 1].getItem("identifier")
-            )
-        ) \
-        .withColumn("Report_Last_Generated_On", lit(currentDateTime)) \
-        .na.fill(0, subset=["courseProgress", "issuedCertificateCount"]) \
-        .na.fill("", subset=["certificateGeneratedOn"]) \
+        .withColumnRenamed("courseid", "content_id")
         
     exportDFToParquet(externalEnrolmentDF,ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
+    
+
+def preComputeUserOrgEnrolment(
+    enrolmentDF: DataFrame,
+    contentOrgDF: DataFrame,
+    userOrgDF: DataFrame,
+    spark: SparkSession,
+) -> DataFrame:
+    category_list = contentOrgDF.select("category") \
+        .distinct() \
+        .filter(F.col("category").isNotNull() & (F.col("category") != "")) \
+        .rdd.map(lambda row: row["category"]).collect() 
+    
+    df = enrolmentDF.join(
+        contentOrgDF, 
+        on=["courseID"], 
+        how="left"
+    ).filter(
+        F.col("category").isin(category_list)
+    ).join(
+        userOrgDF, 
+        on=["userID"], 
+        how="left"
+    )
+    
+    # Add calculated columns - FIXED ORDER: completion percentage first
+    completion_percentage_df = withCompletionPercentageColumn(df)
+    old_completions_df = withOldCompletionStatusColumn(completion_percentage_df)
+    final_df = withUserCourseCompletionStatusColumn(old_completions_df)
+    
+    return final_df
+
+def withCompletionPercentageColumn(df: DataFrame) -> DataFrame:
+    """Calculate completion percentage with boundary checks"""
+    df = df.withColumn(
+        "completionPercentage",
+        F.expr("""
+            CASE 
+                WHEN courseResourceCount = 0 OR courseProgress = 0 OR dbCompletionStatus = 0 THEN 0.0 
+                WHEN dbCompletionStatus = 2 THEN 100.0 
+                ELSE 100.0 * courseProgress / courseResourceCount 
+            END
+        """)
+    )
+    # Apply boundary checks
+    df = df.withColumn(
+        "completionPercentage",
+        F.expr("""
+            CASE 
+                WHEN completionPercentage > 100.0 THEN 100.0 
+                WHEN completionPercentage < 0.0 THEN 0.0  
+                ELSE completionPercentage 
+            END
+        """)
+    )
+    return df
+
+def withOldCompletionStatusColumn(df: DataFrame) -> DataFrame:
+    """
+    dbCompletionStatus     userCourseCompletionStatus
+    NULL                   not-enrolled
+    0                      not-started
+    1                      in-progress
+    2                      completed
+    """
+    return df.withColumn(
+        "userCourseCompletionStatus",
+        F.expr("""
+            CASE 
+                WHEN dbCompletionStatus IS NULL THEN 'not-enrolled' 
+                WHEN dbCompletionStatus = 0 THEN 'not-started' 
+                WHEN dbCompletionStatus = 1 THEN 'in-progress' 
+                ELSE 'completed' 
+            END
+        """)
+    )
+
+def withUserCourseCompletionStatusColumn(df: DataFrame) -> DataFrame:
+    """
+    completionPercentage   completionStatus    IDI status
+    NULL                   not-enrolled        not-started
+    0.0                    enrolled            not-started
+    0.0 < % < 10.0         started             enrolled
+    10.0 <= % < 100.0      in-progress         in-progress
+    100.0                  completed           completed
+    """
+    return df.withColumn(
+        "completionStatus",
+        F.expr("""
+            CASE 
+                WHEN completionPercentage IS NULL THEN 'not-enrolled' 
+                WHEN completionPercentage = 0.0 THEN 'enrolled' 
+                WHEN completionPercentage < 10.0 THEN 'started' 
+                WHEN completionPercentage < 100.0 THEN 'in-progress' 
+                ELSE 'completed' 
+            END
+        """)
+    )
