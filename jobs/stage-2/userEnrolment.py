@@ -83,7 +83,6 @@ class UserEnrolmentModel:
                 .dropDuplicates(["userID", "courseID", "batchID"])
             )
 
-            # df.printSchema()
 
             #external content
             externalEnrolmentDF =  spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
@@ -123,7 +122,6 @@ class UserEnrolmentModel:
                 .fillna(0, subset=["courseProgress", "issuedCertificateCount"])
                 .fillna("", subset=["certificateGeneratedOn"])
             )
-
             marketPlaceEnrolmentsWithUserDetailsDF = marketPlaceContentEnrolmentsDF.join(userOrgDF, ["userID"], "left")
 
             mdoMarketplaceReport = (marketPlaceEnrolmentsWithUserDetailsDF
@@ -175,7 +173,7 @@ class UserEnrolmentModel:
                     col("certificate_generated").alias("Certificate_Generated"),
                     col("userRating").alias("User_Rating"),
                     col("personalDetails.gender").alias("Gender"),
-                    lit("External Content").alias("category"),
+                    lit("External Content").alias("Category"),
                     col("additionalProperties.externalSystem").alias("External_System"),
                     col("additionalProperties.externalSystemId").alias("External_System_Id"),
                     col("userOrgID").alias("mdoid"),
@@ -186,7 +184,6 @@ class UserEnrolmentModel:
                 )
             )
 
-            # mdoMarketplaceReport.printSchema()
 
             marketPlaceWarehouseDF = (marketPlaceEnrolmentsWithUserDetailsDF
                 .withColumn("certificate_generated_on",
@@ -230,7 +227,6 @@ class UserEnrolmentModel:
                 .dropDuplicates(["user_id", "batch_id", "content_id"])
             )
 
-            # mdo_marketplace_report.printSchema()
 
             acbpAllEnrolmentDF=spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE).withColumn("courseID", explode(col("acbpCourseIDList"))).withColumn("liveCBPlan", lit(True)) \
                 .select(col("userOrgID"),col("courseID"),col("userID"),col("designation"),col("liveCBPlan"))
@@ -239,10 +235,9 @@ class UserEnrolmentModel:
                        .withColumn("live_cbp_plan_mandate", 
                                    when(col("liveCBPlan").isNull(), False)
                                    .otherwise(col("liveCBPlan"))))
-            # enrolmentWithACBP.show(1)
 
 
-            mdoPlatformReport  = (enrolmentWithACBP
+            mdoPlatformReport = (enrolmentWithACBP
                 .withColumn("MDO_Name", col("userOrgName"))
                 .withColumn("Ministry", 
                             when(col("ministry_name").isNull(), col("userOrgName"))
@@ -258,7 +253,7 @@ class UserEnrolmentModel:
                                 (col("Department") != col("userOrgName")), 
                                 col("userOrgName"))
                             .otherwise(lit("")))
-                .filter(col("userStatus").cast("int") == 1)  # Filter BEFORE select
+                .filter(col("userStatus").cast("int") == 1) 
                 .select(
                     col("fullName").alias("Full_Name"),
                     col("professionalDetails.designation").alias("Designation"),
@@ -293,13 +288,14 @@ class UserEnrolmentModel:
                     col("userOrgID").alias("mdoid"),
                     col("Certificate_ID"),
                     col("Report_Last_Generated_On"),
-                    # col("userStatus").alias("status"),
-                    col("live_cbp_plan_mandate").alias("Live_CBP_Plan_Mandate")
+                    col("live_cbp_plan_mandate").alias("Live_CBP_Plan_Mandate"),
+                    col("userID"),
+                    col("courseID")
                 )
-                .dropDuplicates([ "Batch_Id"])
+                .dropDuplicates(["userID", "Batch_Id", "courseID"])
+                .drop("userID", "courseID")
                 .coalesce(1)
             )
-            # mdoPlatformReport.printSchema()
 
             platformWarehouseDF = (enrolmentWithACBP
                 .withColumn("certificate_generated_on",
@@ -338,7 +334,6 @@ class UserEnrolmentModel:
                 .fillna(0, subset=["karma_points"])
                 .dropDuplicates(["user_id", "batch_id", "content_id"])
             )
-
             mdoReportDF = (
                 mdoPlatformReport
                 .union(mdoMarketplaceReport)
@@ -349,7 +344,6 @@ class UserEnrolmentModel:
             dfexportutil.write_csv_per_mdo_id(mdoReportDF,f"{'reports'}/user_enrolment_report_{today}",'mdoid')
 
             warehouseDF = platformWarehouseDF.union(marketPlaceWarehouseDF)
-
             warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/user_enrolment_report_{today}")
 
         except Exception as e:
