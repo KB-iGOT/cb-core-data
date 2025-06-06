@@ -36,48 +36,47 @@ def write_csv_per_mdo_id(df, output_dir, groupByAttr,isIndividualWrite=False,thr
         output_dir (str): Output directory path
         threshold (int): Max row count per mdo_id to consider for fast write
     """
-    if True:
-        write_csv_per_mdo_id_duckdb(df,output_dir, groupByAttr,output_dir+f'tmp')
-    else:
-        if isIndividualWrite == False:
-            # Step 1: Get group counts
-            group_counts = df.groupBy(groupByAttr).count()
-            group_counts.printSchema()
-            # Step 2: Collect IDs for fast + fallback paths
-            small_ids = [row[groupByAttr] for row in group_counts.filter(col("count") <= threshold).collect()]
-            large_ids = [row[groupByAttr] for row in group_counts.filter(col("count") > threshold).collect()]
-            
-            print(f"Small groups (fast write): {len(small_ids)}")
-            # Step 3: Fast write for small/medium mdo_ids
-            if small_ids:
-                df.filter(col(groupByAttr).isin(small_ids)) \
-                .repartition(groupByAttr) \
-                .write \
-                .mode("overwrite") \
-                .partitionBy(groupByAttr) \
-                .option("header", True) \
-                .csv(output_dir)
+    
+    if isIndividualWrite == False:
+        # Step 1: Get group counts
+        group_counts = df.groupBy(groupByAttr).count()
+        group_counts.printSchema()
+        # Step 2: Collect IDs for fast + fallback paths
+        small_ids = [row[groupByAttr] for row in group_counts.filter(col("count") <= threshold).collect()]
+        large_ids = [row[groupByAttr] for row in group_counts.filter(col("count") > threshold).collect()]
+        
+        print(f"Small groups (fast write): {len(small_ids)}")
+        # Step 3: Fast write for small/medium mdo_ids
+        if small_ids:
+            df.filter(col(groupByAttr).isin(small_ids)) \
+            .repartition(groupByAttr) \
+            .write \
+            .mode("overwrite") \
+            .partitionBy(groupByAttr) \
+            .option("header", True) \
+            .csv(output_dir)
 
             print(f"Large groups (manual write): {len(large_ids)}")
             # Step 4: Manual write for large mdo_ids (one folder per group)
-            for mdo in large_ids:
-                print(f"Writing large group mdo_id={mdo} separately...")
-                df.filter(col(groupByAttr) == mdo) \
-                .coalesce(1) \
-                .write \
-                .mode("overwrite") \
-                .option("header", True) \
-                .csv(f"{output_dir}/mdo_id_large={mdo}")
-        else:
-            df.repartition(groupByAttr) \
-                .write \
-                .mode("overwrite") \
-                .partitionBy(groupByAttr) \
-                .option("header", True) \
-                .option("compression", "snappy") \
-                .parquet(output_dir)
+            # for mdo in large_ids:
+            #     print(f"Writing large group mdo_id={mdo} separately...")
+            #     df.filter(col(groupByAttr) == mdo) \
+            #     .coalesce(1) \
+            #     .write \
+            #     .mode("overwrite") \
+            #     .option("header", True) \
+            #     .csv(f"{output_dir}/mdo_id_large={mdo}")
+            write_csv_per_mdo_id_duckdb(df,output_dir, groupByAttr,output_dir+f'tmp',large_ids)
+    else:
+        df.repartition(groupByAttr) \
+            .write \
+            .mode("overwrite") \
+            .partitionBy(groupByAttr) \
+            .option("header", True) \
+            .option("compression", "snappy") \
+            .parquet(output_dir)
 
-def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet_tmp_path: str):
+def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet_tmp_path: str,large_ids):
     """
     Writes CSVs per group_by_attr using Spark for partitioned Parquet write, then DuckDB for fast CSV export.
 
@@ -97,15 +96,22 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
 
     print("🦆 Step 2: Loading into DuckDB...")
     con = duckdb.connect()
+    con.execute("PRAGMA memory_limit='6GB';")       # Sets memory cap
+    con.execute("PRAGMA threads=8;")              # Multithreading
+    con.execute("PRAGMA temp_directory='/tmp/duckdb_spill';")
     con.execute("INSTALL parquet; LOAD parquet;")
     con.execute(f"CREATE TABLE result_df AS SELECT * FROM parquet_scan('{parquet_tmp_path}/**/*.parquet');")
 
     print("🔍 Step 3: Fetching distinct group values...")
-    group_ids = con.execute(f"SELECT DISTINCT {group_by_attr} FROM result_df").fetchall()
+    if large_ids is None or not large_ids:
+        group_ids = con.execute(f"SELECT DISTINCT {group_by_attr} FROM result_df").fetchall()
+    else:
+        group_ids = [(val,) for val in large_ids] 
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     print("📤 Step 4: Writing individual CSV files...")
+    
     for (group_val,) in group_ids:
         safe_val = str(group_val).replace("/", "_") if group_val is not None else "null"
         output_path = Path(output_dir) / f"{group_by_attr}={safe_val}.csv"
