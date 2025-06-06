@@ -110,8 +110,9 @@ def preComputeExternalContentDataFrame(spark) -> DataFrame:
         df = (
             spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_PARQUET_FILE)
             .withColumn("parsed_data", from_json(col("cios_data"), schemas.cios_data_schema))
+            .withColumnRenamed("courseid", "content_id")
             .select(
-                col("content_id").alias("courseID"),
+                col("content_id"),
                 col("parsed_data.content.name").alias("courseName"),
                 col("parsed_data.content.duration").alias("courseDuration"),
                 col("parsed_data.content.lastUpdatedOn").alias("courseLastPublishedOn"),
