@@ -3,7 +3,7 @@ from pathlib import Path
 from pyspark.sql.types import *
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
-    sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace
+    sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace,bround,countDistinct
 )
 from pyspark.sql.types import LongType
 
@@ -75,28 +75,30 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         .groupBy("rowUserID") \
         .agg(concat_ws(", ", collect_list("role")).alias("role"))
 
-    userDF = userDF.join(
-        roleRawDF,
-        userDF["userID"] == roleRawDF["rowUserID"]
-    )
+    userDF = userDF.join(roleRawDF, userDF["userID"] == roleRawDF["rowUserID"], how="left").drop("rowUserID")
+    print(f"User Role DF Count: {userDF.count()}")
     userDF = userDF.drop("rowUserID")
 
 
     karma_df = spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE)
-
-    # Group by 'userid', aggregate 'points', and rename columns
     karma_df = karma_df.groupBy(col("userid").alias("karmaUserID")) \
-           .agg(sum(col("points")).alias("total_points"))
+        .agg(sum(col("points")).alias("total_points"))
 
-    userDF = userDF.join(
-        karma_df,
-        userDF["userID"] == karma_df["karmaUserID"]
-    )
-    userDF = userDF.drop("karmaUserID")
+    userDF = userDF.join(karma_df, userDF["userID"] == karma_df["karmaUserID"], how="left").drop("karmaUserID")
 
-   
-    exportDFToParquet(userDF,ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
-    # userDF.
+    weekly_claps_df = spark.read.parquet(ParquetFileConstants.CLAPS_PARQUET_FILE) \
+        .withColumnRenamed("userid", "userID") \
+        .withColumnRenamed("total_claps", "weekly_claps_day_before_yesterday") \
+        .select("userID", "weekly_claps_day_before_yesterday")
+
+    userDF = userDF.join(weekly_claps_df, on="userID", how="left")
+    userDF = userDF.drop("weeklyClaspUserID")
+    print(f"User Clap DF Count: {userDF.count()}")
+
+
+
+    exportDFToParquet(userDF, ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
+    return userDF
     
 
 
@@ -129,8 +131,7 @@ def preComputeOrgWithHierarchy(spark: SparkSession):
         org_hierarch_computed_df,
         org_computed_df["orgID"] == org_hierarch_computed_df["userOrgID"],
         "left"
-     )
-     org_merged_df = org_merged_df.drop("userOrgID")
+     ).drop("userOrgID")
      exportDFToParquet(org_merged_df, ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
 
 def preComputeOrgHierarchyWithUser(spark: SparkSession):
@@ -147,13 +148,67 @@ def preComputeOrgHierarchyWithUser(spark: SparkSession):
     user_org_merged_df = user_merged_df.join(
         org_merged_df,
         user_merged_df["userOrgID"] == org_merged_df["usermergedOrgID"]
-    )
-    org_merged_df = org_merged_df.drop("usermergedOrgID")
+    ).drop("usermergedOrgID")
     exportDFToParquet(user_org_merged_df,ParquetFileConstants.USER_ORG_COMPUTED_FILE)
 
-def exportDFToParquet(df,outputFile):
-   df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
+def appendContentDurationCompletionForEachUser(spark: SparkSession, user_master_df: DataFrame, user_enrolment_df: DataFrame, content_duration_df: DataFrame) -> DataFrame:
+    userdf_with_enrolment_counts = user_enrolment_df \
+        .join(content_duration_df, user_enrolment_df["courseid"] == content_duration_df["content_id"], how="left") \
+        .groupBy("userID") \
+        .agg(
+            countDistinct(
+                when(col("user_consumption_status").isin("not-started", "in-progress", "completed"), col("content_id"))
+            ).alias("total_content_enrolments"),
+            countDistinct(
+                when((col("user_consumption_status") == "completed") & col("certificateID").isNotNull(), col("content_id"))
+            ).alias("total_content_completions"),
+            sum(
+                when(
+                    (col("user_consumption_status") == "completed") &
+                    col("certificateID").isNotNull() &
+                    (col("category") == "Course"),
+                    coalesce(col("courseDuration"), lit(0.0))
+                )
+            ).alias("total_content_duration")
+        ) \
+        .withColumn("total_content_duration", bround(col("total_content_duration") / 3600.0, 2))
 
+    user_enrolment_master_df = user_master_df.join(userdf_with_enrolment_counts, on="userID", how="left")
+    return user_enrolment_master_df
+
+
+def appendEventDurationCompletionForEachUser(spark: SparkSession, user_enrolment_df: DataFrame) -> DataFrame:
+    """
+    Appends event enrolment, completion, and learning hours (with certificates) to user enrolment DataFrame.
+    """
+    user_event_details_df = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE) \
+        .withColumnRenamed("user_id", "userID") \
+        .groupBy("userID") \
+        .agg(
+            countDistinct(
+                when(col("status").isin("not-started", "in-progress", "completed"), col("event_id"))
+            ).alias("total_event_enrolments"),
+            countDistinct(
+                when(col("status") == "completed", col("event_id"))
+            ).alias("total_event_completions"),
+            sum(
+                when((col("status") == "completed") & col("certificate_id").isNotNull(), col("event_duration_seconds"))
+            ).alias("total_event_learning_hours_with_certificates")
+        ).withColumn("total_event_learning_hours_with_certificates", bround(col("total_event_learning_hours_with_certificates") / 3600.0, 2))
+
+    print(user_event_details_df.count())
+    user_event_details_df.printSchema()
+
+    user_enrolment_df = user_enrolment_df.join(user_event_details_df, on="userID", how="left")
+    return user_enrolment_df
+
+
+def exportDFToParquet(df: DataFrame, outputFile: str):
+    """
+    Writes the DataFrame to Parquet file using snappy compression.
+    """
+    df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
+    
 def timestampStringToLong(df: DataFrame, column_names: list, format: str = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'") -> DataFrame:
     """
     Converts ISO timestamp string columns to long (epoch milliseconds).
