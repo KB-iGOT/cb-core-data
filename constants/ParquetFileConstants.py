@@ -55,6 +55,7 @@ class ParquetFileConstants:
     RATING_SUMMARY_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "rating-summary-computed/")
     RATING_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "rating-computed/")
     CONTENT_RATING_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content-rating-computed/")
+    TEMP_COMPUTE_FILE = str(OUTPUT_COMPUTED_DIR / "temp-computed/")
 
     ###
     ###  Output CSV File

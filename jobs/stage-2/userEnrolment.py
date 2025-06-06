@@ -64,7 +64,7 @@ class UserEnrolmentModel:
 
             allCourseProgramCompletionWithDetailsDFWithRating=enrolmentDFUtil.preComputeUserOrgEnrolment( enrolmentDF,contentOrgDF,userOrgDF,spark)
             df = (
-                 contentDFUtil.duration_format(allCourseProgramCompletionWithDetailsDFWithRating, "courseDuration") # Custom function
+                 UserEnrolmentModel.duration_format(allCourseProgramCompletionWithDetailsDFWithRating, "courseDuration") # Custom function
                 .withColumn("completedOn", date_format(col("courseCompletedTimestamp"), ParquetFileConstants.DATE_TIME_FORMAT))
                 .withColumn("enrolledOn", date_format(col("courseEnrolledTimestamp"), ParquetFileConstants.DATE_TIME_FORMAT))
                 .withColumn("firstCompletedOn", date_format(col("firstCompletedOn"), ParquetFileConstants.DATE_TIME_FORMAT))
@@ -89,7 +89,7 @@ class UserEnrolmentModel:
             externalContentOrgDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
 
             marketPlaceContentEnrolmentsDF = (
-                contentDFUtil.duration_format(externalContentOrgDF, "courseDuration")
+                UserEnrolmentModel.duration_format(externalContentOrgDF, "courseDuration")
                 .join(externalEnrolmentDF, "content_id", "inner")
                 .withColumn("courseCompletedTimestamp", 
                             date_format(col("completedon"), ParquetFileConstants.DATE_TIME_FORMAT))  
@@ -341,8 +341,8 @@ class UserEnrolmentModel:
             )
 
             # mdoReportDF.write.partitionBy("mdoid").csv(f"{'reports'}/user_enrolment_report_{today}", mode="overwrite", header=True)
-            dfexportutil.write_csv_per_mdo_id(mdoReportDF,f"{'reports'}/user_enrolment_report_{today}",'mdoid')
-
+            #dfexportutil.write_csv_per_mdo_id(mdoReportDF,f"{'reports'}/user_enrolment_report_{today}",'mdoid')
+            dfexportutil.write_csv_per_mdo_id(mdoReportDF,f"{'reports'}/user_enrolment_report_{today}",'mdoid','tmp')
             warehouseDF = platformWarehouseDF.union(marketPlaceWarehouseDF)
             warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/user_enrolment_report_{today}")
 
