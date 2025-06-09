@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 from dfutil.user.userDFUtil import exportDFToParquet
 from pyspark.sql.types import *
+from pyspark.sql.types import StructType, TimestampNTZType
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
     explode,sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace
@@ -15,6 +16,8 @@ from constants.ParquetFileConstants import ParquetFileConstants
 
 
 def preComputeACBPData(spark):
+    spark.conf.set("spark.sql.parquet.enableVectorizedReader", "false")
+    spark.conf.set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS")
     acbp_df = spark.read.parquet(ParquetFileConstants.ACBP_PARQUET_FILE)
     print("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
     acbp_select_df = acbp_df \
@@ -50,16 +53,12 @@ def preComputeACBPData(spark):
     draft_cbp_data = draft_cbp_data.withColumn("draftdata", lit(None).cast("string"))
     # Union the two
     final_df = non_draft_cbp_data.unionByName(draft_cbp_data)
-    # Cast any 'timestamp_ntz' columns to string to avoid Parquet INT96 error
-    for field in final_df.schema.fields:
-        if hasattr(field.dataType, "typeName") and field.dataType.typeName() == "timestamp_ntz":
-            final_df = final_df.withColumn(field.name, col(field.name).cast("string"))
-    print_nested_schema(final_df)
-    exportDFToParquet(acbp_df,ParquetFileConstants.ACBP_SELECT_FILE)
+   
+    exportDFToParquet(final_df,ParquetFileConstants.ACBP_SELECT_FILE)
     explodeAcbpData(spark, final_df)
 
 def explodeAcbpData(spark,acbp_df):
-    
+    print("&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
     selectColumns = ["userID", "fullName", "userPrimaryEmail", "userMobile", "designation", "group", "userOrgID", "ministry_name", "dept_name", "userOrgName", "userStatus", "acbpID",
       "assignmentType", "completionDueDate", "allocatedOn", "acbpCourseIDList","acbpStatus", "acbpCreatedBy","cbPlanName"]
     user_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
@@ -91,14 +90,51 @@ def explodeAcbpData(spark,acbp_df):
 
 
 def exportDFToParquet(df,outputFile):
-   df_cleaned = cast_ntz_to_string(df)
+   df_cleaned = drop_all_ntz_fields(df)
    df_cleaned.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
 
-def cast_ntz_to_string(df):
-    for field in df.schema.fields:
-        if field.dataType.simpleString() == "timestamp_ntz":
-            df = df.withColumn(field.name, col(field.name).cast("string"))
+def cast_ntz_to_string_recursively(schema, prefix=""):
+    """
+    Recursively builds expressions to cast timestamp_ntz fields to string.
+    """
+    fields = []
+    for field in schema.fields:
+        print(f"{field.name}")
+        print(f"{field.dataType}")
+        full_name = f"{prefix}.{field.name}" if prefix else field.name
+
+        if isinstance(field.dataType, TimestampNTZType):
+            print("----------------------------------->")
+            fields.append(col(full_name).cast("string").alias(field.name))
+
+        elif isinstance(field.dataType, StructType):
+            print("###################################>")
+            nested_cols = cast_ntz_to_string_recursively(field.dataType, prefix=full_name)
+            fields.append(struct(*nested_cols).alias(field.name))
+        elif isinstance(field.dataType, ArrayType):
+            elemType = field.dataType.elementType
+            if isinstance(elemType, TimestampNTZType):
+                fields.append(expr(f"transform({full_name}, x -> CAST(x AS STRING))").alias(field.name))
+            elif isinstance(elemType, StructType):
+                # Recursively apply to each struct in the array
+                nested_cols = cast_ntz_to_string_recursively(elemType, prefix="x")
+                struct_expr = f"struct({', '.join([f'x.{c.name} as {c.name}' for c in elemType.fields])})"
+                fields.append(expr(f"transform({full_name}, x -> {struct_expr})").alias(field.name))
+            else:
+                fields.append(col(full_name).alias(field.name))
+        else:
+            fields.append(col(full_name).alias(field.name))
+    return fields
+
+
+def drop_all_ntz_fields(df: DataFrame) -> DataFrame:
+    df = df.drop("completionDueDate", "allocatedOn")
     return df
+
+# Main function
+def cast_ntz_to_string(df):
+    new_cols = cast_ntz_to_string_recursively(df.schema)
+    return df.select(*new_cols)
 
 def print_nested_schema(df, prefix=""):
     for field in df.schema.fields:
