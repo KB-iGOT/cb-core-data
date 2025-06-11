@@ -36,7 +36,7 @@ def write_csv_per_mdo_id(df, output_dir, groupByAttr,isIndividualWrite=False,thr
         output_dir (str): Output directory path
         threshold (int): Max row count per mdo_id to consider for fast write
     """
-    
+    # df.cache().count()  # Cache and count to trigger any lazy evaluation
     if isIndividualWrite == False:
         # Step 1: Get group counts
         group_counts = df.groupBy(groupByAttr).count()
@@ -65,8 +65,9 @@ def write_csv_per_mdo_id(df, output_dir, groupByAttr,isIndividualWrite=False,thr
             #     .write \
             #     .mode("overwrite") \
             #     .option("header", True) \
-            #     .csv(f"{output_dir}/mdo_id_large={mdo}")
-            write_csv_per_mdo_id_duckdb(df,output_dir, groupByAttr,output_dir+f'tmp',large_ids)
+            #     .csv(f"{output_dir}/mdo_id_large={mdo}")\
+            if len(large_ids) > 0:
+                write_csv_per_mdo_id_duckdb(df,output_dir, groupByAttr,output_dir+f'tmp',large_ids)
     else:
         df.repartition(groupByAttr) \
             .write \

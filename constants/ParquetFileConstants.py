@@ -61,6 +61,7 @@ class ParquetFileConstants:
     ###  Output CSV File
     ###
     USER_REPORT_CSV = str(OUTPUT_COMPUTED_DIR / "user-report/")
+    USER_ENROLMENT_CSV = str(OUTPUT_COMPUTED_DIR / "user-enrolment/") 
 
     DATE_TIME_WITH_AMPM_FORMAT = "yyyy-MM-dd HH:mm:ss a"
     DATE_TIME_FORMAT = "yyyy-MM-dd HH:mm:ss"
