@@ -227,3 +227,26 @@ def timestampStringToLong(df: DataFrame, column_names: list, format: str = "yyyy
             (unix_timestamp(col(col_name), format) * 1000).cast("long")
         )
     return df
+
+def user_org_dataframe(org_df: DataFrame, user_df: DataFrame) -> DataFrame:
+    """
+    Joins user data with organization details based on userOrgID.
+
+    :param org_df: DataFrame containing organization info.
+    :param user_df: DataFrame containing user info.
+    :return: DataFrame with user and organization details merged.
+    """
+    # Select and rename org columns for clarity
+    join_org_df = org_df.select(
+        col("orgID").alias("userOrgID"),
+        col("orgName").alias("userOrgName"),
+        col("orgStatus").alias("userOrgStatus"),
+        col("orgCreatedDate").alias("userOrgCreatedDate"),
+        col("orgType").alias("userOrgType"),
+        col("orgSubType").alias("userOrgSubType")
+    )
+
+    # Left join user with org info on userOrgID
+    df = user_df.join(join_org_df, on="userOrgID", how="left")
+    return df
+    
