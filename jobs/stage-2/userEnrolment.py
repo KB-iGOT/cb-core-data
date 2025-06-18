@@ -18,7 +18,6 @@ from dfutil.enrolment import enrolmentDFUtil
 from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
 
-
 from constants.ParquetFileConstants import ParquetFileConstants
 
 class UserEnrolmentModel:    
@@ -49,22 +48,27 @@ class UserEnrolmentModel:
                 )
             )
         )
-
-    
     def process_data(self, spark):
         try:
-           
             today = self.get_date()
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             
-            enrolmentDF =  spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
-            userOrgDF=spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-            # userOrgDF.printSchema()
+            print("📥 Loading base DataFrames...")
+            
+            # Load and cache base DataFrames that are used multiple times
+            enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+            userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
             contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
 
-            allCourseProgramCompletionWithDetailsDFWithRating=enrolmentDFUtil.preComputeUserOrgEnrolment( enrolmentDF,contentOrgDF,userOrgDF,spark)
+            print("🔄 Processing platform enrolments...")
+            
+            # Compute and cache the main platform join result
+            allCourseProgramCompletionWithDetailsDFWithRating = enrolmentDFUtil.preComputeUserOrgEnrolment(
+                enrolmentDF, contentOrgDF, userOrgDF, spark)
+            
+            # Process platform data and cache the result
             df = (
-                 UserEnrolmentModel.duration_format(allCourseProgramCompletionWithDetailsDFWithRating, "courseDuration") # Custom function
+                UserEnrolmentModel.duration_format(allCourseProgramCompletionWithDetailsDFWithRating, "courseDuration")
                 .withColumn("completedOn", date_format(col("courseCompletedTimestamp"), ParquetFileConstants.DATE_TIME_FORMAT))
                 .withColumn("enrolledOn", date_format(col("courseEnrolledTimestamp"), ParquetFileConstants.DATE_TIME_FORMAT))
                 .withColumn("firstCompletedOn", date_format(col("firstCompletedOn"), ParquetFileConstants.DATE_TIME_FORMAT))
@@ -73,7 +77,7 @@ class UserEnrolmentModel:
                 .withColumn("courseBatchStartDate", to_date(col("courseBatchStartDate"), ParquetFileConstants.DATE_FORMAT))
                 .withColumn("courseBatchEndDate", to_date(col("courseBatchEndDate"), ParquetFileConstants.DATE_FORMAT))
                 .withColumn("completionPercentage", round(col("completionPercentage"), 2))
-                .withColumn("Report_Last_Generated_On", currentDateTime)  # or current_timestamp()
+                .withColumn("Report_Last_Generated_On", currentDateTime)
                 .withColumn("Certificate_Generated", 
                             when(col("issuedCertificateCount") > 0, "Yes").otherwise("No"))
                 .withColumn("ArchivedOn", 
@@ -82,12 +86,13 @@ class UserEnrolmentModel:
                 .withColumn("Certificate_ID", col("certificateID"))
                 .dropDuplicates(["userID", "courseID", "batchID"])
             )
+            print("🔄 Processing external/marketplace enrolments...")
 
-
-            #external content
-            externalEnrolmentDF =  spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
+            # Load external data
+            externalEnrolmentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
             externalContentOrgDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
 
+            # Process marketplace data and cache
             marketPlaceContentEnrolmentsDF = (
                 UserEnrolmentModel.duration_format(externalContentOrgDF, "courseDuration")
                 .join(externalEnrolmentDF, "content_id", "inner")
@@ -123,7 +128,25 @@ class UserEnrolmentModel:
                 .fillna("", subset=["certificateGeneratedOn"])
             )
             marketPlaceEnrolmentsWithUserDetailsDF = marketPlaceContentEnrolmentsDF.join(userOrgDF, ["userID"], "left")
+            
+            print("🔄 Processing ACBP data...")
+            
+            # Load and process ACBP data
+            acbpAllEnrolmentDF = (spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
+                                 .withColumn("courseID", explode(col("acbpCourseIDList")))
+                                 .withColumn("liveCBPlan", lit(True))
+                                 .select(col("userOrgID"), col("courseID"), col("userID"), 
+                                        col("designation"), col("liveCBPlan")))
 
+            # Join platform data with ACBP and cache result
+            enrolmentWithACBP = (df.join(acbpAllEnrolmentDF, ["userID", "userOrgID", "courseID"], "left")
+                               .withColumn("live_cbp_plan_mandate", 
+                                          when(col("liveCBPlan").isNull(), False)
+                                          .otherwise(col("liveCBPlan"))))
+            
+            print("🔄 Generating reports...")
+
+            # Generate marketplace report
             mdoMarketplaceReport = (marketPlaceEnrolmentsWithUserDetailsDF
                 .withColumn("MDO_Name", col("userOrgName"))
                 .withColumn("Ministry", 
@@ -179,11 +202,9 @@ class UserEnrolmentModel:
                     col("userOrgID").alias("mdoid"),
                     col("certificateID").alias("Certificate_ID"),
                     col("Report_Last_Generated_On"),
-                    # col("userStatus").alias("status"),
                     col("live_cbp_plan_mandate").alias("Live_CBP_Plan_Mandate")
                 )
             )
-
 
             marketPlaceWarehouseDF = (marketPlaceEnrolmentsWithUserDetailsDF
                 .withColumn("certificate_generated_on",
@@ -226,16 +247,6 @@ class UserEnrolmentModel:
                 .withColumn("karma_points", lit(0).cast(IntegerType()))
                 .dropDuplicates(["user_id", "batch_id", "content_id"])
             )
-
-
-            acbpAllEnrolmentDF=spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE).withColumn("courseID", explode(col("acbpCourseIDList"))).withColumn("liveCBPlan", lit(True)) \
-                .select(col("userOrgID"),col("courseID"),col("userID"),col("designation"),col("liveCBPlan"))
-
-            enrolmentWithACBP = (df.join(acbpAllEnrolmentDF, ["userID", "userOrgID", "courseID"], "left")
-                       .withColumn("live_cbp_plan_mandate", 
-                                   when(col("liveCBPlan").isNull(), False)
-                                   .otherwise(col("liveCBPlan"))))
-
 
             mdoPlatformReport = (enrolmentWithACBP
                 .withColumn("MDO_Name", col("userOrgName"))
@@ -334,32 +345,43 @@ class UserEnrolmentModel:
                 .fillna(0, subset=["karma_points"])
                 .dropDuplicates(["user_id", "batch_id", "content_id"])
             )
+
+            print("🔄 Combining and writing final outputs...")
+            
             mdoReportDF = (
                 mdoPlatformReport
                 .union(mdoMarketplaceReport)
                 .coalesce(1)
             )
 
-            # mdoReportDF.write.partitionBy("mdoid").csv(f"{'reports'}/user_enrolment_report_{today}", mode="overwrite", header=True)
-            #dfexportutil.write_csv_per_mdo_id(mdoReportDF,f"{'reports'}/user_enrolment_report_{today}",'mdoid')
-            dfexportutil.write_csv_per_mdo_id(mdoReportDF,f"{'reports'}/user_enrolment_report_{today}",'mdoid','tmp')
+            print("📝 Writing CSV reports...")
+            dfexportutil.write_csv_per_mdo_id(mdoReportDF, f"{'reports'}/user_enrolment_report_{today}", 'mdoid')
+            
+            print("📦 Writing warehouse data...")
             warehouseDF = platformWarehouseDF.union(marketPlaceWarehouseDF)
             warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/user_enrolment_report_{today}")
 
+            print("✅ Processing completed successfully!")
+
         except Exception as e:
-            print(f"Error occurred during UserEnrolmentModel processing: {str(e)}")
-            raise e  # Re-raise the exception for better debugging
+            print(f"❌ Error occurred during UserEnrolmentModel processing: {str(e)}")
+            raise e
             sys.exit(1)
-    
 
 # Example usage:
 if __name__ == "__main__":
-    # Initialize Spark Session
+    # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
-        .appName("User Enrolment Report Model") \
-        .config("spark.sql.shuffle.partitions", "64") \
-        .config("spark.executor.memory", "16g") \
-        .config("spark.driver.memory", "16g") \
+        .appName("User Enrolment Report Model - Cached") \
+        .config("spark.sql.shuffle.partitions", "200") \
+        .config("spark.executor.memory", "14g") \
+        .config("spark.driver.memory", "14g") \
+        .config("spark.executor.memoryFraction", "0.7") \
+        .config("spark.storage.memoryFraction", "0.2") \
+        .config("spark.storage.unrollFraction", "0.1") \
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+        .config("spark.sql.adaptive.enabled", "true") \
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .getOrCreate()
     # Create model instance
