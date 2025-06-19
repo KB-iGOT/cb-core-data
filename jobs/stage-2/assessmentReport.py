@@ -1,4 +1,5 @@
 import sys
+import time
 from pathlib import Path
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
@@ -23,7 +24,7 @@ spark = SparkSession.builder \
     .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
     .getOrCreate()
 
-def processAssessmentReport():
+def process_assessment_report():
     """
     Generates a complete Assessment report by:
     Includes error handling and progress logging.
@@ -126,9 +127,13 @@ def main():
     Entry point for the report generation script.
     Calls the processing function.
     """
+    start_time = time.time()
     print(">>> 🔁 Starting Assessment Report Generation <<<")
-    processAssessmentReport()
+    process_assessment_report()
+
+    end_time = time.time()
     print(">>> ✅ Completed Assessment Report Generation <<<")
+    print(f"⏱️ Total time taken: {end_time - start_time:.2f} seconds")
 
 
 if __name__ == "__main__":
