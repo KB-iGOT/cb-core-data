@@ -353,9 +353,23 @@ class UserEnrolmentModel:
                 .union(mdoMarketplaceReport)
                 .coalesce(1)
             )
+            distinct_orgids = (spark.read.parquet(ParquetFileConstants.ORG_PARQUET_FILE)
+                      .select("id")
+                      .distinct()
+                      .collect())
+    
+            # Extract values from Row objects
+            orgid_list = [row.id for row in distinct_orgids]
 
             print("📝 Writing CSV reports...")
-            dfexportutil.write_csv_per_mdo_id(mdoReportDF, f"{'reports'}/user_enrolment_report_{today}", 'mdoid')
+            # dfexportutil.write_csv_per_mdo_id(mdoReportDF, f"{'reports'}/user_enrolment_report_{today}", 'mdoid')
+            dfexportutil.write_csv_per_mdo_id_duckdb(
+                mdoReportDF, 
+                f"{'reports'}/user_enrolment_report_{today}", 
+                'mdoid',
+                "tmp/user_enrolment_report_{today}_all_groups",
+                orgid_list
+            )
             
             print("📦 Writing warehouse data...")
             warehouseDF = platformWarehouseDF.union(marketPlaceWarehouseDF)
