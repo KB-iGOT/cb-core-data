@@ -22,8 +22,8 @@ def print_dataframe_info(df: DataFrame, df_name: str, show_sample: bool = True, 
         # row_count = df.count()
         # print(f"📈 Row Count: {row_count:,}")
         
-        print(f"\n🔧 Schema:")
-        df.printSchema()
+        # print(f"\n🔧 Schema:")
+        # df.printSchema()
         
         # if show_sample and row_count > 0:
         #     print(f"\n📋 Sample Data (First {min(sample_rows, row_count)} rows):")
@@ -69,11 +69,11 @@ def assessment_es_dataframe(spark: SparkSession, primary_categories: List[str] =
             col("assessOrgID")
         )
         
-        print("🗑️ Removing duplicates...")
-        before_dedup = assessmentdf.count()
+        # print("🗑️ Removing duplicates...")
+        # before_dedup = assessmentdf.count()
         assessmentdf = assessmentdf.dropDuplicates(["assessID", "assessCategory"])
-        after_dedup = assessmentdf.count()
-        print(f"📊 Deduplication: {before_dedup:,} → {after_dedup:,} rows (removed {before_dedup - after_dedup:,})")
+        # after_dedup = assessmentdf.count()
+        # print(f"📊 Deduplication: {before_dedup:,} → {after_dedup:,} rows (removed {before_dedup - after_dedup:,})")
         
         print("🔧 Filling null values...")
         assessmentdf = assessmentdf.na.fill({"assessDuration": 0.0, "assessChildCount": 0})
@@ -186,8 +186,8 @@ def add_hierarchy_column(
     
     try:
         print("📊 Input DataFrames info:")
-        print(f"   - Main DataFrame rows: {df.count():,}")
-        print(f"   - Hierarchy DataFrame rows: {hierarchy_df.count():,}")
+        # print(f"   - Main DataFrame rows: {df.count():,}")
+        # print(f"   - Hierarchy DataFrame rows: {hierarchy_df.count():,}")
         
         print("🔧 Creating hierarchy schema...")
         hierarchy_schema = schemas.make_hierarchy_schema(children, competencies, l2_children)
@@ -199,8 +199,8 @@ def add_hierarchy_column(
             df[id_col] == hierarchy_df["identifier"],
             how="left"
         )
-        join_count = joined_df.count()
-        print(f"✅ Join completed - Result rows: {join_count:,}")
+        # join_count = joined_df.count()
+        # print(f"✅ Join completed - Result rows: {join_count:,}")
         
         print("🔧 Processing hierarchy column...")
         result_df = joined_df \
@@ -231,15 +231,15 @@ def assessment_children_dataframe(assess_with_hierarchy_df: DataFrame) -> DataFr
     start_time = time.time()
     
     try:
-        input_count = assess_with_hierarchy_df.count()
-        print(f"📊 Input DataFrame rows: {input_count:,}")
+        # input_count = assess_with_hierarchy_df.count()
+        # print(f"📊 Input DataFrame rows: {input_count:,}")
         
         print("🔄 Exploding children array...")
         exploded_df = assess_with_hierarchy_df.select(
             col("assessID"), explode_outer(col("children")).alias("ch")
         )
-        exploded_count = exploded_df.count()
-        print(f"✅ After exploding children - Rows: {exploded_count:,}")
+        # exploded_count = exploded_df.count()
+        # print(f"✅ After exploding children - Rows: {exploded_count:,}")
         
         print("🔧 Selecting and casting child columns...")
         df = exploded_df.select(
@@ -254,8 +254,8 @@ def assessment_children_dataframe(assess_with_hierarchy_df: DataFrame) -> DataFr
             col("ch.allowSkip").alias("assessChildAllowSkip")
         )
         
-        final_count = df.count()
-        print(f"✅ Final DataFrame rows: {final_count:,}")
+        # final_count = df.count()
+        # print(f"✅ Final DataFrame rows: {final_count:,}")
         
         execution_time = time.time() - start_time
         print(f"⏱️ Function completed in {execution_time:.2f} seconds")
@@ -278,11 +278,11 @@ def user_assessment_children_dataframe(user_assessment_df: DataFrame, assess_chi
     start_time = time.time()
     
     try:
-        print("📊 Input DataFrames info:")
-        user_count = user_assessment_df.count()
-        children_count = assess_children_df.count()
-        print(f"   - User Assessment rows: {user_count:,}")
-        print(f"   - Assessment Children rows: {children_count:,}")
+        # print("📊 Input DataFrames info:")
+        # user_count = user_assessment_df.count()
+        # children_count = assess_children_df.count()
+        # print(f"   - User Assessment rows: {user_count:,}")
+        # print(f"   - Assessment Children rows: {children_count:,}")
         
         print("🔗 Performing inner join on 'assessChildID'...")
         df = user_assessment_df.join(assess_children_df, on="assessChildID", how="inner")
@@ -291,12 +291,12 @@ def user_assessment_children_dataframe(user_assessment_df: DataFrame, assess_chi
         print(f"✅ Join completed - Result rows: {result_count:,}")
         
         # Calculate join efficiency
-        if user_count > 0 and children_count > 0:
-            join_efficiency = (result_count / min(user_count, children_count)) * 100
-            print(f"📊 Join efficiency: {join_efficiency:.2f}%")
+        # if user_count > 0 and children_count > 0:
+        #     join_efficiency = (result_count / min(user_count, children_count)) * 100
+        #     print(f"📊 Join efficiency: {join_efficiency:.2f}%")
         
-        execution_time = time.time() - start_time
-        print(f"⏱️ Function completed in {execution_time:.2f} seconds")
+        # execution_time = time.time() - start_time
+        # print(f"⏱️ Function completed in {execution_time:.2f} seconds")
         
         # Print comprehensive DataFrame info
         print_dataframe_info(df, "User Assessment Children DataFrame", show_sample=True, sample_rows=3)
@@ -321,16 +321,16 @@ def user_assessment_children_details_dataframe(
     start_time = time.time()
     
     try:
-        print("📊 Input DataFrames info:")
-        user_assess_count = user_assess_children_df.count()
-        assess_details_count = assess_with_details_df.count()
-        course_details_count = all_course_programdetails_with_rating_df.count()
-        user_org_count = user_org_df.count()
+        # print("📊 Input DataFrames info:")
+        # user_assess_count = user_assess_children_df.count()
+        # assess_details_count = assess_with_details_df.count()
+        # course_details_count = all_course_programdetails_with_rating_df.count()
+        # user_org_count = user_org_df.count()
         
-        print(f"   - User Assessment Children rows: {user_assess_count:,}")
-        print(f"   - Assessment Details rows: {assess_details_count:,}")
-        print(f"   - Course Program Details rows: {course_details_count:,}")
-        print(f"   - User Organization rows: {user_org_count:,}")
+        # print(f"   - User Assessment Children rows: {user_assess_count:,}")
+        # print(f"   - Assessment Details rows: {assess_details_count:,}")
+        # print(f"   - Course Program Details rows: {course_details_count:,}")
+        # print(f"   - User Organization rows: {user_org_count:,}")
         
         print("🗑️ Dropping rating count columns from course data...")
         course_df = all_course_programdetails_with_rating_df.drop(
@@ -340,23 +340,23 @@ def user_assessment_children_details_dataframe(
         
         print("🔗 Step 1: Joining with assessment details...")
         df1 = user_assess_children_df.join(assess_with_details_df, on="assessID", how="left")
-        step1_count = df1.count()
-        print(f"✅ Step 1 completed - Rows: {step1_count:,}")
+        # step1_count = df1.count()
+        # print(f"✅ Step 1 completed - Rows: {step1_count:,}")
         
         print("🔗 Step 2: Joining with course details...")
         df2 = df1.join(course_df, on="courseID", how="left")
-        step2_count = df2.count()
-        print(f"✅ Step 2 completed - Rows: {step2_count:,}")
+        # step2_count = df2.count()
+        # print(f"✅ Step 2 completed - Rows: {step2_count:,}")
         
         print("🔗 Step 3: Joining with user organization data...")
         df = df2.join(user_org_df, on="userID", how="left")
-        final_count = df.count()
-        print(f"✅ Step 3 completed - Final rows: {final_count:,}")
+        # final_count = df.count()
+        # print(f"✅ Step 3 completed - Final rows: {final_count:,}")
         
-        print("📊 Join Summary:")
-        print(f"   - Initial → After assess details: {user_assess_count:,} → {step1_count:,}")
-        print(f"   - After assess details → After course details: {step1_count:,} → {step2_count:,}")
-        print(f"   - After course details → Final: {step2_count:,} → {final_count:,}")
+        # print("📊 Join Summary:")
+        # print(f"   - Initial → After assess details: {user_assess_count:,} → {step1_count:,}")
+        # print(f"   - After assess details → After course details: {step1_count:,} → {step2_count:,}")
+        # print(f"   - After course details → Final: {step2_count:,} → {final_count:,}")
         
         execution_time = time.time() - start_time
         print(f"⏱️ Function completed in {execution_time:.2f} seconds")
@@ -384,14 +384,14 @@ def all_course_program_details_with_competencies_json_dataframe(
     start_time = time.time()
     
     try:
-        print("📊 Input DataFrames info:")
-        course_count = all_course_program_es_df.count()
-        hierarchy_count = hierarchy_df.count()
-        org_count = org_df.count()
+        # print("📊 Input DataFrames info:")
+        # course_count = all_course_program_es_df.count()
+        # hierarchy_count = hierarchy_df.count()
+        # org_count = org_df.count()
         
-        print(f"   - Course Program ES rows: {course_count:,}")
-        print(f"   - Hierarchy rows: {hierarchy_count:,}")
-        print(f"   - Organization rows: {org_count:,}")
+        # print(f"   - Course Program ES rows: {course_count:,}")
+        # print(f"   - Hierarchy rows: {hierarchy_count:,}")
+        # print(f"   - Organization rows: {org_count:,}")
         
         print("🔧 Step 1: Adding hierarchy column with competencies...")
         df_with_hierarchy = add_hierarchy_column(
@@ -416,8 +416,8 @@ def all_course_program_details_with_competencies_json_dataframe(
             .na.fill(0, subset=["courseResourceCount"]) \
             .drop("data")
         
-        final_count = final_df.count()
-        print(f"✅ Final DataFrame rows: {final_count:,}")
+        # final_count = final_df.count()
+        # print(f"✅ Final DataFrame rows: {final_count:,}")
         
         execution_time = time.time() - start_time
         print(f"⏱️ Function completed in {execution_time:.2f} seconds")
@@ -443,12 +443,12 @@ def all_course_program_details_with_rating_df(
     start_time = time.time()
     
     try:
-        print("📊 Input DataFrames info:")
-        course_details_count = all_course_program_details_df.count()
-        rating_count = course_rating_df.count()
+        # print("📊 Input DataFrames info:")
+        # course_details_count = all_course_program_details_df.count()
+        # rating_count = course_rating_df.count()
         
-        print(f"   - Course Program Details rows: {course_details_count:,}")
-        print(f"   - Course Rating rows: {rating_count:,}")
+        # print(f"   - Course Program Details rows: {course_details_count:,}")
+        # print(f"   - Course Rating rows: {rating_count:,}")
         
         print("🔧 Creating categoryLower column...")
         df_with_category = all_course_program_details_df.withColumn("categoryLower", expr("LOWER(category)"))
@@ -460,10 +460,10 @@ def all_course_program_details_with_rating_df(
         final_count = df.count()
         print(f"✅ Join completed - Final rows: {final_count:,}")
         
-        # Calculate join statistics
-        if course_details_count > 0:
-            join_ratio = (final_count / course_details_count) * 100
-            print(f"📊 Join ratio: {join_ratio:.2f}% (should be ~100% for left join)")
+        # # Calculate join statistics
+        # if course_details_count > 0:
+        #     join_ratio = (final_count / course_details_count) * 100
+        #     print(f"📊 Join ratio: {join_ratio:.2f}% (should be ~100% for left join)")
         
         execution_time = time.time() - start_time
         print(f"⏱️ Function completed in {execution_time:.2f} seconds")
@@ -486,12 +486,12 @@ def add_course_org_details(course_df: DataFrame, org_df: DataFrame) -> DataFrame
     start_time = time.time()
     
     try:
-        print("📊 Input DataFrames info:")
-        course_count = course_df.count()
-        org_count = org_df.count()
+        # print("📊 Input DataFrames info:")
+        # course_count = course_df.count()
+        # org_count = org_df.count()
         
-        print(f"   - Course DataFrame rows: {course_count:,}")
-        print(f"   - Organization DataFrame rows: {org_count:,}")
+        # print(f"   - Course DataFrame rows: {course_count:,}")
+        # print(f"   - Organization DataFrame rows: {org_count:,}")
         
         print("🔧 Preparing organization DataFrame for join...")
         join_org_df = org_df.select(
@@ -504,14 +504,14 @@ def add_course_org_details(course_df: DataFrame, org_df: DataFrame) -> DataFrame
         print("🔗 Joining course data with organization details...")
         df = course_df.join(join_org_df, on="courseOrgID", how="left")
         
-        final_count = df.count()
-        print(f"✅ Join completed - Final rows: {final_count:,}")
+        # final_count = df.count()
+        # print(f"✅ Join completed - Final rows: {final_count:,}")
         
         # Verify join integrity
-        if course_count == final_count:
-            print("✅ Join integrity verified - Row count maintained")
-        else:
-            print(f"⚠️ Warning: Row count changed from {course_count:,} to {final_count:,}")
+        # if course_count == final_count:
+        #     print("✅ Join integrity verified - Row count maintained")
+        # else:
+        #     print(f"⚠️ Warning: Row count changed from {course_count:,} to {final_count:,}")
         
         execution_time = time.time() - start_time
         print(f"⏱️ Function completed in {execution_time:.2f} seconds")
