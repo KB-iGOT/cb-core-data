@@ -32,7 +32,7 @@ class ParquetFileConstants:
     CLAPS_PARQUET_FILE = str(INPUT_DIR / "weeklyClaps/**.parquet")
     USER_KARMA_POINTS_PARQUET_FILE = str(INPUT_DIR / "userKarmaPoints/**.parquet")
     USER_KARMA_POINTS_SUMMARY_PARQUET_FILE = str(INPUT_DIR / "userKarmaPointsSummary/**.parquet")
-
+    USER_ASSESSMENT_PARQUET_FILE = str(INPUT_DIR / "userAssessment/**.parquet")
 
     ###
     ###  Computed Parquet File
