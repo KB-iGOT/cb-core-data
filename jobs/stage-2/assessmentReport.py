@@ -60,11 +60,9 @@ def process_assessment_report():
         allCourseProgramDetailsWithRatingDF = assessmentdfUtil.all_course_program_details_with_rating_df(
             allCourseProgramDetailsDF,
             spark.read.parquet(ParquetFileConstants.RATING_SUMMARY_COMPUTED_PARQUET_FILE))
-        print("All Course Program Details with Rating DataFrame Schema:")
-        userOrgDF = userDFUtil.user_org_dataframe(spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE),spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE))
         print("User Organization DataFrame Schema:")
         userAssessChildrenDetailsDF = assessmentdfUtil.user_assessment_children_details_dataframe(userAssessChildrenDF, assessWithDetailsDF,
-        allCourseProgramDetailsWithRatingDF, userOrgDF)
+        allCourseProgramDetailsWithRatingDF, spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE))
         print("User Assessment Children Details DataFrame Schema:")
         # Step 1: Group to get latest attempt per user per child assessment
         latest = userAssessChildrenDetailsDF.groupBy("assessChildID", "userID").agg(
