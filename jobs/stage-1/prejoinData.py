@@ -75,7 +75,6 @@ def main():
     processing_stages = [
         ("Org Hierarchy Computation", userDFUtil.preComputeOrgWithHierarchy),
         ("Content Ratings & Summary", contentDFUtil.preComputeRatingAndSummaryDataFrame),
-        ("All Course/Program (ES)", contentDFUtil.preComputeAllCourseProgramESDataFrame),
         ("Content Master Data", contentDFUtil.preComputeContentDataFrame),
         ("External Content", contentDFUtil.preComputeExternalContentDataFrame),
         ("User Profile Computation", userDFUtil.preComputeUser),

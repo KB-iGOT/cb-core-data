@@ -14,6 +14,7 @@ from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
 from dfutil.assessment import assessmentdfUtil
+from dfutil.content import contentDFUtil
 
 # Initialize Spark Session
 print("Initializing Spark Session...")
@@ -70,16 +71,10 @@ def process_assessment_report():
         print("Stage 5: Processing user assessment data...")
         userAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE) 
         userAssessChildrenDF = assessmentdfUtil.user_assessment_children_dataframe(userAssessmentDF, assessChildrenDF)
-        print("Stage 5: Complete")
-
-        # Stage 6: Load Course Program Details
-        print("Stage 6: Loading course program details...")
-        allCourseProgramDetailsWithCompDF = assessmentdfUtil.all_course_program_details_with_competencies_json_dataframe(
-            spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE), 
-            hierarchyDF, 
-            organizationDF, 
-            spark
-        )
+        print("User Assessment Children DataFrame Schema:")
+        categories = ["Course","Program","Blended Program","Curated Program","Moderated Course","Standalone Assessment","CuratedCollections"]
+        allCourseProgramDetailsWithCompDF = assessmentdfUtil.all_course_program_details_with_competencies_json_dataframe(contentDFUtil.AllCourseProgramESDataFrame(spark,categories), hierarchyDF, organizationDF, spark)
+        print("All Course Program Details with Competencies JSON DataFrame Schema:")
         allCourseProgramDetailsDF = allCourseProgramDetailsWithCompDF.drop("competenciesJson")
         print("Stage 6: Complete")
 
