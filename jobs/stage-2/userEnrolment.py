@@ -307,7 +307,6 @@ class UserEnrolmentModel:
                 )
                 .dropDuplicates(["userID", "Batch_Id", "courseID"])
                 .drop("userID", "courseID")
-                .coalesce(1)
             )
 
             platformWarehouseDF = (enrolmentWithACBP
