@@ -18,38 +18,75 @@ from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.dfexport import dfexportutil
 
-# Initialize the Spark Session with tuning configurations
+# Import our epic Ramayana utility
+from utils.ramayanUtil import (
+    RamayanaPrinter, 
+    chapter_header, 
+    ramayana_msg, 
+    success_msg, 
+    error_msg,
+    epic_intro,
+    epic_finale,
+    character_quote,
+    performance_comment,
+    data_quality_comment,
+    RamayanaThemes
+)
+
+# Initialize Spark with epic style
+RamayanaPrinter.print_spark_initialization()
+
 spark = SparkSession.builder \
-    .appName("UserReportGenerator") \
+    .appName("UserReportGenerator_RamRajya_Edition") \
     .config("spark.executor.memory", "12g") \
     .config("spark.driver.memory", "10g") \
     .config("spark.sql.shuffle.partitions", "64") \
     .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
     .getOrCreate()
 
-
 def processUserReport():
     """
-    Generates a complete user learning and enrolment report by:
-    1. Loading user, enrolment, and content data.
-    2. Computing learning durations from events and content.
-    3. Enriching user profiles with calculated fields.
-    4. Returning a final DataFrame for reporting or export.
-    
-    Includes error handling and progress logging.
+    User Report Generation - Epic Ramayana Style!
+    Clean version using ramayanUtil for all humor functions.
     """
+    import time
 
     try:
-        print("\n=== Step 1: Load User Master Data ===")
+        start_time = time.time()
+
+        # Chapter 1: User Master Data
+        chapter_header(1, "THE ROYAL CENSUS - USER MASTER DATA")
+        ramayana_msg(RamayanaThemes.DATA_LOADING)
+        
         user_master_df = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
-        # print(f"✅ User Master Count: {user_master_df.count()}")
+        user_count = user_master_df.count()
+        success_msg("User Master loaded! RAM ji khush!", "🏰 Ayodhya ki population ready!")
+        data_quality_comment(user_count)
 
-        print("\n=== Step 2: Load Enrolment Data ===")
+        # Chapter 2: Enrolment Data  
+        chapter_header(2, "THE GURUKUL RECORDS - ENROLMENT DATA")
+        ramayana_msg([
+            "🎓 Vishwamitra ji ke gurukul ka attendance register!",
+            "📝 'Kaun kaun se course mein enrolled hai?' - checking records",
+            "🔍 Lakshman says: 'Bhaiya, schema complex lag raha hai!'",
+            "😅 RAM: 'Koi baat nahi, decode kar denge!'"
+        ])
+        
         user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+        print("🔍 Schema examination - Jatayu ki tarah sharp observation!")
         user_enrolment_df.printSchema()
-        # print(f"✅ Enrolment Count: {user_enrolment_df.count()}")
+        success_msg("Enrolment data decoded! Gurukul records clear!", 
+                   "📖 Vishwamitra ji approve: 'Students ki list tayar!'")
 
-        print("\n=== Step 3: Load Course Content Duration Data ===")
+        # Chapter 3: Content Duration
+        chapter_header(3, "THE KNOWLEDGE TREASURY - CONTENT DURATION")
+        ramayana_msg([
+            "📖 Sage Vashishta's library - course duration wisdom!",
+            "⚡ Filter operation like RAM's divine arrow - precise target!",
+            "🎯 'Course' category mein se gems nikalne hain!",
+            "💎 courseID transform - alchemy jaisi magic!"
+        ])
+        
         content_duration_df = (
             spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
             .filter(col("category") == "Course")
@@ -59,9 +96,19 @@ def processUserReport():
                 col("category")
             )
         )
-        print(f"✅ Course Duration Rows: {content_duration_df.count()}")
+        content_count = content_duration_df.count()
+        success_msg(f"Knowledge treasury opened! Course gems: {content_count}",
+                   "🧙‍♂️ Sage Vashishta blesses: 'Wisdom successfully extracted!'")
 
-        print("\n=== Step 4: Add User Learning Status from Enrolments ===")
+        # Chapter 4: Status Classification
+        chapter_header(4, "THE DIVINE CLASSIFICATION - STATUS SORTING")
+        ramayana_msg([
+            "⚖️ Dharmaraj Yudhishthir style - justice for all statuses!",
+            "🔮 Crystal ball reveals: 'Kaun kaha pahuncha hai learning mein?'",
+            "👻 Null values = Manthara ki shakti - confusion create karti hai!",
+            "⚡ When conditions = RAM ka dhanush - powerful transformation!"
+        ])
+        
         user_enrolment_df = user_enrolment_df.withColumn(
             "user_consumption_status",
             when(col("dbCompletionStatus").isNull(), "not-enrolled")
@@ -69,20 +116,39 @@ def processUserReport():
             .when(col("dbCompletionStatus") == 1, "in-progress")
             .otherwise("completed")
         )
+        
+        success_msg("Divine justice served! Status classification complete!",
+                   "👑 RAM ji approves: 'Sabka saath, sabka vikas, sabka status!'")
 
-        print("\n=== Step 5: Append Content Learning Duration to User Data ===")
+        # Chapter 5: Data Joining
+        chapter_header(5, "THE SACRED UNION - DATA JOINING CEREMONY")
+        ramayana_msg(RamayanaThemes.DATA_JOINING)
+        
         user_enrolment_master_df = userDFUtil.appendContentDurationCompletionForEachUser(
             spark, user_master_df, user_enrolment_df, content_duration_df
         )
-        # print(f"✅ User Data with Content Duration: {user_enrolment_master_df.count()}")
+        success_msg("Vivah sampann! Data marriage successful!",
+                   "🍬 Laddu distribution - all systems celebrating!")
 
-        print("\n=== Step 6: Append Event Learning Metrics ===")
+        # Chapter 6: Event Metrics
+        chapter_header(6, "THE DIVINE WEAPONS - EVENT METRICS POWER")
+        ramayana_msg([
+            "🏹 RAM ka brahmastra - appendEventDuration function!",
+            "💥 Event learning metrics = Hanuman ka gada power!",
+            "🌊 Data flowing like Ganga - pure and powerful!",
+            "⚡ 'Asambhav ko sambhav banana hai!' - impossible made possible!"
+        ])
+        
         user_complete_data = userDFUtil.appendEventDurationCompletionForEachUser(
             spark, user_enrolment_master_df
         )
-        # print(f"✅ User Data with Event Duration: {user_complete_data.count()}")
+        success_msg("Brahmastra successful! Event metrics embedded!",
+                   "💪 Hanuman reports: 'Mission accomplished, Prabhu!'")
 
-        print("\n=== Step 7: Add Derived Columns for Reporting ===")
+        # Chapter 7: Derived Columns
+        chapter_header(7, "THE ROYAL MAKEOVER - DERIVED COLUMNS BEAUTY")
+        ramayana_msg(RamayanaThemes.DATA_TRANSFORMATION)
+        
         user_complete_data = user_complete_data \
             .withColumn("Tag", concat_ws(", ", col("additionalProperties.tag"))) \
             .withColumn("Total_Learning_Hours",
@@ -93,7 +159,18 @@ def processUserReport():
                              (col("weekly_claps_day_before_yesterday") == ""),
                              lit(0)).otherwise(col("weekly_claps_day_before_yesterday")))
 
-        print("\n=== Step 8: Format and Select Final Columns ===")
+        success_msg("Makeover complete! Data looking like Sita Mata!",
+                   "✨ Ready for the royal court presentation!")
+
+        # Chapter 8: Final Selection
+        chapter_header(8, "THE ROYAL COURT - FINAL COLUMN SELECTION")
+        ramayana_msg([
+            "⚖️ RAM Rajya court - final judgment and selection!",
+            "📜 Royal decree: 'Ye columns chosen hain for export!'",
+            "⏰ Time captured like Kaal Chakra - eternal timestamp!",
+            "🎯 Each select statement = royal command precision!"
+        ])
+        
         dateTimeFormat = "yyyy-MM-dd HH:mm:ss"
         currentDateTime = current_timestamp()
 
@@ -130,33 +207,43 @@ def processUserReport():
                 col("data_last_generated_on")
             )
 
-        # print(f"✅ Final Report Row Count: {user_complete_df.count()}")
+        character_quote("ram", "Royal court decision final! Perfect column selection!")
+        print("🔍 Schema Darshan - Divine revelation of structure!")
         user_complete_df.printSchema()
-        dfexportutil.write_csv_per_mdo_id(user_complete_df,ParquetFileConstants.USER_REPORT_CSV,'mdo_id')
-        
 
-        # Optional: Save the output
-        # user_complete_df.write.mode("overwrite").parquet("/your/output/path")
+        # Chapter 9: Victory Celebration
+        chapter_header(9, "VICTORY CELEBRATION - CSV EXPORT FESTIVAL")
+        ramayana_msg(RamayanaThemes.DATA_EXPORT)
+        
+        dfexportutil.write_csv_per_mdo_id(user_complete_df, ParquetFileConstants.USER_REPORT_CSV, 'mdo_id')
+        success_msg("Distribution complete! Every kingdom got their data!",
+                   "🙏 Hanuman reports: 'Sab jagah pahunch gaya, Prabhu!'")
+
+        # Performance analysis
+        total_duration = time.time() - start_time
+        final_count = user_complete_df.count()
+        
+        performance_comment(total_duration)
+        data_quality_comment(final_count, 0.95)  # Assuming high quality
+
+        # Epic Conclusion
+        RamayanaPrinter.print_epic_conclusion()
 
     except Exception as e:
-        print("\n❌ ERROR: Exception occurred during report generation")
-        print(str(e))
+        error_msg(e)
         raise
 
-
-        
-    
-
-
 def main():
-    """
-    Entry point for the report generation script.
-    Calls the processing function.
-    """
-    print(">>> 🔁 Starting User Report Generation <<<")
+    """Epic Saga Director's Cut - Clean Version with ramayanUtil"""
+    
+    epic_intro("USER REPORT PROCESSING EPIC", "Clean Architecture with Divine Humor")
+    
+    print("🔔 Temple bells ring... 🕯️ Aarti begins... 🙏 Bhajan starts...")
+    character_quote("ram", "Data processing ki shururat karte hain!")
+    
     processUserReport()
-    print(">>> ✅ Completed User Report Generation <<<")
-
-
-if __name__ == "__main__":
-    main()
+    
+    epic_finale([
+        "🌅 Suryoday! Victory sun rises over digital Ayodhya!",
+        "🏆 MISSION RAMAYANA ACCOMPLISHED!",
+        "🎊 All of Ayodhya celebrates the data victory!"])
