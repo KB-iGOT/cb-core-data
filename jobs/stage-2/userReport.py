@@ -1,3 +1,5 @@
+import findspark
+findspark.init()
 import sys
 from pathlib import Path
 from pyspark.sql import SparkSession

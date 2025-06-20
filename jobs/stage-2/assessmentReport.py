@@ -1,3 +1,5 @@
+import findspark
+findspark.init()
 import sys
 import time
 from pathlib import Path
