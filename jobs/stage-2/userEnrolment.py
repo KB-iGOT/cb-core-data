@@ -382,14 +382,13 @@ class UserEnrolmentModel:
             raise e
             sys.exit(1)
 
-# Example usage:
-if __name__ == "__main__":
+def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
         .appName("User Enrolment Report Model - Cached") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "14g") \
-        .config("spark.driver.memory", "14g") \
+        .config("spark.executor.memory", "42g") \
+        .config("spark.driver.memory", "10g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \
@@ -407,3 +406,7 @@ if __name__ == "__main__":
     duration = end_time - start_time
     print(f"[END] UserEnrolmentModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
+
+# Example usage:
+if __name__ == "__main__":
+   main()
