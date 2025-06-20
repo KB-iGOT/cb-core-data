@@ -8,3 +8,5 @@ venv/
 /data-res/**
 **/*.tmp
 .DS_Store
+/warehouse
+/reports

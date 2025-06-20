@@ -9,6 +9,8 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 stage_1 = importlib.import_module('jobs.stage-1.prejoinData')
 stage_2a = importlib.import_module('jobs.stage-2.userReport') 
 stage_2b = importlib.import_module('jobs.stage-2.assessmentReport')
+stage_2c = importlib.import_module('jobs.stage-2.kcmReport') 
+
 
 def execute_all_stages():
     """
@@ -47,6 +49,15 @@ def execute_all_stages():
         
         stage2b_duration = time.time() - stage2b_start
         print(f"Stage 2B: Assessment Analytics - Complete ({stage2b_duration:.2f}s)")
+
+         # Stage 2C: KCM Model
+        print("\nStage 2C: KCM Model - Starting...")
+        stage2c_start = time.time()
+        
+        stage_2c.main()
+        
+        stage2c_duration = time.time() - stage2c_start
+        print(f"Stage 2C: KCM Model - Complete ({stage2c_duration:.2f}s)")
         
         # Pipeline Summary
         total_duration = time.time() - total_start_time
@@ -55,6 +66,7 @@ def execute_all_stages():
         print(f"Stage 1 Duration: {stage1_duration:.2f}s ({stage1_duration/60:.1f} min)")
         print(f"Stage 2A Duration: {stage2a_duration:.2f}s ({stage2a_duration/60:.1f} min)")
         print(f"Stage 2B Duration: {stage2b_duration:.2f}s ({stage2b_duration/60:.1f} min)")
+        print(f"Stage 2C Duration: {stage2c_duration:.2f}s ({stage2c_duration/60:.1f} min)")
         print(f"Total Duration: {total_duration:.2f}s ({total_duration/60:.1f} min)")
         print(f"Execution completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("Status: All stages completed successfully")
@@ -65,7 +77,8 @@ def execute_all_stages():
             "stage_durations": {
                 "data_preparation": stage1_duration,
                 "user_analytics": stage2a_duration,
-                "assessment_analytics": stage2b_duration
+                "assessment_analytics": stage2b_duration,
+                "kcm_analytics": stage2c_duration
             },
             "completion_time": datetime.now().isoformat()
         }

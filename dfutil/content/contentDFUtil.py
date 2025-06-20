@@ -1,7 +1,9 @@
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.user.userDFUtil import exportDFToParquet
+from dfutil.content import contentDFUtil
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import col, explode_outer,from_json, lit,when, format_string, expr,lower,avg,count
+from pyspark.sql import functions as F
 from pyspark.sql.types import FloatType
 from constants.ParquetFileConstants import ParquetFileConstants
 from typing import List
@@ -14,37 +16,42 @@ def esContentDataFrame(
     return spark.read.parquet(ParquetFileConstants.ESCONTENT_PARQUET_FILE).filter(col("primaryCategory").isin(primary_categories))
 
 
-def preComputeAllCourseProgramESDataFrame(spark: SparkSession,
-    primary_categories: List[str]= ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"],
+def AllCourseProgramESDataFrame(spark: SparkSession,
+    primary_categories: List[str] = ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
 ) -> DataFrame:
-  
-    contentDF = esContentDataFrame(primary_categories, spark) \
-        .withColumn("courseOrgID", explode_outer(col("createdFor"))) \
-        .withColumn("contentLanguage", explode_outer(col("language"))) \
-        .withColumn("competency", explode_outer(col("competencies_v6")))  \
+    
+    return esContentDataFrame(primary_categories, spark) \
+        .withColumn("courseOrgID", F.explode_outer(F.col("createdFor"))) \
+        .withColumn("contentLanguage", F.explode_outer(F.col("language"))) \
+        .withColumn("competencyAreaRefId", 
+                   F.when(F.col("competencies_v6").isNotNull(), 
+                         F.col("competencies_v6")["competencyAreaRefId"]).otherwise(F.lit(None))) \
+        .withColumn("competencyThemeRefId", 
+                   F.when(F.col("competencies_v6").isNotNull(), 
+                         F.col("competencies_v6")["competencyThemeRefId"]).otherwise(F.lit(None))) \
+        .withColumn("competencySubThemeRefId", 
+                   F.when(F.col("competencies_v6").isNotNull(), 
+                         F.col("competencies_v6")["competencySubThemeRefId"]).otherwise(F.lit(None))) \
         .select(
-            col("identifier").alias("courseID"),
-            col("primaryCategory").alias("category"),
-            col("name").alias("courseName"),
-            col("status").alias("courseStatus"),
-            col("reviewStatus").alias("courseReviewStatus"),
-            col("channel").alias("courseChannel"),
-            col("lastPublishedOn").alias("courseLastPublishedOn"),
-            col("duration").cast(FloatType()).alias("courseDuration"),
-            col("leafNodesCount").alias("courseResourceCount"),
-            col("lastStatusChangedOn").alias("lastStatusChangedOn"),
-            col("courseOrgID"),
-            col("competency.competencyAreaRefId"),
-            col("competency.competencyThemeRefId"),
-            col("competency.competencySubThemeRefId"),
-            col("contentLanguage"),
-            col("courseCategory")
+            F.col("identifier").alias("courseID"),
+            F.col("primaryCategory").alias("category"),
+            F.col("name").alias("courseName"),
+            F.col("status").alias("courseStatus"),
+            F.col("reviewStatus").alias("courseReviewStatus"),
+            F.col("channel").alias("courseChannel"),
+            F.col("lastPublishedOn").alias("courseLastPublishedOn"),
+            F.col("duration").cast("float").alias("courseDuration"),
+            F.col("leafNodesCount").alias("courseResourceCount"),
+            F.col("lastStatusChangedOn").alias("lastStatusChangedOn"),
+            F.col("courseOrgID"),
+            F.col("competencyAreaRefId"),
+            F.col("competencyThemeRefId"),
+            F.col("competencySubThemeRefId"),
+            F.col("contentLanguage"),
+            F.col("courseCategory")
         ) \
         .dropDuplicates(["courseID", "category"]) \
-        .fillna(0.0, subset=["courseDuration"]) \
-        .fillna(0, subset=["courseResourceCount"])
-    
-    exportDFToParquet(contentDF,ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE)
+        .na.fill({"courseDuration": 0.0, "courseResourceCount": 0})
 
 def preComputeRatingAndSummaryDataFrame(spark):
     ratingSummaryDF = spark.read.parquet(ParquetFileConstants.RATING_SUMMARY_PARQUET_FILE) \
@@ -90,9 +97,11 @@ def preComputeRatingAndSummaryDataFrame(spark):
     exportDFToParquet(contentRating,ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)
 
 def preComputeContentDataFrame(spark: SparkSession):
-    contentRatingDF=spark.read.parquet(ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)
-    contentWithRatingDF=spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE).join(
+    contentRatingDF=spark.read.parquet(ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)    
+    contentWithRatingDF=contentDFUtil.AllCourseProgramESDataFrame(spark).join(
         contentRatingDF,"courseID","left").drop(contentRatingDF["courseID"])
+    contentWithRatingDF.printSchema()
+    contentWithRatingDF.show(5,truncate=False)
     
     orgDF=spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE).select(
       col("orgID").alias("courseOrgID"),
@@ -102,6 +111,8 @@ def preComputeContentDataFrame(spark: SparkSession):
 
     contentWithOrgRatingDF=contentWithRatingDF.join(orgDF, contentWithRatingDF["courseOrgID"] == orgDF["courseOrgID"], "left") \
         .drop(orgDF["courseOrgID"]) \
+        
+    contentWithOrgRatingDF.printSchema()
     
     exportDFToParquet(contentWithOrgRatingDF,ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
 
