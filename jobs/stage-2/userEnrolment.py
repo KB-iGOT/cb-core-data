@@ -1,3 +1,5 @@
+import findspark
+findspark.init()
 import sys
 from pathlib import Path
 import pandas as pd
@@ -351,15 +353,14 @@ class UserEnrolmentModel:
             mdoReportDF = (
                 mdoPlatformReport
                 .union(mdoMarketplaceReport)
-                .coalesce(1)
             )
-            distinct_orgids = (spark.read.parquet(ParquetFileConstants.ORG_PARQUET_FILE)
-                      .select("id")
-                      .distinct()
-                      .collect())
+            distinct_orgids = mdoPlatformReport \
+                      .select("mdoid") \
+                      .distinct() \
+                      .collect()  
     
             # Extract values from Row objects
-            orgid_list = [row.id for row in distinct_orgids]
+            orgid_list = [row.mdoid for row in distinct_orgids]
 
             print("📝 Writing CSV reports...")
             # dfexportutil.write_csv_per_mdo_id(mdoReportDF, f"{'reports'}/user_enrolment_report_{today}", 'mdoid')
