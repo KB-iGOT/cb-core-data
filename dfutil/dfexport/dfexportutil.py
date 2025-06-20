@@ -146,23 +146,44 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
 
     print("📤 Step 4: Writing individual CSV files for large groups...")
     
-    for (group_val,) in group_ids:
-        safe_val = str(group_val).replace("/", "_") if group_val is not None else "null"
-        output_path = Path(output_dir) / f"{group_by_attr}={safe_val}.csv"
+    # Tracking variables
+    successful_writes = 0
+    failed_writes = 0
+    total_groups = len(group_ids)
+    
+    for i, (group_val,) in enumerate(group_ids, 1):
+        try:
+            safe_val = str(group_val).replace("/", "_") if group_val is not None else "null"
+            output_path = Path(output_dir) / f"{group_by_attr}={safe_val}.csv"
 
-        con.execute(f"""
-            COPY (
-                SELECT * FROM result_df
-                WHERE {group_by_attr} = ?
-            ) TO '{output_path}' (FORMAT CSV, HEADER, DELIMITER ',');
-        """, [group_val])
+            con.execute(f"""
+                COPY (
+                    SELECT * FROM result_df
+                    WHERE {group_by_attr} = ?
+                ) TO '{output_path}' (FORMAT CSV, HEADER, DELIMITER ',');
+            """, [group_val])
 
-        print(f"✅ Wrote large group: {output_path}")
+            successful_writes += 1
+            
+            # Progress update every 10 files or for the last file
+            if i % 10 == 0 or i == total_groups:
+                print(f"📊 Progress: {i}/{total_groups} large groups written ({(i/total_groups)*100:.1f}%)")
+            
+        except Exception as e:
+            failed_writes += 1
+            print(f"❌ Failed to write group {group_val}: {e}")
+
+    # Final summary
+    print(f"\n📈 Large Group CSV Writing Summary:")
+    print(f"   ✅ Successfully written: {successful_writes}")
+    print(f"   ❌ Failed: {failed_writes}")
+    print(f"   📊 Total processed: {total_groups}")
+    print(f"   🎯 Success rate: {(successful_writes/total_groups)*100:.1f}%")
 
     con.close()
     
     # Optional: Cleanup temporary parquet files
-    print("🧹 Cleaning up temporary parquet files...")
+    print("\n🧹 Cleaning up temporary parquet files...")
     try:
         import shutil
         shutil.rmtree(parquet_tmp_path)
@@ -171,3 +192,11 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
         print(f"⚠️  Could not clean up {parquet_tmp_path}: {e}")
     
     print("🎉 Done writing all large group CSV files.")
+    
+    # Return tracking info for further use if needed
+    return {
+        'successful_writes': successful_writes,
+        'failed_writes': failed_writes,
+        'total_groups': total_groups,
+        'success_rate': (successful_writes/total_groups)*100 if total_groups > 0 else 0
+    }
