@@ -119,6 +119,7 @@ def process_assessment_report():
 
     except Exception as e:
         print(f"Error occurred: {e}")
+        raise
 
 def main():
     """

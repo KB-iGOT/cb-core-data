@@ -76,7 +76,7 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         .agg(concat_ws(", ", collect_list("role")).alias("role"))
 
     userDF = userDF.join(roleRawDF, userDF["userID"] == roleRawDF["rowUserID"], how="left").drop("rowUserID")
-    print(f"User Role DF Count: {userDF.count()}")
+    #print(f"User Role DF Count: {userDF.count()}")
     userDF = userDF.drop("rowUserID")
 
 
@@ -93,7 +93,7 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
 
     userDF = userDF.join(weekly_claps_df, on="userID", how="left")
     userDF = userDF.drop("weeklyClaspUserID")
-    print(f"User Clap DF Count: {userDF.count()}")
+    #print(f"User Clap DF Count: {userDF.count()}")
 
 
 
@@ -196,7 +196,7 @@ def appendEventDurationCompletionForEachUser(spark: SparkSession, user_enrolment
             ).alias("total_event_learning_hours_with_certificates")
         ).withColumn("total_event_learning_hours_with_certificates", bround(col("total_event_learning_hours_with_certificates") / 3600.0, 2))
 
-    print(user_event_details_df.count())
+    #print(user_event_details_df.count())
     user_event_details_df.printSchema()
 
     user_enrolment_df = user_enrolment_df.join(user_event_details_df, on="userID", how="left")

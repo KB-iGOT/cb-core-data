@@ -42,12 +42,12 @@ def processUserReport():
     try:
         print("\n=== Step 1: Load User Master Data ===")
         user_master_df = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
-        print(f"✅ User Master Count: {user_master_df.count()}")
+        # print(f"✅ User Master Count: {user_master_df.count()}")
 
         print("\n=== Step 2: Load Enrolment Data ===")
         user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
         user_enrolment_df.printSchema()
-        print(f"✅ Enrolment Count: {user_enrolment_df.count()}")
+        # print(f"✅ Enrolment Count: {user_enrolment_df.count()}")
 
         print("\n=== Step 3: Load Course Content Duration Data ===")
         content_duration_df = (
@@ -74,13 +74,13 @@ def processUserReport():
         user_enrolment_master_df = userDFUtil.appendContentDurationCompletionForEachUser(
             spark, user_master_df, user_enrolment_df, content_duration_df
         )
-        print(f"✅ User Data with Content Duration: {user_enrolment_master_df.count()}")
+        # print(f"✅ User Data with Content Duration: {user_enrolment_master_df.count()}")
 
         print("\n=== Step 6: Append Event Learning Metrics ===")
         user_complete_data = userDFUtil.appendEventDurationCompletionForEachUser(
             spark, user_enrolment_master_df
         )
-        print(f"✅ User Data with Event Duration: {user_complete_data.count()}")
+        # print(f"✅ User Data with Event Duration: {user_complete_data.count()}")
 
         print("\n=== Step 7: Add Derived Columns for Reporting ===")
         user_complete_data = user_complete_data \
@@ -130,7 +130,7 @@ def processUserReport():
                 col("data_last_generated_on")
             )
 
-        print(f"✅ Final Report Row Count: {user_complete_df.count()}")
+        # print(f"✅ Final Report Row Count: {user_complete_df.count()}")
         user_complete_df.printSchema()
         dfexportutil.write_csv_per_mdo_id(user_complete_df,ParquetFileConstants.USER_REPORT_CSV,'mdo_id')
         
@@ -141,6 +141,7 @@ def processUserReport():
     except Exception as e:
         print("\n❌ ERROR: Exception occurred during report generation")
         print(str(e))
+        raise
 
 
         
