@@ -15,7 +15,7 @@ from dfutil.dfexport import dfexportutil
 from dfutil.assessment import assessmentdfUtil
 
 # Import our epic Ramayana utility
-from utils.ramayanUtil import (
+from fun.ramayanUtil import (
     RamayanaPrinter, 
     chapter_header, 
     ramayana_msg, 
