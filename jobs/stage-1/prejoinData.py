@@ -56,7 +56,6 @@ def main():
     # Run each ETL stage with logging
     run_stage("Org Hierarchy Computation", userDFUtil.preComputeOrgWithHierarchy, spark)
     run_stage("Content Ratings & Summary", contentDFUtil.preComputeRatingAndSummaryDataFrame, spark)
-    run_stage("All Course/Program (ES)", contentDFUtil.preComputeAllCourseProgramESDataFrame, spark)
     run_stage("Content Master Data", contentDFUtil.preComputeContentDataFrame, spark)
     run_stage("External Content", contentDFUtil.preComputeExternalContentDataFrame, spark)
     run_stage("User Profile Computation", userDFUtil.preComputeUser, spark)
