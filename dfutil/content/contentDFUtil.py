@@ -100,8 +100,6 @@ def preComputeContentDataFrame(spark: SparkSession):
     contentRatingDF=spark.read.parquet(ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)    
     contentWithRatingDF=contentDFUtil.AllCourseProgramESDataFrame(spark).join(
         contentRatingDF,"courseID","left").drop(contentRatingDF["courseID"])
-    contentWithRatingDF.printSchema()
-    contentWithRatingDF.show(5,truncate=False)
     
     orgDF=spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE).select(
       col("orgID").alias("courseOrgID"),
