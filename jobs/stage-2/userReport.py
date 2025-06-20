@@ -6,6 +6,7 @@ from pyspark.sql.functions import (
     current_timestamp, date_format, from_unixtime, concat_ws
 )
 import os
+import time
 
 # Add parent directory to sys.path for importing project-specific modules
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -18,74 +19,89 @@ from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.dfexport import dfexportutil
 
-# Import our epic Ramayana utility
-from fun.ramayanUtil import (
-    RamayanaPrinter, 
-    chapter_header, 
-    ramayana_msg, 
-    success_msg, 
-    error_msg,
-    epic_intro,
-    epic_finale,
-    character_quote,
-    performance_comment,
-    data_quality_comment,
-    RamayanaThemes
-)
-
-# Initialize Spark with epic style
-RamayanaPrinter.print_spark_initialization()
+# Initialize Spark with Queen's independent spirit
+print("👑 QUEEN DATA PROCESSING - SOLO JOURNEY BEGINS!")
+print("✈️ Spark Session ko Rani ki European trip ki tarah adventurous banayenge!")
+print("💪 12GB executor memory - Rani ki newfound confidence jaisi strong!")
+print("🧠 10GB driver memory - Paris mein discovery ki tarah intelligent!")
+print("🎯 64 partitions - Solo travel ki tarah independent!")
 
 spark = SparkSession.builder \
-    .appName("UserReportGenerator_RamRajya_Edition") \
+    .appName("UserReportGenerator_Queen_Solo_Journey_Edition") \
     .config("spark.executor.memory", "12g") \
     .config("spark.driver.memory", "10g") \
     .config("spark.sql.shuffle.partitions", "64") \
     .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
     .getOrCreate()
 
+print("✅ Spark Session ready! Solo journey ke liye perfectly prepared!")
+print("🎵 'London Thumakda' playing - adventure spirit activated!")
+
 def processUserReport():
     """
-    User Report Generation - Epic Ramayana Style!
-    Clean version using ramayanUtil for all humor functions.
+    User Report Generation - Queen Movie Style!
+    
+    Like Rani's solo Europe trip where she discovers her true self,
+    we're taking our data on a solo journey of transformation and discovery!
+    
+    👑 Each step is like a city on Rani's trip - from shy beginning to confident finale!
     """
-    import time
 
     try:
         start_time = time.time()
 
-        # Chapter 1: User Master Data
-        chapter_header(1, "THE ROYAL CENSUS - USER MASTER DATA")
-        ramayana_msg(RamayanaThemes.DATA_LOADING)
+        # Chapter 1: Departure Preparation - User Master Data
+        print("\n" + "👑" * 70)
+        print("🎬 SCENE 1: DEPARTURE PREPARATION - PACKING FOR PARIS")
+        print("👑" * 70)
+        print("✈️ Rani says: 'Main akeli ja rahi hun, scared hun but excited bhi!'")
+        print("🧳 Just like Rani packing for her solo trip, we prepare user data")
+        print("📊 User Master Data = Our travel essentials and passport")
+        print("⚡ Loading user data with Rani's nervous but determined energy")
+        print("🎵 Background music: 'Ranga Re' - Colorful start to journey!")
+        print("-" * 60)
         
         user_master_df = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
         user_count = user_master_df.count()
-        success_msg("User Master loaded! RAM ji khush!", "🏰 Ayodhya ki population ready!")
-        data_quality_comment(user_count)
+        print(f"✅ Suitcase packed! Travel companions ready: {user_count:,}")
+        
+        if user_count > 50000:
+            print("👑 Wow! Pura Europe tour group! 'Itne saare log, main manage kar sakti hun!'")
+        elif user_count > 10000:
+            print("😊 Good group size! Rani confident - 'Main kar sakti hun!'")
+        else:
+            print("💕 Small group trip! 'Intimate journey, better connections!'")
+        
+        print("🎬 Rani's determination: 'Chalo, adventure shuru karte hain!'")
 
-        # Chapter 2: Enrolment Data  
-        chapter_header(2, "THE GURUKUL RECORDS - ENROLMENT DATA")
-        ramayana_msg([
-            "🎓 Vishwamitra ji ke gurukul ka attendance register!",
-            "📝 'Kaun kaun se course mein enrolled hai?' - checking records",
-            "🔍 Lakshman says: 'Bhaiya, schema complex lag raha hai!'",
-            "😅 RAM: 'Koi baat nahi, decode kar denge!'"
-        ])
+        # Chapter 2: Flight Journey - Enrolment Data
+        print("\n" + "👑" * 70)
+        print("🎬 SCENE 2: FLIGHT TO PARIS - NERVOUS EXCITEMENT")
+        print("👑" * 70)
+        print("✈️ Flight mein Rani nervous! Enrolment data exploration!")
+        print("🎯 Air hostess explains: 'Safety instructions complex hain!'")
+        print("📚 Rani: 'Slowly slowly samjhungi, koi jaldi nahi!'")
+        print("🌍 Enrolment patterns = Learning about new cultures")
+        print("⚾ Schema examination = Understanding foreign customs")
+        print("-" * 60)
         
         user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
-        print("🔍 Schema examination - Jatayu ki tarah sharp observation!")
+        print("🔍 Flight attendant explaining safety procedures... Schema analysis!")
+        print("📋 'Dekho dekho, emergency exits kahan hain?' - Navigation time!")
         user_enrolment_df.printSchema()
-        success_msg("Enrolment data decoded! Gurukul records clear!", 
-                   "📖 Vishwamitra ji approve: 'Students ki list tayar!'")
+        print("✅ Flight smooth! Rani getting comfortable with the journey!")
+        print("🎬 Rani's realization: 'Yeh toh easy hai, main kar sakti hun!'")
 
-        # Chapter 3: Content Duration
-        chapter_header(3, "THE KNOWLEDGE TREASURY - CONTENT DURATION")
-        ramayana_msg([
-            "📖 Sage Vashishta's library - course duration wisdom!",
-            "⚡ Filter operation like RAM's divine arrow - precise target!",
-            "🎯 'Course' category mein se gems nikalne hain!",
-            "💎 courseID transform - alchemy jaisi magic!"
-        ])
+        # Chapter 3: Paris Hotel Check-in - Content Duration
+        print("\n" + "👑" * 70)
+        print("🎬 SCENE 3: PARIS HOTEL CHECK-IN - SETTLING IN")
+        print("👑" * 70)
+        print("🏨 Hotel check-in kar rahe hain - Content Duration data!")
+        print("⚾ Hotel facilities ka tour le rahe hain!")
+        print("🎯 Course duration = Tourist attractions ka time planning")
+        print("💎 Filter operation = Choosing best Paris experiences")
+        print("🗼 Perfect location selection for memorable trip!")
+        print("-" * 60)
         
         content_duration_df = (
             spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
@@ -97,17 +113,19 @@ def processUserReport():
             )
         )
         content_count = content_duration_df.count()
-        success_msg(f"Knowledge treasury opened! Course gems: {content_count}",
-                   "🧙‍♂️ Sage Vashishta blesses: 'Wisdom successfully extracted!'")
+        print(f"🏨 Hotel room ready! Paris attractions planned: {content_count:,}")
+        print("🎬 Hotel manager: 'Mademoiselle, everything is perfect for you!'")
 
-        # Chapter 4: Status Classification
-        chapter_header(4, "THE DIVINE CLASSIFICATION - STATUS SORTING")
-        ramayana_msg([
-            "⚖️ Dharmaraj Yudhishthir style - justice for all statuses!",
-            "🔮 Crystal ball reveals: 'Kaun kaha pahuncha hai learning mein?'",
-            "👻 Null values = Manthara ki shakti - confusion create karti hai!",
-            "⚡ When conditions = RAM ka dhanush - powerful transformation!"
-        ])
+        # Chapter 4: Language Barrier - Status Classification
+        print("\n" + "👑" * 70)
+        print("🎬 SCENE 4: LANGUAGE LESSONS - COMMUNICATION BREAKTHROUGH")
+        print("👑" * 70)
+        print("🗣️ French language seekh rahi hai! Status classification!")
+        print("🧠 Rani: 'English thoda-thoda aata hai, French seekhungi!'")
+        print("⚾ User status classification = Language learning levels")
+        print("🎯 Not-enrolled = Can't speak, In-progress = Learning phrases")
+        print("🏆 Completed = Fluent conversations with locals!")
+        print("-" * 60)
         
         user_enrolment_df = user_enrolment_df.withColumn(
             "user_consumption_status",
@@ -117,37 +135,53 @@ def processUserReport():
             .otherwise("completed")
         )
         
-        success_msg("Divine justice served! Status classification complete!",
-                   "👑 RAM ji approves: 'Sabka saath, sabka vikas, sabka status!'")
+        print("✅ Language barrier broken! Communication successful!")
+        print("🎬 Rani's confidence: 'Bonjour! Main French bol sakti hun!'")
 
-        # Chapter 5: Data Joining
-        chapter_header(5, "THE SACRED UNION - DATA JOINING CEREMONY")
-        ramayana_msg(RamayanaThemes.DATA_JOINING)
+        # Chapter 5: Making Friends - Data Joining
+        print("\n" + "👑" * 70)
+        print("🎬 SCENE 5: MAKING NEW FRIENDS - JOINING THE GROUP")
+        print("👑" * 70)
+        print("🤝 Naye friends bana rahi hai - Data joining time!")
+        print("⚾ User data aur Content duration ka friendship!")
+        print("🏆 Like Rani bonding with Taka and other travelers")
+        print("💪 appendContentDuration = Building international friendships!")
+        print("🎵 Playing: 'Hungama Ho Gaya' - The joy of new connections!")
+        print("-" * 60)
         
         user_enrolment_master_df = userDFUtil.appendContentDurationCompletionForEachUser(
             spark, user_master_df, user_enrolment_df, content_duration_df
         )
-        success_msg("Vivah sampann! Data marriage successful!",
-                   "🍬 Laddu distribution - all systems celebrating!")
+        print("✅ Friendship goals achieved! International bonding complete!")
+        print("🎬 Taka says: 'Rani, you are amazing! True friendship found!'")
 
-        # Chapter 6: Event Metrics
-        chapter_header(6, "THE DIVINE WEAPONS - EVENT METRICS POWER")
-        ramayana_msg([
-            "🏹 RAM ka brahmastra - appendEventDuration function!",
-            "💥 Event learning metrics = Hanuman ka gada power!",
-            "🌊 Data flowing like Ganga - pure and powerful!",
-            "⚡ 'Asambhav ko sambhav banana hai!' - impossible made possible!"
-        ])
+        # Chapter 6: Amsterdam Adventure - Event Metrics
+        print("\n" + "👑" * 70)
+        print("🎬 SCENE 6: AMSTERDAM WILD NIGHT - BREAKING BOUNDARIES")
+        print("👑" * 70)
+        print("🎉 Amsterdam mein party! Event metrics building!")
+        print("⚾ appendEventDuration = Dancing and discovering new self")
+        print("💪 Every experience adding to confidence metrics!")
+        print("🎯 Like Rani trying things she never imagined!")
+        print("🏆 Breaking out of comfort zone with each adventure!")
+        print("-" * 60)
         
         user_complete_data = userDFUtil.appendEventDurationCompletionForEachUser(
             spark, user_enrolment_master_df
         )
-        success_msg("Brahmastra successful! Event metrics embedded!",
-                   "💪 Hanuman reports: 'Mission accomplished, Prabhu!'")
+        print("✅ Wild night complete! Confidence level maximum!")
+        print("🎬 Rani dancing: 'Yeh main hun! This is the real me!'")
 
-        # Chapter 7: Derived Columns
-        chapter_header(7, "THE ROYAL MAKEOVER - DERIVED COLUMNS BEAUTY")
-        ramayana_msg(RamayanaThemes.DATA_TRANSFORMATION)
+        # Chapter 7: Shopping & Makeover - Derived Columns
+        print("\n" + "👑" * 70)
+        print("🎬 SCENE 7: SHOPPING SPREE - COMPLETE MAKEOVER")
+        print("👑" * 70)
+        print("👗 Shopping kar rahi hai - Data beautification!")
+        print("✨ Derived columns = New clothes and complete makeover")
+        print("🏏 Total_Learning_Hours = Total life experiences gained")
+        print("⭐ Weekly claps = Compliments and new confidence")
+        print("🎯 Getting ready for the final presentation of new self!")
+        print("-" * 60)
         
         user_complete_data = user_complete_data \
             .withColumn("Tag", concat_ws(", ", col("additionalProperties.tag"))) \
@@ -159,17 +193,19 @@ def processUserReport():
                              (col("weekly_claps_day_before_yesterday") == ""),
                              lit(0)).otherwise(col("weekly_claps_day_before_yesterday")))
 
-        success_msg("Makeover complete! Data looking like Sita Mata!",
-                   "✨ Ready for the royal court presentation!")
+        print("✅ Makeover complete! Looking absolutely stunning!")
+        print("🎬 Friend's compliment: 'Rani, you look like a different person!'")
 
-        # Chapter 8: Final Selection
-        chapter_header(8, "THE ROYAL COURT - FINAL COLUMN SELECTION")
-        ramayana_msg([
-            "⚖️ RAM Rajya court - final judgment and selection!",
-            "📜 Royal decree: 'Ye columns chosen hain for export!'",
-            "⏰ Time captured like Kaal Chakra - eternal timestamp!",
-            "🎯 Each select statement = royal command precision!"
-        ])
+        # Chapter 8: Return Journey - Final Selection
+        print("\n" + "👑" * 70)
+        print("🎬 SCENE 8: RETURN JOURNEY - NEW CONFIDENT RANI")
+        print("👑" * 70)
+        print("🏆 Europe trip complete! Final confident version ready!")
+        print("📋 New Rani deciding what to take back home")
+        print("⏰ Time to return - Final column selection for life!")
+        print("🎯 Only the best experiences make it to the final self!")
+        print("👑 This is it - the transformed, confident woman!")
+        print("-" * 60)
         
         dateTimeFormat = "yyyy-MM-dd HH:mm:ss"
         currentDateTime = current_timestamp()
@@ -207,43 +243,99 @@ def processUserReport():
                 col("data_last_generated_on")
             )
 
-        character_quote("ram", "Royal court decision final! Perfect column selection!")
-        print("🔍 Schema Darshan - Divine revelation of structure!")
+        print("👑 New Rani ready! Confident and beautiful selection!")
+        print("🔍 Life review - Final transformation announcement!")
         user_complete_df.printSchema()
+        print("📋 New confident Rani approves her life choices!")
 
-        # Chapter 9: Victory Celebration
-        chapter_header(9, "VICTORY CELEBRATION - CSV EXPORT FESTIVAL")
-        ramayana_msg(RamayanaThemes.DATA_EXPORT)
+        # Chapter 9: Homecoming - CSV Export
+        print("\n" + "👑" * 70)
+        print("🎬 SCENE 9: HOMECOMING - SHARING THE NEW ME")
+        print("👑" * 70)
+        print("🏆 GHAR WAPAS! Transformation complete victory!")
+        print("🎉 Sabko apna naya confident self dikhana hai - CSV export time!")
+        print("📁 Life experiences sharing with everyone - Data distribution!")
+        print("🥳 'Main udna chahti hun' - Confidence celebration!")
+        print("👑 Old shy Rani is gone, new Queen has arrived!")
+        print("-" * 60)
         
         dfexportutil.write_csv_per_mdo_id(user_complete_df, ParquetFileConstants.USER_REPORT_CSV, 'mdo_id')
-        success_msg("Distribution complete! Every kingdom got their data!",
-                   "🙏 Hanuman reports: 'Sab jagah pahunch gaya, Prabhu!'")
-
-        # Performance analysis
-        total_duration = time.time() - start_time
         final_count = user_complete_df.count()
+        print(f"✅ Homecoming celebration complete! Experiences shared: {final_count:,} records!")
+        print("🎬 Rani's declaration: 'Main strong hun! Data processing mein bhi Queen hun!'")
+
+        # Performance Analysis
+        total_duration = time.time() - start_time
+        print(f"\n👑 JOURNEY STATISTICS:")
+        print(f"⏱️ Total Europe trip duration: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
         
-        performance_comment(total_duration)
-        data_quality_comment(final_count, 0.95)  # Assuming high quality
+        if total_duration < 60:
+            print("⚡ Quick transformation! Paris ki magic jaisi speed!")
+        elif total_duration < 300:
+            print("👑 Perfect journey! Steady confidence building!")
+        else:
+            print("🧘‍♀️ Deep soul-searching! But transformation is beautiful!")
 
         # Epic Conclusion
-        RamayanaPrinter.print_epic_conclusion()
+        print("\n" + "🏆" * 70)
+        print("🎬 EPIC CONCLUSION: QUEEN'S TRANSFORMATION COMPLETE")
+        print("🏆" * 70)
+        print("🥳 From shy housewife to confident Queen!")
+        print("👑 Rani becomes the hero of her own data story!")
+        print("💃 Dancing with joy - Perfect self-discovery!")
+        print("🎵 'Badra Bahaar' playing - New season of life!")
+        print("🏆 From data processing challenge to personal victory!")
+        print("📊 User reports as beautiful as Rani's new confidence!")
+        print("🙏 Self-love ka ashirwad hai - Divine self-acceptance!")
+        print("=" * 70)
 
     except Exception as e:
-        error_msg(e)
+        print(f"\n💥 OH NO! TRAVEL DISASTER!")
+        print("👑" * 70)
+        print("😰 Lost passport ya flight cancel! Travel nightmare!")
+        print(f"🎭 Error message: {str(e)}")
+        print("💪 But Rani never gives up! 'Main handle kar sakti hun!'")
+        print("👑 Problem-solving time - Independent woman mode!")
+        print("☕ Cafe mein chai peeke solution dhundhenge!")
+        print("🎬 Friend's support: 'Rani, tum strong ho, yeh kar sakti ho!'")
+        print("🙏 'Main udna chahti hun' - Even problems can't stop dreams!")
+        print("👑" * 70)
         raise
 
 def main():
-    """Epic Saga Director's Cut - Clean Version with ramayanUtil"""
+    """
+    Queen Movie Director's Cut - The Solo Journey Epic
     
-    epic_intro("USER REPORT PROCESSING EPIC", "Clean Architecture with Divine Humor")
+    From shy beginning to confident finale
+    Solo Travel + Data Processing = Perfect Self-Discovery
+    """
     
-    print("🔔 Temple bells ring... 🕯️ Aarti begins... 🙏 Bhajan starts...")
-    character_quote("ram", "Data processing ki shururat karte hain!")
+    print("\n" + "👑" * 80)
+    print("🎬 QUEEN PRODUCTIONS PRESENTS")
+    print("📊 USER REPORT GENERATION")
+    print("🏆 THE SOLO JOURNEY DATA PROCESSING EPIC")
+    print("👑" * 80)
+    print("🎭 Cast:")
+    print("👑 Apache Spark as Rani (The Independent Traveler)")
+    print("✈️ Data Transformations as Travel Experiences (The Teachers)")
+    print("🤝 Exception Handling as Taka (The Supportive Friend)")
+    print("💃 Clean Schema as Confident New Self (The Beautiful Result)")
+    print("⚡ Query Optimizer as Adventure Spirit (The Bold Explorer)")
+    print("🎵 Music Director: Amit Trivedi | Story: Data Self-Discovery Journey")
+    print("👑" * 80)
+    
+    print("\n👑 Airport announcement: 'Flight to Data Processing, boarding now!'")
+    print("🎺 Adventure music starts... passport ready!")
+    print("🎬 Narrator: 'Yeh hai hamari kahani... data processing ki Queen!'")
     
     processUserReport()
     
-    epic_finale([
-        "🌅 Suryoday! Victory sun rises over digital Ayodhya!",
-        "🏆 MISSION RAMAYANA ACCOMPLISHED!",
-        "🎊 All of Ayodhya celebrates the data victory!"])
+    print("\n🏆 JOURNEY COMPLETE! QUEEN TRANSFORMATION ACHIEVED!")
+    print("🥳 Solo traveler becomes confident data processor!")
+    print("👑 From shy data handling to bold analytics!")
+    print("💃 Victory dance in every data center!")
+    print("🙏 'Main udna chahti hun' - Dreams do come true!")
+    print("🎬 THE END - A Solo Journey Epic for the Ages!")
+
+if __name__ == "__main__":
+    main()

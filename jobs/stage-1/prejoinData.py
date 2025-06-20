@@ -16,133 +16,133 @@ from dfutil.content import contentDFUtil
 
 def initialize_spark():
     """
-    Initializes and returns a SparkSession - RAM ji style configuration!
+    Initializes and returns a SparkSession - Lagaan cricket team style!
     
-    Like assembling the divine weapons before the Lanka battle,
-    we prepare our computational arsenal with blessed configurations.
+    Like Bhuvan assembling his cricket team with diverse skills,
+    we prepare our Spark configuration with optimized settings.
     """
-    print("🏹 JAI SHRI RAM! Spark Session ka divine initialization!")
-    print("⚡ RAM ji ka dhanush ready kar rahe hain - Spark configuration!")
-    print("💪 12GB executor memory - Hanuman ji ki shakti jaisi!")
-    print("🧠 10GB driver memory - Ravana ke das dimag se bhi tez!")
-    print("🎯 64 partitions - Vanar Sena ke 64 regiments!")
-    print("🔮 Legacy time parser - ancient wisdom preserved!")
+    print("🏏 LAGAAN DATA PROCESSING - TEAM ASSEMBLY BEGINS!")
+    print("⚡ Spark Session ko Bhuvan ki team ki tarah powerful banayenge!")
+    print("💪 12GB executor memory - Kachra ki spin bowling jaisi effective!")
+    print("🧠 10GB driver memory - Bhuvan ke strategy jaisa intelligent!")
+    print("🎯 64 partitions - Puri cricket team ka coordination!")
+    print("🏆 Legacy time parser - Traditional techniques jo kabhi fail nahi hote!")
     
     spark = SparkSession.builder \
-        .appName("RamRajya_DataProcessing_Epic") \
+        .appName("Lagaan_DataProcessing_Cricket_Championship") \
         .config("spark.executor.memory", "12g") \
         .config("spark.driver.memory", "10g") \
         .config("spark.sql.shuffle.partitions", "64") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .getOrCreate()
     
-    print("✅ Spark Session blessed and ready!")
-    print("🎵 'RAM RAM RAM' - divine chanting begins!")
+    print("✅ Cricket team assembled and ready!")
+    print("🎵 'Chale Chalo' spirit - March towards data victory!")
     return spark
 
 def run_stage(name: str, func, spark):
     """
-    Runs a stage with epic Ramayana-style drama and divine blessings!
+    Runs a stage with Lagaan cricket match excitement!
 
-    Like each chapter of Ramayana had its purpose and drama,
-    each ETL stage is a divine mission with cosmic significance.
+    Like each phase of the cricket match in Lagaan had its drama,
+    each ETL stage is a crucial phase of our data processing match.
 
     Parameters:
-    - name: Name of the divine mission
-    - func: The sacred function (our divine weapon)
-    - spark: The blessed SparkSession (our divine chariot)
+    - name: Name of the cricket phase
+    - func: The match strategy (our processing function)
+    - spark: The cricket team (our SparkSession)
     """
     
-    # Epic stage introductions based on Ramayana characters/events
-    stage_intros = {
+    # Cricket match phases with Lagaan character connections
+    stage_strategies = {
         "Org Hierarchy Computation": {
-            "character": "👑 Dasharatha's Kingdom",
-            "intro": "Building the royal hierarchy of Ayodhya!",
-            "blessing": "May all organizations prosper like Ikshvaku dynasty!",
-            "music": "🎵 Royal court music with tabla beats"
+            "character": "👑 Raja sahab's Court",
+            "strategy": "Building the village hierarchy like royal court!",
+            "encouragement": "May organizations unite like villagers against British!",
+            "mood": "🎵 Royal meeting music with serious discussions"
         },
         "Content Ratings & Summary": {
-            "character": "📚 Sage Vashishta's Library",
-            "intro": "Rating the sacred knowledge scrolls!",
-            "blessing": "May wisdom be rated fairly like divine scriptures!",
-            "music": "🎵 Gurukul chanting with peaceful veena"
+            "character": "📚 Pandit ji's Wisdom",
+            "strategy": "Rating knowledge like village elder's guidance!",
+            "encouragement": "May wisdom be valued like Pandit ji's advice!",
+            "mood": "🎵 Thoughtful village council music"
         },
         "All Course/Program (ES)": {
-            "character": "🎓 Vishwamitra's Training",
-            "intro": "Cataloging all courses from the great sage!",
-            "blessing": "May education spread like RAM's teachings!",
-            "music": "🎵 Learning hymns with cosmic flute"
+            "character": "🎓 Cricket Rules Learning",
+            "strategy": "Understanding all cricket rules and courses!",
+            "encouragement": "May education spread like cricket fever!",
+            "mood": "🎵 Learning and practice session tunes"
         },
         "Content Master Data": {
-            "character": "📖 Tulsidas's Ramcharitmanas",
-            "intro": "Creating the master epic of all content!",
-            "blessing": "May data be as eternal as Ramayana!",
-            "music": "🎵 Epic storytelling with dhol drums"
+            "character": "📖 Village Chronicle Master",
+            "strategy": "Creating the master record of village stories!",
+            "encouragement": "May data be as eternal as village tales!",
+            "mood": "🎵 Storytelling music with dhol rhythms"
         },
         "External Content": {
-            "character": "🌍 Vibhishana's Intelligence",
-            "intro": "Gathering external wisdom from Lanka!",
-            "blessing": "May external data serve righteousness!",
-            "music": "🎵 Mysterious spy music with sitar"
+            "character": "🌍 British Intelligence Reports",
+            "strategy": "Gathering information about British team tactics!",
+            "encouragement": "May external data help us like spy reports!",
+            "mood": "🎵 Cautious investigation background music"
         },
         "User Profile Computation": {
-            "character": "👤 Hanuman's Character Study",
-            "intro": "Profiling each devotee's divine qualities!",
-            "blessing": "May every user be blessed like Hanuman!",
-            "music": "🎵 Devotional bhajans with mridangam"
+            "character": "👤 Team Player Profiles",
+            "strategy": "Profiling each cricket team member's skills!",
+            "encouragement": "May every player shine like our village heroes!",
+            "mood": "🎵 Individual player theme music"
         },
         "Enrolment Master Data": {
-            "character": "📋 Vanar Sena Registration",
-            "intro": "Enrolling the monkey army for battle!",
-            "blessing": "May all enrollments lead to victory!",
-            "music": "🎵 War preparation drums with conch shells"
+            "character": "📋 Cricket Team Registration",
+            "strategy": "Enrolling village warriors for the big match!",
+            "encouragement": "May all enrollments lead to victory!",
+            "mood": "🎵 Team assembly drums and excitement"
         },
         "External Enrolment": {
-            "character": "🤝 Allied Forces Joining",
-            "intro": "External kingdoms joining RAM's cause!",
-            "blessing": "May alliances be strong like Sugriva's friendship!",
-            "music": "🎵 Alliance celebration with shehnai"
+            "character": "🤝 Allied Village Support",
+            "strategy": "Other villages supporting our cricket cause!",
+            "encouragement": "May alliances be strong like village unity!",
+            "mood": "🎵 Community celebration music"
         },
         "Org-User Mapping with Hierarchy": {
-            "character": "🗺️ Setubandh Construction",
-            "intro": "Building bridges between organizations!",
-            "blessing": "May connections be strong like RAM Setu!",
-            "music": "🎵 Construction chants with powerful drums"
+            "character": "🗺️ Cricket Field Mapping",
+            "strategy": "Mapping field positions and team hierarchy!",
+            "encouragement": "May connections be strong like team coordination!",
+            "mood": "🎵 Strategic planning music with tabla beats"
         },
         "ACBP Enrolment Computation": {
-            "character": "🏹 Final Battle Preparation",
-            "intro": "Ultimate weapon preparation for Lanka war!",
-            "blessing": "May this be the final victorious strike!",
-            "music": "🎵 Epic battle music with war horns"
+            "character": "🏏 Final Match Preparation",
+            "strategy": "Ultimate preparation for the championship match!",
+            "encouragement": "May this be our winning strategy!",
+            "mood": "🎵 Victory anticipation music with building drums"
         }
     }
     
-    intro = stage_intros.get(name, {
-        "character": "🎭 Divine Mission",
-        "intro": "Executing sacred computational task!",
-        "blessing": "May this stage be blessed!",
-        "music": "🎵 Divine music playing"
+    strategy = stage_strategies.get(name, {
+        "character": "🏏 Cricket Action",
+        "strategy": "Executing match-winning move!",
+        "encouragement": "May this phase bring us closer to victory!",
+        "mood": "🎵 Cricket match excitement music"
     })
     
     print(f"""
-    {'🏹' * 70}
-    {'📜' * 20} DIVINE MISSION BEGINS {'📜' * 20}
-    {'🏹' * 70}
+    {'🏏' * 70}
+    {'⚾' * 20} CRICKET PHASE BEGINS {'⚾' * 20}
+    {'🏏' * 70}
     
-    🎭 EPISODE: {intro['character']}
+    🎭 PHASE: {strategy['character']}
     📖 MISSION: {name}
-    🎯 OBJECTIVE: {intro['intro']}
-    {intro['music']}
+    🎯 STRATEGY: {strategy['strategy']}
+    {strategy['mood']}
     
-    🙏 DIVINE BLESSING: {intro['blessing']}
-    {'⚡' * 70}
+    🙏 BHUVAN'S BLESSING: {strategy['encouragement']}
+    {'🏆' * 70}
     """)
     
     start_time = time.time()
     
     try:
-        print("🔥 Mission starting... invoking divine powers!")
-        print("⏳ RAM ji ki kripa se... processing begins...")
+        print("🔥 Match phase starting... team taking positions!")
+        print("⏳ Bhuvan's confidence: 'Hum kar sakte hain!'")
         
         result = func(spark)
         
@@ -151,129 +151,129 @@ def run_stage(name: str, func, spark):
         if hasattr(result, "count"):
             record_count = result.count()
             print(f"""
-    {'✨' * 50}
-    🏆 VICTORY ACHIEVED! MISSION SUCCESSFUL!
-    {'✨' * 50}
+    {'🏆' * 50}
+    🥳 PHASE WON! EXCELLENT PERFORMANCE!
+    {'🏆' * 50}
     
-    ✅ Stage: {name}
-    📊 Records Blessed: {record_count:,}
-    ⏱️  Divine Time: {duration:.2f} seconds
-    💫 Performance: {'Lightning fast!' if duration < 30 else 'Steady like RAM!' if duration < 120 else 'Patient like Sita!'}
+    ✅ Cricket Phase: {name}
+    📊 Runs Scored: {record_count:,}
+    ⏱️  Over Duration: {duration:.2f} seconds
+    💫 Performance: {'Lightning fast like Bhura!' if duration < 30 else 'Steady like Bhuvan!' if duration < 120 else 'Patient like Gauri!'}
     
-    🎉 Celebration: Entire Ayodhya rejoices!
-    🎵 Victory song: 'Jai Jai Ram Krishna Hari!'
+    🎉 Celebration: Village crowd cheers loudly!
+    🎵 Victory song: 'Mitwa sun mitwa!'
             """)
         else:
             print(f"""
-    {'✨' * 50}
-    🏆 DIVINE MISSION ACCOMPLISHED!
-    {'✨' * 50}
+    {'🏆' * 50}
+    🥳 PHASE COMPLETED SUCCESSFULLY!
+    {'🏆' * 50}
     
-    ✅ Stage: {name}
-    ⏱️  Sacred Time: {duration:.2f} seconds
-    🌟 Status: Blessed and Complete!
+    ✅ Cricket Phase: {name}
+    ⏱️  Phase Time: {duration:.2f} seconds
+    🌟 Status: Perfect execution!
     
-    🎊 RAM ji pleased with the offering!
+    🎊 Bhuvan smiles with satisfaction!
             """)
             
-        # Add fun performance commentary
+        # Cricket performance commentary
         if duration < 10:
-            print("⚡ Hanuman speed! Faster than crossing the ocean!")
+            print("⚡ Bhura ki speed! Faster than running between wickets!")
         elif duration < 30:
-            print("🏹 RAM's arrow precision! Swift and accurate!")
+            print("🏏 Bhuvan's perfect shot! Clean and precise!")
         elif duration < 60:
-            print("🚶‍♂️ Steady progress like RAM's march to Lanka!")
+            print("🚶‍♂️ Steady progress like building partnership!")
         else:
-            print("🧘‍♂️ Patience like Sita in Ashok Vatika - good things take time!")
+            print("🧘‍♂️ Patient batting like saving wickets - wise strategy!")
             
     except Exception as e:
         duration = time.time() - start_time
         print(f"""
-    {'👹' * 70}
-    🚨 RAVANA STRIKES! DEMON ATTACK!
-    {'👹' * 70}
+    {'💥' * 70}
+    🚨 BRITISH TEAM STRIKES! FOUL PLAY!
+    {'💥' * 70}
     
-    😈 Evil Stage: {name}
-    💀 Demon's Curse: {str(e)}
-    ⏱️  Battle Duration: {duration:.2f} seconds
+    😠 Troubled Phase: {name}
+    💀 British Captain's Trick: {str(e)}
+    ⏱️  Struggle Duration: {duration:.2f} seconds
     
-    🔥 But fear not! This is just a test!
-    🏹 RAM ji's arrows will defeat this demon!
-    🙏 Chant 'Jai Hanuman!' and retry!
+    🔥 But Bhuvan never gives up!
+    🏏 'Haar nahi maanenge!' - We won't accept defeat!
+    🙏 Village support: 'Tum kar sakte ho!'
     
-    💪 Divine solution incoming...
-    {'👹' * 70}
+    💪 Comeback strategy being planned...
+    {'💥' * 70}
         """)
         raise e
     
     print(f"{'🌟' * 70}")
-    print("🎭 Episode completed! Moving to next divine chapter...")
+    print("🎭 Phase completed! Moving to next cricket strategy...")
     print(f"{'🌟' * 70}\n")
 
 def main():
     """
-    Main Epic Saga - The Complete Ramayana of Data Processing!
+    Main Cricket Championship - The Complete Lagaan Data Processing!
     
-    This is the legendary tale of how data chaos was transformed
-    into RAM Rajya - the perfect state of organized information.
+    This is the legendary tale of how impossible data challenges were
+    conquered through teamwork, determination, and cricket spirit!
     
-    Featuring all your favorite characters in data processing roles!
+    Featuring all village heroes in data processing roles!
     """
     
     print(f"""
-    {'🕉️' * 80}
+    {'🏏' * 80}
     
-            🏹 JAI SHRI RAM! 🏹
+            🎬 LAGAAN DATA PROCESSING! 🎬
             
-        🎭 THE EPIC RAMAYANA OF DATA PROCESSING 🎭
+        🏆 THE CRICKET CHAMPIONSHIP OF DATA 🏆
         
-            📜 PRESENTED BY DIVINE COMPUTING 📜
+            📜 PRESENTED BY VILLAGE PRODUCTIONS 📜
             
-    {'🕉️' * 80}
+    {'🏏' * 80}
     
-    🎪 EPIC CAST & CREW:
+    🎪 CRICKET TEAM & CREW:
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    👑 Director: Sage Valmiki (Original Creator)
-    🎵 Music: A.R. Raghuman (Divine Composer)
-    🎬 Producer: Cosmic Studios Ltd.
-    📝 Script: Ancient Wisdom + Modern Technology
+    👑 Captain: Bhuvan (Data Team Leader)
+    🎵 Music: Village Musicians (Inspirational Soundtrack)
+    🎬 Story: Village vs British Data Challenge
+    📝 Strategy: Teamwork + Determination = Victory
     
-    🌟 STARRING:
-    👑 Apache Spark as Lord RAM (The Perfect Leader)
-    💪 Data Processing as Hanuman (The Devoted Servant)
-    🛡️ Exception Handling as Lakshman (The Protector)
-    👸 Clean Data as Sita Mata (Pure & Beautiful)
-    🐒 Utility Functions as Vanar Sena (Loyal Army)
-    👹 Bugs & Errors as Ravana & Demons (The Villains)
+    🌟 PLAYING XI:
+    👑 Apache Spark as Captain Bhuvan (The Inspiring Leader)
+    💪 Data Processing as Kachra (The Specialist)
+    🛡️ Exception Handling as Lakha (The Dependable)
+    👸 Clean Data as Gauri (The Pure & Beautiful)
+    🏃‍♂️ Utility Functions as Village Team (The United Squad)
+    😈 Bugs & Errors as British Team (The Opposition)
     
-    🎯 EPIC SAGA: 10 Divine Missions to Establish RAM Rajya!
+    🎯 CRICKET SAGA: 10 Crucial Overs to Win the Match!
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     """)
     
-    # Divine invocation
-    print("🔔 Temple bells ring across the digital realm...")
-    print("🕯️ Sacred oil lamps lit in all data centers...")
-    print("🙏 Pandit ji begins the blessing ceremony...")
-    print("📿 'Om Gam Ganapataye Namaha' - removing all obstacles...")
-    print("🎵 Divine bhajans start playing in background...")
+    # Match day preparation
+    print("🔔 Village temple bells ring for good luck...")
+    print("🕯️ Oil lamps lit in every village house...")
+    print("🙏 Village priest blesses the cricket team...")
+    print("📿 'Ishwar Allah Tere Naam' - Seeking divine help...")
+    print("🎵 Village musicians start the encouraging songs...")
     
-    # Initialize the divine computational chariot
+    # Initialize the cricket team (Spark session)
     spark = initialize_spark()
     
     print(f"""
     {'🌅' * 60}
-    🌄 DAWN BREAKS OVER DIGITAL AYODHYA!
-    🎬 THE EPIC SAGA BEGINS...
+    🌄 DAWN OF THE MATCH DAY!
+    🏏 THE CRICKET CHAMPIONSHIP BEGINS...
     {'🌅' * 60}
     """)
     
-    # Track the epic journey
+    # Track the cricket match progress
     total_start_time = time.time()
-    completed_missions = 0
-    total_missions = 10
+    completed_overs = 0
+    total_overs = 10
     
-    # The 10 Divine Missions of Data Processing Epic!
-    epic_missions = [
+    # The 10 Cricket Overs of Data Processing Championship!
+    cricket_overs = [
         ("Org Hierarchy Computation", userDFUtil.preComputeOrgWithHierarchy),
         ("Content Ratings & Summary", contentDFUtil.preComputeRatingAndSummaryDataFrame),
         ("All Course/Program (ES)", contentDFUtil.preComputeAllCourseProgramESDataFrame),
@@ -287,63 +287,63 @@ def main():
     ]
     
     try:
-        for mission_name, mission_func in epic_missions:
-            run_stage(mission_name, mission_func, spark)
-            completed_missions += 1
+        for over_name, over_strategy in cricket_overs:
+            run_stage(over_name, over_strategy, spark)
+            completed_overs += 1
             
-            # Progress celebration
-            progress = (completed_missions / total_missions) * 100
-            print(f"📊 EPIC PROGRESS: {completed_missions}/{total_missions} missions complete ({progress:.0f}%)")
+            # Match progress celebration
+            progress = (completed_overs / total_overs) * 100
+            print(f"📊 MATCH PROGRESS: {completed_overs}/{total_overs} overs completed ({progress:.0f}%)")
             
-            if completed_missions == 5:
-                print("🎊 HALFWAY CELEBRATION! Hanuman has crossed the ocean!")
-            elif completed_missions == 8:
-                print("🏰 LANKA IN SIGHT! Final battles approaching!")
+            if completed_overs == 5:
+                print("🎊 HALFWAY CELEBRATION! Team performing brilliantly!")
+            elif completed_overs == 8:
+                print("🏏 FINAL OVERS APPROACH! Victory within reach!")
         
-        # Epic conclusion
+        # Cricket match conclusion
         total_duration = time.time() - total_start_time
         
         print(f"""
         {'🏆' * 80}
         
-                🎉 EPIC SAGA COMPLETED! 🎉
+                🎉 CRICKET MATCH WON! 🎉
                 
-            👑 RAM RAJYA ESTABLISHED IN DATA PROCESSING! 👑
+            👑 LAGAAN VICTORY! DATA PROCESSING CHAMPION! 👑
             
         {'🏆' * 80}
         
-        📊 EPIC STATISTICS:
+        📊 MATCH STATISTICS:
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        ✅ Divine Missions Completed: {completed_missions}/{total_missions}
-        ⏱️  Total Epic Duration: {total_duration/60:.1f} minutes
-        🎯 Success Rate: 100% (RAM ji's blessing!)
-        💫 Performance: Legendary!
+        ✅ Overs Completed: {completed_overs}/{total_overs}
+        ⏱️  Total Match Duration: {total_duration/60:.1f} minutes
+        🎯 Win Percentage: 100% (Village team victory!)
+        💫 Performance: Championship winning!
         
-        🎭 FINAL SCENE:
+        🎭 VICTORY CELEBRATION:
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        🌅 Sun rises over digital Ayodhya
-        👑 RAM Rajya established in all data realms
-        🎊 All of digital creation celebrates
-        🕊️ Peace and prosperity in data processing
-        📚 Epic tale will be told for generations
+        🌅 Victory sun shines over the village
+        👑 Bhuvan lifts the championship trophy
+        🎊 Entire village celebrates wildly
+        🕊️ Three years tax-free! (Bug-free processing!)
+        📚 Match will be remembered for generations
         
-        🎵 CLOSING SONG: "Raghupati Raghav Raja RAM..."
+        🎵 VICTORY SONG: "Radha Kaise Na Jale"
         
         🙏 CREDITS:
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        🎬 Directed by: The Universe itself
-        🎵 Music by: Cosmic Symphony Orchestra
-        💻 Special Effects: Divine Computing Technology
-        🌟 Starring: All the noble data processing functions
+        🎬 Directed by: Village Wisdom
+        🎵 Music by: Traditional Musicians + Modern Beats
+        💻 Special Effects: Cricket Team Coordination
+        🌟 Starring: All brave village data processors
         
-        🕉️ "Sarve bhavantu sukhinah, sarve santu niramayah"
-        (May all data be happy, may all processing be error-free)
+        🏏 "Jeet gaye! Jeet gaye! Hamne kar dikhaya!"
+        (We won! We won! We proved ourselves!)
         
         {'🌟' * 80}
         
-        ✨ THE END ✨
+        ✨ MATCH END ✨
         
-        🔮 COMING SOON: "User Report Generation - The Next Chapter"
+        🔮 COMING SOON: "User Report Championship - The Next Season"
         
         {'🌟' * 80}
         """)
@@ -352,28 +352,28 @@ def main():
         print(f"""
         {'💀' * 80}
         
-            👹 DARK FORCES HAVE PREVAILED! 👹
+            😠 BRITISH TEAM CHEATED! 😠
             
-        But this is not the end of our epic tale...
+        But this village never gives up...
         
         {'💀' * 80}
         
-        😈 The demon error has struck at mission {completed_missions + 1}
-        🏹 But RAM ji's devotees never surrender!
-        💪 We shall return stronger in the sequel!
-        🙏 "Sankat mochan naam tiharo, Hanuman!"
+        😈 British captain's dirty trick at over {completed_overs + 1}
+        🏏 But Bhuvan's team never surrenders!
+        💪 Village spirit is stronger than any challenge!
+        🙏 "Haar nahi maanenge!" - We won't accept defeat!
         
         🎬 TO BE CONTINUED IN:
-        "Data Processing: The Return of RAM"
+        "Data Processing: The Comeback Match"
         
         {'💀' * 80}
         """)
         raise
     
     finally:
-        print("🙏 JAI SHRI RAM! JAI HANUMAN! JAI DATA PROCESSING!")
-        print("🔔 Temple bells ring one final time...")
-        print("🕉️ Om Shanti Shanti Shanti...")
+        print("🙏 JAI HO! VILLAGE VICTORIOUS! JAI DATA PROCESSING!")
+        print("🔔 Victory bells ring across all villages...")
+        print("🏏 Cricket bats raised in celebration...")
 
 if __name__ == "__main__":
     main()

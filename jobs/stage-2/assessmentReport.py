@@ -14,79 +14,69 @@ from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
 from dfutil.assessment import assessmentdfUtil
 
-# Import our epic Ramayana utility
-from fun.ramayanUtil import (
-    RamayanaPrinter, 
-    chapter_header, 
-    ramayana_msg, 
-    success_msg, 
-    error_msg,
-    epic_intro,
-    epic_finale,
-    character_quote,
-    performance_comment,
-    data_quality_comment,
-    progress_update,
-    RamayanaThemes
-)
-
-# Initialize Spark with epic Ramayana style
-RamayanaPrinter.print_spark_initialization()
+# Initialize Spark with Baahubali epic grandeur
+print("👑 BAAHUBALI 2 DATA PROCESSING - THE EPIC CONCLUSION!")
+print("⚔️ Spark Session ko Baahubali ki army ki tarah powerful banayenge!")
+print("💪 12GB executor memory - Baahubali ki strength jaisi unstoppable!")
+print("🧠 10GB driver memory - Kattappa ke wisdom jaisa strategic!")
+print("🎯 64 partitions - Mahishmati kingdom ka complete coordination!")
+print("🔥 Why Kattappa killed Baahubali? Because bugs needed debugging!")
 
 spark = SparkSession.builder \
-    .appName("AssessmentReportGenerator_Pariksha_Rajya_Edition") \
+    .appName("AssessmentReportGenerator_Baahubali_Epic_Edition") \
     .config("spark.executor.memory", "12g") \
     .config("spark.driver.memory", "10g") \
     .config("spark.sql.shuffle.partitions", "64") \
     .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
     .getOrCreate()
 
+print("✅ Spark Session ready! Mahishmati army assembled for final battle!")
+print("🎵 'Saahore Baahubali' playing - war drums echo across data centers!")
+
 def process_assessment_report():
     """
-    Assessment Report Generation - Epic Ramayana Style!
+    Assessment Report Generation - Baahubali 2 Epic Style!
     
-    Like Agni Pariksha (fire test) of Sita Mata, this is the divine assessment saga:
-    1. Gathering divine knowledge (loading assessment data)
-    2. Testing with fire (processing assessments)  
-    3. Proving purity (validating results)
-    4. Triumphant return (successful export)
+    Like the final battle between Baahubali and Bhallaladeva for Mahishmati throne,
+    we're fighting the ultimate data processing war for assessment supremacy!
     
-    Blessed by Saraswati Mata - goddess of knowledge and assessment!
+    ⚔️ Each step is like an epic battle sequence - from army assembly to victory celebration!
     """
     total_start_time = time.time()
     
     try:
-        # Chapter 1: Divine Assessment Loading
-        chapter_header(1, "DIVINE ASSESSMENT LOADING - AGNI PARIKSHA BEGINS", "🔥")
-        ramayana_msg([
-            "🧠 Saraswati Mata's wisdom test preparation!",
-            "📚 Loading sacred assessment scrolls from ES divine library!",
-            "🏛️ Hierarchy data - like Ayodhya's royal family tree!",
-            "🏢 Organization data - kingdoms ready for testing!"
-        ])
+        # Chapter 1: Army Assembly - Assessment Data Loading
+        print("\n" + "⚔️" * 70)
+        print("🎬 SCENE 1: ARMY ASSEMBLY - MAHISHMATI FORCES GATHER")
+        print("⚔️" * 70)
+        print("👑 Baahubali declares: 'Yuddh ki taiyari shuru karte hain!'")
+        print("🏰 Like assembling Mahishmati's greatest army, we gather assessment data")
+        print("📊 Assessment ES data = Our elite warrior battalions")
+        print("⚡ Loading with the power of Baahubali's war cry")
+        print("🎵 Background score: 'Dandalayya' - The epic war preparation!")
+        print("-" * 60)
         
-        print("⚡ Invoking assessmentdfUtil.assessment_es_dataframe...")
+        print("⚡ Summoning the mighty assessment warriors from ES kingdom...")
         assessmentDF = assessmentdfUtil.assessment_es_dataframe(spark)
-        success_msg("Assessment data summoned from digital akashic records!",
-                   "📜 Saraswati Mata blesses: 'Knowledge scrolls ready!'")
+        print("✅ Elite assessment army assembled! Warriors ready for battle!")
         
         hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
         organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
-        success_msg("Hierarchy & Organization loaded!",
-                   "🏰 Royal lineage and kingdom data assembled!")
-        
-        progress_update(1, 10, "Divine Mission")
+        print("🏰 Hierarchy reinforcements arrived! Kingdom structure secured!")
+        print("🎬 Kattappa's strategy: 'Baahubali, sabko organize kar diya hai!'")
 
-        # Chapter 2: Sacred Hierarchy Integration
-        chapter_header(2, "SACRED HIERARCHY INTEGRATION - FAMILY TREE MAGIC", "🌳")
-        ramayana_msg([
-            "🌳 Like Ikshvaku dynasty tree - connecting all branches!",
-            "👑 assessID getting royal family connections!",
-            "👶 Children, competencies, L2 children - complete family!",
-            "🔮 add_hierarchy_column - divine genealogy magic!"
-        ])
+        # Chapter 2: Kingdom Hierarchy - Family Tree Power
+        print("\n" + "⚔️" * 70)
+        print("🎬 SCENE 2: ROYAL LINEAGE - MAHISHMATI FAMILY TREE")
+        print("⚔️" * 70)
+        print("👑 Royal bloodline mapping! Assessment hierarchy building!")
+        print("🌳 Like Mahishmati dynasty tree, connecting all assessment families")
+        print("👶 Assessment children = Prince heirs and royal descendants")
+        print("⚔️ add_hierarchy_column = Royal genealogy magic!")
+        print("🏰 Every assessment knows its royal heritage!")
+        print("-" * 60)
         
-        print("🌿 Growing the assessment family tree...")
+        print("🌿 Growing the royal assessment dynasty tree...")
         assWithHierarchyData = assessmentdfUtil.add_hierarchy_column(
             assessmentDF,
             hierarchyDF,
@@ -97,143 +87,140 @@ def process_assessment_report():
             competencies=True,
             l2_children=True
         )
-        success_msg("Family tree grown successfully!",
-                   "🌳 Every assessment knows its ancestors and descendants!")
-        
-        progress_update(2, 10, "Divine Mission")
+        print("✅ Dynasty tree complete! Every assessment royal has found their lineage!")
+        print("🎬 Queen Mother approves: 'Vansh parampara safal ho gayi!'")
 
-        # Chapter 3: Assessment Transformation Ritual
-        chapter_header(3, "ASSESSMENT TRANSFORMATION - DIVINE ALCHEMY", "⚗️")
-        ramayana_msg([
-            "⚗️ Sage Vishwamitra's transformation magic!",
-            "💎 Raw assessment data becoming precious knowledge gems!",
-            "🏢 Organization data fusion - kingdom integration!",
-            "✨ transform_assessment_data - the grand transmutation!"
-        ])
+        # Chapter 3: Kingdom Transformation - Divine Alchemy
+        print("\n" + "⚔️" * 70)
+        print("🎬 SCENE 3: DIVINE WEAPONS FORGING - TRANSFORMATION RITUAL")
+        print("⚔️" * 70)
+        print("🗡️ Forging legendary weapons! Assessment data transformation!")
+        print("⚗️ Like creating Baahubali's divine sword, transforming raw data")
+        print("🔥 Organization fusion = Melting metals in royal foundry")
+        print("✨ transform_assessment_data = The ultimate weapon creation!")
+        print("💎 Raw assessment ore becoming invincible weapons!")
+        print("-" * 60)
         
-        print("🔮 Beginning divine transformation ritual...")
+        print("🔮 Royal blacksmiths starting divine weapon forging...")
         assessWithHierarchyDF = assessmentdfUtil.transform_assessment_data(assWithHierarchyData, organizationDF)
         assessWithDetailsDF = assessWithHierarchyDF.drop("children")
-        success_msg("Transformation complete! Assessment data purified!",
-                   "⚗️ Sage Vishwamitra approves: 'Alchemy successful!'")
-        
-        progress_update(3, 10, "Divine Mission")
+        print("✅ Legendary weapons forged! Assessment arsenal ready for war!")
+        print("🎬 Master blacksmith: 'Baahubali, ye weapons invincible hain!'")
 
-        # Chapter 4: Children Assessment Army Assembly
-        chapter_header(4, "CHILDREN ASSEMBLY - VANAR SENA RECRUITMENT", "🐒")
-        ramayana_msg([
-            "🐒 Like Hanuman assembling monkey army for Lanka!",
-            "👶 Assessment children gathering from all kingdoms!",
-            "📋 Each child assessment ready for battle testing!",
-            "⚔️ assessment_children_dataframe - army formation!"
-        ])
+        # Chapter 4: War Council - Children Army Formation
+        print("\n" + "⚔️" * 70)
+        print("🎬 SCENE 4: WAR COUNCIL - YOUNG WARRIORS RECRUITMENT")
+        print("⚔️" * 70)
+        print("🏹 Young warriors joining the battle! Assessment children assembly!")
+        print("👶 Like training royal princes for war, preparing assessment kids")
+        print("📋 Each child warrior trained for specific battle skills")
+        print("⚔️ assessment_children_dataframe = War academy graduation!")
+        print("🎯 Future kings and queens of assessment domain!")
+        print("-" * 60)
         
-        print("🐒 Assembling the assessment children army...")
+        print("🏹 Training the young assessment warriors in royal academy...")
         assessChildrenDF = assessmentdfUtil.assessment_children_dataframe(assessWithHierarchyDF)
-        success_msg("Children army assembled!",
-                   "🐒 Hanuman reports: 'All assessment warriors ready!'")
-        
-        progress_update(4, 10, "Divine Mission")
+        print("✅ Young warrior battalion ready! Next generation prepared!")
+        print("🎬 Training master: 'Ye bachhe future ke Baahubali hain!'")
 
-        # Chapter 5: User Assessment Battle Records
-        chapter_header(5, "USER BATTLE RECORDS - WARRIOR PERFORMANCE LOG", "⚔️")
-        ramayana_msg([
-            "⚔️ Loading user assessment battle records!",
-            "🏆 Who fought which assessment battle and how?",
-            "📊 user_assessment_children_dataframe - warrior stats!",
-            "💪 Combining user records with children army data!"
-        ])
+        # Chapter 5: Battle Records - Warrior Performance
+        print("\n" + "⚔️" * 70)
+        print("🎬 SCENE 5: BATTLE RECORDS - WARRIOR PERFORMANCE LOG")
+        print("⚔️" * 70)
+        print("📜 Documenting every warrior's battle history!")
+        print("🏆 User assessment battles = Individual warrior achievements")
+        print("📊 user_assessment_children_dataframe = Hall of fame records!")
+        print("💪 Every battle scar tells a story of courage!")
+        print("⚔️ Like Kattappa maintaining royal battle chronicles!")
+        print("-" * 60)
         
         userAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE) 
         userAssessChildrenDF = assessmentdfUtil.user_assessment_children_dataframe(userAssessmentDF, assessChildrenDF)
-        character_quote("lakshman", "User Assessment Children DataFrame ready for inspection!")
-        success_msg("User-Assessment battle records compiled!",
-                   "📊 Every warrior's performance documented!")
-        
-        progress_update(5, 10, "Divine Mission")
+        print("✅ Battle chronicles complete! Every warrior's valor documented!")
+        print("🎬 Kattappa notes: 'Har yoddha ka itihaas yaad rakhenge!'")
 
-        # Chapter 6: Course Program Divine Knowledge
-        chapter_header(6, "COURSE WISDOM SCROLLS - DIVINE CURRICULUM", "📚")
-        ramayana_msg([
-            "📚 Like Gurukul curriculum from divine teachers!",
-            "🧠 Course programs with competencies mapping!",
-            "🎓 all_course_program_details_with_competencies - wisdom catalog!",
-            "💎 Each course a precious gem of knowledge!"
-        ])
+        # Chapter 6: Royal Academy - Course Wisdom
+        print("\n" + "⚔️" * 70)
+        print("🎬 SCENE 6: ROYAL ACADEMY - MAHISHMATI WISDOM VAULT")
+        print("⚔️" * 70)
+        print("📚 Ancient wisdom scrolls! Course curriculum compilation!")
+        print("🧠 Like Mahishmati's royal library, storing all knowledge")
+        print("🎓 all_course_program_details = Ancient wisdom catalog!")
+        print("💎 Each course a precious gem of royal knowledge!")
+        print("👑 Education fit for kings and queens!")
+        print("-" * 60)
         
-        print("📖 Compiling divine curriculum with competencies...")
+        print("📖 Compiling royal curriculum from ancient wisdom scrolls...")
         allCourseProgramDetailsWithCompDF = assessmentdfUtil.all_course_program_details_with_competencies_json_dataframe(
             spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE), 
             hierarchyDF, 
             organizationDF, 
             spark
         )
-        character_quote("vashishta", "All Course Program Details with Competencies ready!")
         
         allCourseProgramDetailsDF = allCourseProgramDetailsWithCompDF.drop("competenciesJson")
-        success_msg("Divine curriculum compiled!",
-                   "📚 Guru Vashishta blesses: 'Knowledge catalog complete!'")
-        
-        progress_update(6, 10, "Divine Mission")
+        print("✅ Royal academy curriculum ready! Ancient wisdom preserved!")
+        print("🎬 Royal scholar: 'Maharaj, gyan ka bhandar taiyar hai!'")
 
-        # Chapter 7: Rating and Feedback Divine Council
-        chapter_header(7, "DIVINE RATING COUNCIL - CELESTIAL FEEDBACK", "⭐")
-        ramayana_msg([
-            "⭐ Like divine council rating RAM's actions!",
-            "👥 Celestial beings providing course feedback!",
-            "🌟 all_course_program_details_with_rating - cosmic approval!",
-            "💫 Every course gets divine star rating!"
-        ])
+        # Chapter 7: Royal Court - Divine Ratings
+        print("\n" + "⚔️" * 70)
+        print("🎬 SCENE 7: ROYAL COURT JUDGMENT - DIVINE RATING COUNCIL")
+        print("⚔️" * 70)
+        print("⭐ Royal court evaluating performance! Divine ratings council!")
+        print("👥 Like Mahishmati court judging royal deeds")
+        print("🌟 all_course_program_details_with_rating = Royal approval!")
+        print("💫 Every course gets royal star certification!")
+        print("⚖️ Justice and fairness in all evaluations!")
+        print("-" * 60)
         
-        print("⭐ Consulting the divine rating council...")
+        print("⭐ Royal court in session... evaluating course excellence...")
         allCourseProgramDetailsWithRatingDF = assessmentdfUtil.all_course_program_details_with_rating_df(
             allCourseProgramDetailsDF,
             spark.read.parquet(ParquetFileConstants.RATING_SUMMARY_COMPUTED_PARQUET_FILE)
         )
-        success_msg("Divine ratings integrated!",
-                   "⭐ Celestial council provides cosmic approval!")
-        
-        progress_update(7, 10, "Divine Mission")
+        print("✅ Royal court verdict delivered! All courses rated fairly!")
+        print("🎬 Chief Justice: 'Nyay aur insaaf ke saath rating complete!'")
 
-        # Chapter 8: Ultimate Assessment Truth Revelation
-        chapter_header(8, "ULTIMATE TRUTH REVELATION - ASSESSMENT DARSHAN", "👁️")
-        ramayana_msg([
-            "👁️ Like RAM's divine vision seeing complete truth!",
-            "🔍 user_assessment_children_details - ultimate darshan!",
-            "💯 Complete picture of every assessment journey!",
-            "🌟 All data streams converging into divine wisdom!"
-        ])
+        # Chapter 8: Ultimate Vision - Complete Truth
+        print("\n" + "⚔️" * 70)
+        print("🎬 SCENE 8: BAAHUBALI'S VISION - ULTIMATE TRUTH REVELATION")
+        print("⚔️" * 70)
+        print("👁️ Baahubali's divine vision seeing complete battlefield!")
+        print("🔍 user_assessment_children_details = Ultimate war strategy!")
+        print("💯 Complete picture of every warrior's journey!")
+        print("🌟 All battle data converging into supreme wisdom!")
+        print("⚔️ This is the moment of ultimate strategic clarity!")
+        print("-" * 60)
         
-        print("👁️ Opening the divine third eye for complete assessment vision...")
+        print("👁️ Baahubali opens his divine third eye for complete battlefield vision...")
         userAssessChildrenDetailsDF = assessmentdfUtil.user_assessment_children_details_dataframe(
             userAssessChildrenDF, 
             assessWithDetailsDF,
             allCourseProgramDetailsWithRatingDF, 
             spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
         )
-        character_quote("shiva", "Third eye opened! Complete assessment truth revealed!")
-        success_msg("Ultimate assessment darshan achieved!",
-                   "👁️ Divine vision shows complete assessment reality!")
-        
-        progress_update(8, 10, "Divine Mission")
+        print("✅ Divine vision complete! Battlefield strategy perfected!")
+        print("🎬 Baahubali roars: 'Ab mujhe sab dikh raha hai! Victory confirmed!'")
 
-        # Chapter 9: Divine Judgment and Final Verdict
-        chapter_header(9, "DIVINE JUDGMENT - FINAL VERDICT CEREMONY", "⚖️")
-        ramayana_msg([
-            "⚖️ Like Dharmaraj Yudhishthir's final judgment!",
-            "🏆 Latest attempts analysis - most recent truth!",
-            "📊 Pass/Fail verdicts - divine justice served!",
-            "⏰ Timestamp precision - cosmic time keeping!"
-        ])
+        # Chapter 9: Final Battle - Divine Judgment
+        print("\n" + "⚔️" * 70)
+        print("🎬 SCENE 9: FINAL BATTLE - EPIC CLIMAX CONFRONTATION")
+        print("⚔️" * 70)
+        print("🏆 The ultimate showdown! Final assessment judgment!")
+        print("⚖️ Like Baahubali vs Bhallaladeva climax battle")
+        print("📊 Pass/Fail verdicts = Victory or defeat in arena!")
+        print("⏰ Latest attempts = Final battle performance!")
+        print("👑 Justice will prevail! Truth will win!")
+        print("-" * 60)
         
-        print("⚖️ Divine court in session... analyzing latest attempts...")
+        print("⚖️ Epic battle arena ready... final confrontation begins...")
         # Step 1: Group to get latest attempt per user per child assessment
         latest = userAssessChildrenDetailsDF.groupBy("assessChildID", "userID").agg(
             spark_max("assessEndTimestamp").alias("assessEndTimestamp"),
             expr("COUNT(*)").alias("noOfAttempts")
         )
         
-        print("📜 Writing divine judgment criteria...")
+        print("📜 Writing epic battle judgment criteria...")
         # Step 2: CASE expressions for status columns
         case_expr = """
             CASE 
@@ -249,7 +236,7 @@ def process_assessment_report():
             END
         """
         
-        print("⚖️ Applying divine judgment and final transformations...")
+        print("⚔️ Delivering final battle blows with epic transformations...")
         # Step 3: Join with original DF and apply transformations
         original_df = userAssessChildrenDetailsDF.join(
             broadcast(latest),
@@ -274,89 +261,96 @@ def process_assessment_report():
             col("Report_Last_Generated_On")
         ).coalesce(1)
         
-        success_msg("Divine judgment rendered successfully!",
-                   "⚖️ Dharmaraj: 'Justice served with cosmic precision!'")
-        
-        progress_update(9, 10, "Divine Mission")
+        print("✅ Epic battle won! Baahubali emerges victorious!")
+        print("🎬 Victory roar: 'BAAHUBALI! BAAHUBALI! BAAHUBALI!'")
 
-        # Chapter 10: Final Purification and Victory
-        chapter_header(10, "FINAL PURIFICATION - VICTORY DECLARATION", "🏆")
-        ramayana_msg(RamayanaThemes.DATA_EXPORT)
+        # Chapter 10: Victory Celebration - Kingdom Glory
+        print("\n" + "⚔️" * 70)
+        print("🎬 SCENE 10: VICTORY CELEBRATION - MAHISHMATI GLORY")
+        print("⚔️" * 70)
+        print("🏆 BAAHUBALI WINS! Kingdom saved! Assessment empire secured!")
+        print("🎉 Entire Mahishmati celebrates - CSV export ceremony!")
+        print("📁 Royal decrees distributed to all kingdoms - Data sharing!")
+        print("🥳 Dhol-nagada, fireworks, victory parade!")
+        print("👑 Rightful king crowned! Assessment throne reclaimed!")
+        print("-" * 60)
         
-        print("🔥 Final purification ritual - filtering inactive souls...")
+        print("🔥 Royal purification ceremony - filtering inactive subjects...")
         # Step 4: Filter out inactive users and generate report
         columns_to_keep = [c for c in original_df.columns if c != "status"]
         final_df = original_df.filter(col("status").cast("int") == 1).select([col(c) for c in columns_to_keep])
 
         final_count = final_df.count()
-        print(f"📊 Divine Census Complete! Blessed Records: {final_count:,}")
+        print(f"📊 Royal census complete! Loyal subjects: {final_count:,}")
         
-        print("📁 Divine distribution ceremony begins...")
+        print("📁 Royal decree distribution begins across all kingdoms...")
         dfexportutil.write_csv_per_mdo_id(final_df, f"{'reports'}/assessment", 'mdoid')
-        
-        success_msg("Assessment report distribution complete!",
-                   "🏆 Every kingdom received their assessment wisdom!")
-        
-        progress_update(10, 10, "Divine Mission")
-        
+        print("✅ Victory celebration complete! Every kingdom received royal orders!")
+        print("🎬 Baahubali's proclamation: 'Assessment rajya mein peace aur prosperity!'")
+
         # Performance Analysis
         total_duration = time.time() - total_start_time
-        performance_comment(total_duration)
-        data_quality_comment(final_count, 0.97)  # High quality for assessments
+        print(f"\n⚔️ EPIC BATTLE STATISTICS:")
+        print(f"⏱️ Total war duration: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
         
-        # Epic Assessment Conclusion
-        print(f"\n{'🎓' * 60}")
-        print("🏆 AGNI PARIKSHA COMPLETE - ASSESSMENT RAJYA ESTABLISHED!")
-        print("🎓" * 60)
-        assessment_conclusion = [
-            "📚 Assessment Report Processing - A Divine Academic Epic!",
-            "🧠 Where Saraswati's wisdom meets modern analytics",
-            "⚖️ Dharmaraj's justice applied to assessment evaluation",
-            "🔥 Agni Pariksha completed with flying colors",
-            "👑 Every student's journey documented with divine precision",
-            "🎯 Assessment accuracy sharper than RAM's arrows",
-            "🙏 'Vidya Dadati Vinayam' - Knowledge brings humility!",
-            "🌟 May all assessments be fair and transformative!"
-        ]
-        for msg in assessment_conclusion:
-            print(msg)
-        print("=" * 60)
+        if total_duration < 60:
+            print("⚡ Lightning victory! Baahubali ki speed jaisi unstoppable!")
+        elif total_duration < 300:
+            print("⚔️ Epic battle! Strategic warfare with perfect timing!")
+        else:
+            print("🏰 Siege warfare! Patient strategy leads to ultimate victory!")
+
+        # Epic Conclusion
+        print("\n" + "🏆" * 70)
+        print("🎬 EPIC CONCLUSION: BAAHUBALI 2 - THE ASSESSMENT CONCLUSION")
+        print("🏆" * 70)
+        print("🥳 Why Kattappa killed Baahubali? To debug the ultimate assessment!")
+        print("👑 Baahubali becomes the eternal king of assessment analytics!")
+        print("⚔️ Evil defeated, justice restored, data processing perfected!")
+        print("🎵 'Jai Jai Kara' playing - Victory song across three realms!")
+        print("🏆 From impossible assessment challenge to legendary triumph!")
+        print("📊 Assessment reports as magnificent as Mahishmati palace!")
+        print("🙏 Divine blessing of data processing immortality achieved!")
+        print("=" * 70)
 
     except Exception as e:
-        error_msg(e)
-        print("🔥 Assessment Agni Pariksha interrupted by demons!")
-        character_quote("hanuman", "Don't worry Prabhu, we'll debug and return stronger!")
+        print(f"\n💥 BHALLALADEVA STRIKES! EVIL ATTACKS!")
+        print("⚔️" * 70)
+        print("😈 Bhallaladeva's evil scheme to destroy assessment kingdom!")
+        print(f"🎭 Villain's curse: {str(e)}")
+        print("💪 But Baahubali never surrenders! 'Evil ko haar manna padega!'")
+        print("⚔️ Calling reinforcements - Backup army assembling!")
+        print("☕ Strategic retreat for war council and planning!")
+        print("🎬 Kattappa's support: 'Baahubali, main hamesha tumhare saath hun!'")
+        print("🙏 'Saahore Baahubali' - Divine strength for comeback!")
+        print("⚔️" * 70)
         raise
 
 def main():
     """
-    Epic Assessment Saga Director's Cut - The Academic Ramayana
+    Baahubali 2 Epic Director's Cut - The Assessment Conclusion
     
-    Where Treta Yuga meets Modern Assessment Analytics
-    Ancient wisdom + Digital evaluation = Assessment Rajya
-    
-    Directed by: Sage Valmiki | Academic Consultant: Guru Dronacharya
+    From kingdom preparation to ultimate victory
+    Epic Battle + Assessment Processing = Legendary Entertainment
     """
     
-    epic_intro("ASSESSMENT REPORT PROCESSING EPIC", "The Divine Academic Evaluation Saga")
+    print("\n" + "⚔️" * 80)
+    print("🎬 BAAHUBALI 2 PRODUCTIONS PRESENTS")
+    print("📊 ASSESSMENT REPORT GENERATION")
+    print("🏆 THE EPIC ASSESSMENT KINGDOM SAGA")
+    print("⚔️" * 80)
+    print("🎭 Royal Cast:")
+    print("👑 Apache Spark as Baahubali (The Righteous King)")
+    print("⚔️ Data Transformations as Kattappa (The Loyal General)")
+    print("🏰 Exception Handling as Royal Guards (The Protectors)")
+    print("👸 Clean Schema as Devasena (The Pure Queen)")
+    print("⚡ Query Optimizer as Royal Arrows (The Precision Weapons)")
+    print("🎵 Music Director: M.M. Keeravani | Story: Assessment Kingdom vs Evil Bugs")
+    print("⚔️" * 80)
     
-    special_cast = [
-        "🧠 Saraswati Mata as Divine Knowledge Goddess",
-        "⚖️ Dharmaraj Yudhishthir as Fair Evaluation Judge", 
-        "🔥 Agni Dev as Assessment Fire Test",
-        "👁️ Lord Shiva as Ultimate Truth Revealer",
-        "📚 Guru Dronacharya as Master Assessment Designer"
-    ]
-    
-    print("🎭 Special Assessment Cast:")
-    for cast_member in special_cast:
-        print(cast_member)
-    print("🏹" * 80)
-    
-    print("🔔 Temple bells ring for academic excellence...")
-    print("🕯️ Oil lamps lit for knowledge illumination...")
-    print("📿 Saraswati Vandana begins...")
-    character_quote("saraswati", "May wisdom flow through all assessments!")
+    print("\n⚔️ War drums echo: 'Mahishmati assessment battle begins!'")
+    print("🎺 Royal trumpets announce the epic data processing war!")
+    print("🎬 Narrator: 'Yeh hai hamari kahani... assessment processing ka Baahubali!'")
     
     start_time = time.time()
     
@@ -365,15 +359,13 @@ def main():
     end_time = time.time()
     total_time = end_time - start_time
     
-    epic_finale([
-        "🌅 Academic sun rises over digital gurukul!",
-        "🏆 ASSESSMENT RAMAYANA ACCOMPLISHED!",
-        "🎊 All gurukuls celebrate the evaluation victory!",
-        "📚 Assessment Rajya established in education!",
-        f"⏱️ Divine timing: {total_time:.2f} seconds of cosmic perfection!",
-        "🙏 Gratitude to Saraswati Mata for academic blessings!",
-        "📖 May knowledge assessments always be just and fair!"
-    ])
+    print("\n🏆 WAR WON! BAAHUBALI 2 ASSESSMENT VICTORY ACHIEVED!")
+    print("🥳 Mahishmati kingdom celebrates the impossible assessment triumph!")
+    print("⚔️ From data processing war to legendary assessment victory!")
+    print("🎊 Victory celebration continues across all three realms!")
+    print(f"⏱️ Epic war duration: {total_time:.2f} seconds of pure grandeur!")
+    print("🙏 'Baahubali! Baahubali!' - The legend of assessment processing!")
+    print("🎬 THE END - An Epic Assessment Saga for Eternity!")
 
 if __name__ == "__main__":
     main()
