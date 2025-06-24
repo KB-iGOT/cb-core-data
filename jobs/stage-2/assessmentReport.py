@@ -15,7 +15,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
-from dfutil.assessment import assessmentdfUtil
+from dfutil.assessment import assessmentDFUtil
 from dfutil.content import contentDFUtil
 
 # Initialize Spark Session
@@ -39,14 +39,14 @@ def process_assessment_report():
     try:
         # Stage 1: Load Assessment Data
         print("Stage 1: Loading assessment data...")
-        assessmentDF = assessmentdfUtil.assessment_es_dataframe(spark)
+        assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE).filter(col("assessCategory").isin("Standalone Assessment"))
         hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
         organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
         print("Stage 1: Complete")
 
         # Stage 2: Add Hierarchy Information
         print("Stage 2: Adding hierarchy information...")
-        assWithHierarchyData = assessmentdfUtil.add_hierarchy_column(
+        assWithHierarchyData = assessmentDFUtil.add_hierarchy_column(
             assessmentDF,
             hierarchyDF,
             id_col="assessID",
@@ -60,29 +60,29 @@ def process_assessment_report():
 
         # Stage 3: Transform Assessment Data
         print("Stage 3: Transforming assessment data...")
-        assessWithHierarchyDF = assessmentdfUtil.transform_assessment_data(assWithHierarchyData, organizationDF)
+        assessWithHierarchyDF = assessmentDFUtil.transform_assessment_data(assWithHierarchyData, organizationDF)
         assessWithDetailsDF = assessWithHierarchyDF.drop("children")
         print("Stage 3: Complete")
 
         # Stage 4: Process Assessment Children
         print("Stage 4: Processing assessment children...")
-        assessChildrenDF = assessmentdfUtil.assessment_children_dataframe(assessWithHierarchyDF)
+        assessChildrenDF = assessmentDFUtil.assessment_children_dataframe(assessWithHierarchyDF)
         print("Stage 4: Complete")
 
         # Stage 5: Process User Assessment Data
         print("Stage 5: Processing user assessment data...")
         userAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE) 
-        userAssessChildrenDF = assessmentdfUtil.user_assessment_children_dataframe(userAssessmentDF, assessChildrenDF)
+        userAssessChildrenDF = assessmentDFUtil.user_assessment_children_dataframe(userAssessmentDF, assessChildrenDF)
         print("User Assessment Children DataFrame Schema:")
         categories = ["Course","Program","Blended Program","Curated Program","Moderated Course","Standalone Assessment","CuratedCollections"]
-        allCourseProgramDetailsWithCompDF = assessmentdfUtil.all_course_program_details_with_competencies_json_dataframe(contentDFUtil.AllCourseProgramESDataFrame(spark,categories), hierarchyDF, organizationDF, spark)
+        allCourseProgramDetailsWithCompDF = assessmentDFUtil.all_course_program_details_with_competencies_json_dataframe(spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("category").isin(categories)), hierarchyDF, organizationDF, spark)
         print("All Course Program Details with Competencies JSON DataFrame Schema:")
         allCourseProgramDetailsDF = allCourseProgramDetailsWithCompDF.drop("competenciesJson")
         print("Stage 6: Complete")
 
         # Stage 7: Add Rating Information
         print("Stage 7: Adding rating information...")
-        allCourseProgramDetailsWithRatingDF = assessmentdfUtil.all_course_program_details_with_rating_df(
+        allCourseProgramDetailsWithRatingDF = assessmentDFUtil.all_course_program_details_with_rating_df(
             allCourseProgramDetailsDF,
             spark.read.parquet(ParquetFileConstants.RATING_SUMMARY_COMPUTED_PARQUET_FILE)
         )
@@ -90,7 +90,7 @@ def process_assessment_report():
 
         # Stage 8: Generate User Assessment Details
         print("Stage 8: Generating user assessment details...")
-        userAssessChildrenDetailsDF = assessmentdfUtil.user_assessment_children_details_dataframe(
+        userAssessChildrenDetailsDF = assessmentDFUtil.user_assessment_children_details_dataframe(
             userAssessChildrenDF, 
             assessWithDetailsDF,
             allCourseProgramDetailsWithRatingDF, 

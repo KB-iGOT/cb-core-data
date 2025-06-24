@@ -15,6 +15,7 @@ from dfutil.user import userDFUtil
 from dfutil.enrolment.acbp import acbpDFUtil
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
+from dfutil.assessment import assessmentDFUtil
 
 def initialize_spark():
     """
@@ -77,7 +78,9 @@ def main():
     processing_stages = [
         ("Org Hierarchy Computation", userDFUtil.preComputeOrgWithHierarchy),
         ("Content Ratings & Summary", contentDFUtil.preComputeRatingAndSummaryDataFrame),
+        ("All Course/Program (ES)", contentDFUtil.preComputeAllCourseProgramESDataFrame),
         ("Content Master Data", contentDFUtil.preComputeContentDataFrame),
+        ("Assessment Master Data", assessmentDFUtil.precomputeAssessmentEsDataframe),
         ("External Content", contentDFUtil.preComputeExternalContentDataFrame),
         ("User Profile Computation", userDFUtil.preComputeUser),
         ("Enrolment Master Data", enrolmentDFUtil.preComputeEnrolment),

@@ -1,6 +1,8 @@
 from typing import List
 import time
+from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.content import contentDFUtil
+from dfutil.user.userDFUtil import exportDFToParquet
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
     col, explode_outer, from_json, 
@@ -38,17 +40,16 @@ def print_dataframe_info(df: DataFrame, df_name: str, show_sample: bool = True, 
     print(f"{'='*60}\n")
 
 
-def assessment_es_dataframe(spark: SparkSession, primary_categories: List[str] = ["Standalone Assessment"]) -> DataFrame:
+def precomputeAssessmentEsDataframe(spark: SparkSession) -> DataFrame:
     """
     Creates assessment DataFrame from Elasticsearch data with comprehensive logging.
     """
     print(f"\n🚀 Starting assessment_es_dataframe function")
-    print(f"📋 Primary Categories: {primary_categories}")
     start_time = time.time()
     
     try:
         print("📥 Fetching data from Elasticsearch...")
-        raw_df = contentDFUtil.esContentDataFrame(primary_categories, spark)
+        raw_df = contentDFUtil.esContentDataFrame(spark)
         #print(f"✅ Raw ES data loaded - Row count: {raw_df.count():,}")
         
         print("🔄 Exploding createdFor column...")
@@ -83,8 +84,9 @@ def assessment_es_dataframe(spark: SparkSession, primary_categories: List[str] =
         
         # Print comprehensive DataFrame info
         print_dataframe_info(assessmentdf, "Assessment ES DataFrame")
-        
-        return assessmentdf
+
+        exportDFToParquet(assessmentdf,ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE)
+
         
     except Exception as e:
         print(f"❌ Error in assessment_es_dataframe: {str(e)}")

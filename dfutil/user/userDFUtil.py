@@ -196,9 +196,6 @@ def appendEventDurationCompletionForEachUser(spark: SparkSession, user_enrolment
             ).alias("total_event_learning_hours_with_certificates")
         ).withColumn("total_event_learning_hours_with_certificates", bround(col("total_event_learning_hours_with_certificates") / 3600.0, 2))
 
-    #print(user_event_details_df.count())
-    user_event_details_df.printSchema()
-
     user_enrolment_df = user_enrolment_df.join(user_event_details_df, on="userID", how="left")
     return user_enrolment_df
 

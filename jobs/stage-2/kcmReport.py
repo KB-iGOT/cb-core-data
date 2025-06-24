@@ -1,3 +1,5 @@
+import findspark
+findspark.init()
 import sys
 from pathlib import Path
 import pandas as pd
@@ -52,9 +54,34 @@ class KCMModel:
 
             # Content - Competency Mapping data
             categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Standalone Assessment", "Curated Program"]
-            cbp_details= contentDFUtil.AllCourseProgramESDataFrame(spark,categories).where("courseStatus IN ('Live', 'Retired')") \
+            cbp_details=spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(F.col("category").isin(categories)).where("courseStatus IN ('Live', 'Retired')") \
                 .select("courseID", "competencyAreaRefId", "competencyThemeRefId", "competencySubThemeRefId", "courseName")
             
+            def parse_array_string(col_name):
+                """Convert string like '[item1, item2]' back to array"""
+                return F.when(
+                    (F.col(col_name).isNotNull()) & 
+                    (F.col(col_name) != "") & 
+                    (F.col(col_name) != "null") & 
+                    (F.col(col_name) != "[]"),
+                    F.split(
+                        F.regexp_replace(
+                            F.regexp_replace(F.col(col_name), r"^\[|\]$", ""),  # Remove [ ]
+                            r"\s*,\s*", ","  # Clean up spaces around commas
+                        ), 
+                        ","
+                    )
+                ).otherwise(F.array())
+            
+            # Convert the string fields back to arrays
+            cbp_details = cbp_details.select(
+                F.col("courseID"),
+                parse_array_string("competencyAreaRefId").alias("competencyAreaRefId"),
+                parse_array_string("competencyThemeRefId").alias("competencyThemeRefId"), 
+                parse_array_string("competencySubThemeRefId").alias("competencySubThemeRefId"),
+                F.col("courseName")
+            )
+
             #explode area, theme and sub theme separately
             area_exploded = cbp_details.select(
                 F.col("courseID"), 
