@@ -10,48 +10,50 @@ from typing import List
 from util import schemas
 
 def esContentDataFrame(
-    primary_categories: List[str], 
     spark: SparkSession
 ) -> DataFrame:
-    return spark.read.parquet(ParquetFileConstants.ESCONTENT_PARQUET_FILE).filter(col("primaryCategory").isin(primary_categories))
+    return spark.read.parquet(ParquetFileConstants.ESCONTENT_PARQUET_FILE)
 
-
-def AllCourseProgramESDataFrame(spark: SparkSession,
-    primary_categories: List[str] = ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
-) -> DataFrame:
-    
-    return esContentDataFrame(primary_categories, spark) \
-        .withColumn("courseOrgID", F.explode_outer(F.col("createdFor"))) \
-        .withColumn("contentLanguage", F.explode_outer(F.col("language"))) \
+def preComputeAllCourseProgramESDataFrame(spark: SparkSession) -> DataFrame:
+  
+    contentDF = esContentDataFrame(spark) \
+        .withColumn("courseOrgID", explode_outer(col("createdFor"))) \
+        .withColumn("contentLanguage", explode_outer(col("language"))) \
         .withColumn("competencyAreaRefId", 
                    F.when(F.col("competencies_v6").isNotNull(), 
-                         F.col("competencies_v6")["competencyAreaRefId"]).otherwise(F.lit(None))) \
+                         F.col("competencies_v6")["competencyAreaRefId"])
+                   .otherwise(F.array())) \
         .withColumn("competencyThemeRefId", 
                    F.when(F.col("competencies_v6").isNotNull(), 
-                         F.col("competencies_v6")["competencyThemeRefId"]).otherwise(F.lit(None))) \
+                         F.col("competencies_v6")["competencyThemeRefId"])
+                   .otherwise(F.array())) \
         .withColumn("competencySubThemeRefId", 
                    F.when(F.col("competencies_v6").isNotNull(), 
-                         F.col("competencies_v6")["competencySubThemeRefId"]).otherwise(F.lit(None))) \
+                         F.col("competencies_v6")["competencySubThemeRefId"])
+                   .otherwise(F.array())) \
         .select(
-            F.col("identifier").alias("courseID"),
-            F.col("primaryCategory").alias("category"),
-            F.col("name").alias("courseName"),
-            F.col("status").alias("courseStatus"),
-            F.col("reviewStatus").alias("courseReviewStatus"),
-            F.col("channel").alias("courseChannel"),
-            F.col("lastPublishedOn").alias("courseLastPublishedOn"),
-            F.col("duration").cast("float").alias("courseDuration"),
-            F.col("leafNodesCount").alias("courseResourceCount"),
-            F.col("lastStatusChangedOn").alias("lastStatusChangedOn"),
-            F.col("courseOrgID"),
+            col("identifier").alias("courseID"),
+            col("primaryCategory").alias("category"),
+            col("name").alias("courseName"),
+            col("status").alias("courseStatus"),
+            col("reviewStatus").alias("courseReviewStatus"),
+            col("channel").alias("courseChannel"),
+            col("lastPublishedOn").alias("courseLastPublishedOn"),
+            col("duration").cast(FloatType()).alias("courseDuration"),
+            col("leafNodesCount").alias("courseResourceCount"),
+            col("lastStatusChangedOn").alias("lastStatusChangedOn"),
+            col("courseOrgID"),
             F.col("competencyAreaRefId"),
             F.col("competencyThemeRefId"),
             F.col("competencySubThemeRefId"),
-            F.col("contentLanguage"),
-            F.col("courseCategory")
+            col("contentLanguage"),
+            col("courseCategory")
         ) \
         .dropDuplicates(["courseID", "category"]) \
-        .na.fill({"courseDuration": 0.0, "courseResourceCount": 0})
+        .fillna(0.0, subset=["courseDuration"]) \
+        .fillna(0, subset=["courseResourceCount"])
+        
+    exportDFToParquet(contentDF,ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE)
 
 def preComputeRatingAndSummaryDataFrame(spark):
     ratingSummaryDF = spark.read.parquet(ParquetFileConstants.RATING_SUMMARY_PARQUET_FILE) \
@@ -98,7 +100,7 @@ def preComputeRatingAndSummaryDataFrame(spark):
 
 def preComputeContentDataFrame(spark: SparkSession):
     contentRatingDF=spark.read.parquet(ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)    
-    contentWithRatingDF=contentDFUtil.AllCourseProgramESDataFrame(spark).join(
+    contentWithRatingDF=spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE).join(
         contentRatingDF,"courseID","left").drop(contentRatingDF["courseID"])
     
     orgDF=spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE).select(
@@ -110,8 +112,6 @@ def preComputeContentDataFrame(spark: SparkSession):
     contentWithOrgRatingDF=contentWithRatingDF.join(orgDF, contentWithRatingDF["courseOrgID"] == orgDF["courseOrgID"], "left") \
         .drop(orgDF["courseOrgID"]) \
         
-    contentWithOrgRatingDF.printSchema()
-    
     exportDFToParquet(contentWithOrgRatingDF,ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
 
 

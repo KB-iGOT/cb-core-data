@@ -56,11 +56,12 @@ class UserEnrolmentModel:
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             
             print("📥 Loading base DataFrames...")
+            primary_categories= ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
             
             # Load and cache base DataFrames that are used multiple times
             enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
             userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-            contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+            contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("category").isin(primary_categories))
 
             print("🔄 Processing platform enrolments...")
             
@@ -373,7 +374,7 @@ class UserEnrolmentModel:
             
             print("📦 Writing warehouse data...")
             warehouseDF = platformWarehouseDF.union(marketPlaceWarehouseDF)
-            warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/user_enrolment_report_{today}")
+            warehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/user_enrolment_report_{today}")
 
             print("✅ Processing completed successfully!")
 

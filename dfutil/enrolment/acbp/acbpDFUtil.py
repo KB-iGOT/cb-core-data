@@ -19,7 +19,6 @@ def preComputeACBPData(spark):
     spark.conf.set("spark.sql.parquet.enableVectorizedReader", "false")
     spark.conf.set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS")
     acbp_df = spark.read.parquet(ParquetFileConstants.ACBP_PARQUET_FILE)
-    print("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
     acbp_select_df = acbp_df \
         .select(
         col("id").alias("acbpID"),
@@ -35,7 +34,6 @@ def preComputeACBPData(spark):
         col("contentlist").alias("acbpCourseIDList")
         ) \
         .na.fill({"cbPlanName": ""})
-    acbp_select_df.printSchema()
     # Draft data
     draft_cbp_data = acbp_select_df.filter((col("acbpStatus") == "DRAFT") & col("draftdata").isNotNull()) \
         .select("acbpID", "userOrgID", "draftdata", "acbpStatus", "acbpCreatedBy") \
@@ -47,7 +45,6 @@ def preComputeACBPData(spark):
         .withColumn("allocatedOn", lit("not published")) \
         .withColumn("acbpCourseIDList", col("draftData.contentList")) \
         .drop("draftData")
-    draft_cbp_data.printSchema()
     # Non-draft data
     non_draft_cbp_data = acbp_select_df.filter(col("acbpStatus") != "DRAFT")
     draft_cbp_data = draft_cbp_data.withColumn("draftdata", lit(None).cast("string"))
@@ -58,7 +55,6 @@ def preComputeACBPData(spark):
     explodeAcbpData(spark, final_df)
 
 def explodeAcbpData(spark,acbp_df):
-    print("&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
     selectColumns = ["userID", "fullName", "userPrimaryEmail", "userMobile", "designation", "group", "userOrgID", "ministry_name", "dept_name", "userOrgName", "userStatus", "acbpID",
       "assignmentType", "completionDueDate", "allocatedOn", "acbpCourseIDList","acbpStatus", "acbpCreatedBy","cbPlanName"]
     user_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
@@ -66,26 +62,22 @@ def explodeAcbpData(spark,acbp_df):
         .filter(col("assignmentType") == "CustomUser") \
         .withColumn("userID", explode(col("assignmentTypeInfo"))) \
         .join(user_df, ["userID", "userOrgID"], "left")
-    print(f"ACBP Custom User DataFrame Count: {acbp_custom_user_df.count()}")
 
     # Designation
     acbp_designation_df = acbp_df \
         .filter(col("assignmentType") == "Designation") \
         .withColumn("designation", explode(col("assignmentTypeInfo"))) \
         .join(user_df, ["userOrgID", "designation"], "left")
-    print(f"ACBP Designation DataFrame Count: {acbp_designation_df.count()}")
     # AllUser
     acbp_all_user_df = acbp_df \
         .filter(col("assignmentType") == "AllUser") \
         .join(user_df, ["userOrgID"], "left")
-    print(f"ACBP All User DataFrame Count: {acbp_all_user_df.count()}")
     # Union the three DataFrames
     dfs = [acbp_custom_user_df, acbp_designation_df, acbp_all_user_df]
     selected_dfs = [df.select([col(c) for c in selectColumns]) for df in dfs]
     acbp_allotment_df = selected_dfs[0]
 
     
-    print_nested_schema(acbp_allotment_df)
     exportDFToParquet(acbp_allotment_df,ParquetFileConstants.ACBP_COMPUTED_FILE)
 
 
@@ -108,7 +100,6 @@ def cast_ntz_to_string_recursively(schema, prefix=""):
             fields.append(col(full_name).cast("string").alias(field.name))
 
         elif isinstance(field.dataType, StructType):
-            print("###################################>")
             nested_cols = cast_ntz_to_string_recursively(field.dataType, prefix=full_name)
             fields.append(struct(*nested_cols).alias(field.name))
         elif isinstance(field.dataType, ArrayType):
