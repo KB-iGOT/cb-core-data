@@ -200,3 +200,123 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
         'total_groups': total_groups,
         'success_rate': (successful_writes/total_groups)*100 if total_groups > 0 else 0
     }
+
+def write_single_csv_duckdb(df, output_path: str, parquet_tmp_path: str, filter_condition: str = None):
+    """
+    Optimized: Writes a single CSV file using DuckDB from Spark DataFrame.
+    
+    Args:
+        df (DataFrame): Spark DataFrame to write
+        output_path (str): Full path for the output CSV file (including filename)
+        parquet_tmp_path (str): Temporary Parquet output path
+        filter_condition (str, optional): SQL WHERE condition to filter data (e.g., "mdo_id > 1000")
+    
+    Returns:
+        dict: Summary of the operation with row counts and success status
+    """
+    import duckdb
+    from pathlib import Path
+    import shutil
+    
+    print(f"📦 Step 1: Writing DataFrame to Parquet...")
+    print(f"    - Parquet path: {parquet_tmp_path}")
+    
+    # Write DataFrame to parquet with optimization
+    df \
+        .coalesce(4) \
+        .write \
+        .mode("overwrite") \
+        .option("compression", "snappy") \
+        .parquet(parquet_tmp_path)
+    
+    print("🦆 Step 2: Loading into DuckDB...")
+    con = duckdb.connect()
+    
+    try:
+        # DuckDB optimizations
+        con.execute("PRAGMA memory_limit='30GB';")
+        con.execute("PRAGMA threads=8;")
+        con.execute("PRAGMA temp_directory='/tmp/duckdb_spill';")
+        con.execute("INSTALL parquet; LOAD parquet;")
+        
+        # Load the parquet data
+        con.execute(f"CREATE TABLE source_df AS SELECT * FROM parquet_scan('{parquet_tmp_path}/**/*.parquet');")
+        
+        # Get row count for verification
+        total_rows = con.execute("SELECT COUNT(*) FROM source_df").fetchone()[0]
+        print(f"    - Total rows loaded: {total_rows:,}")
+        
+        # Ensure output directory exists
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        print(f"📤 Step 3: Writing CSV to {output_path}...")
+        
+        # Build the query based on filter condition
+        if filter_condition:
+            query = f"""
+                COPY (
+                    SELECT * FROM source_df
+                    WHERE {filter_condition}
+                ) TO '{output_path}' (FORMAT CSV, HEADER, DELIMITER ',');
+            """
+            print(f"    - Applying filter: {filter_condition}")
+            
+            # Get filtered row count
+            filtered_rows = con.execute(f"SELECT COUNT(*) FROM source_df WHERE {filter_condition}").fetchone()[0]
+            print(f"    - Filtered rows: {filtered_rows:,}")
+            
+        else:
+            query = f"""
+                COPY (
+                    SELECT * FROM source_df
+                ) TO '{output_path}' (FORMAT CSV, HEADER, DELIMITER ',');
+            """
+            filtered_rows = total_rows
+        
+        # Execute the CSV write
+        con.execute(query)
+        
+        # Verify the output file was created
+        if output_file.exists():
+            file_size = output_file.stat().st_size / (1024 * 1024)  # Size in MB
+            print(f"✅ CSV successfully written!")
+            print(f"    - File size: {file_size:.2f} MB")
+            print(f"    - Rows written: {filtered_rows:,}")
+            success = True
+        else:
+            print(f"❌ CSV file was not created!")
+            success = False
+            
+    except Exception as e:
+        print(f"❌ Error during CSV writing: {e}")
+        success = False
+        filtered_rows = 0
+        
+    finally:
+        con.close()
+    
+    # Cleanup temporary parquet files
+    print("\n🧹 Cleaning up temporary parquet files...")
+    try:
+        shutil.rmtree(parquet_tmp_path)
+        print(f"✅ Cleaned up: {parquet_tmp_path}")
+    except Exception as e:
+        print(f"⚠️  Could not clean up {parquet_tmp_path}: {e}")
+    
+    # Summary
+    print(f"\n📈 CSV Writing Summary:")
+    print(f"   📁 Output file: {output_path}")
+    print(f"   📊 Rows written: {filtered_rows:,}")
+    print(f"   ✅ Success: {success}")
+    
+    if success:
+        print("🎉 Done writing CSV file!")
+    
+    return {
+        'success': success,
+        'output_path': output_path,
+        'rows_written': filtered_rows,
+        'total_rows': total_rows if 'total_rows' in locals() else 0,
+        'filter_applied': filter_condition is not None
+    }

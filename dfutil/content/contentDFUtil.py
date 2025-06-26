@@ -5,6 +5,7 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import col, explode_outer,from_json, lit,when, format_string, expr,lower,avg,count
 from pyspark.sql import functions as F
 from pyspark.sql.types import FloatType
+from pyspark.sql import DataFrame, SparkSession
 from constants.ParquetFileConstants import ParquetFileConstants
 from typing import List
 from util import schemas
@@ -133,7 +134,10 @@ def preComputeExternalContentDataFrame(spark) -> DataFrame:
         )
         exportDFToParquet(df,ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
 
-
+def precomputeContentHierarchyDataFrame(spark: SparkSession) -> DataFrame:
+    contentHierarchydf = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE).select(col("identifier"), col("hierarchy"))
+    exportDFToParquet(contentHierarchydf, ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
+    
 @staticmethod
 def duration_format(df, in_col, out_col=None):
     out_col_name = out_col if out_col is not None else in_col
@@ -147,3 +151,62 @@ def duration_format(df, in_col, out_col=None):
             )
         )
     )
+
+def allCourseProgramDetailsWithCompetenciesJsonDataFrame(
+    allCourseProgramESDF: DataFrame, 
+    hierarchyDF: DataFrame, 
+    orgDF: DataFrame, 
+) -> DataFrame:
+    # Add hierarchy column with competencies
+    df = addHierarchyColumn(
+        allCourseProgramESDF, 
+        hierarchyDF, 
+        "courseID", 
+        "data", 
+        competencies=True
+    ).withColumn("competenciesJson", col("data.competencies_v3"))
+    
+    # Add course organization details and clean up
+    courseOrgDetailsDF = addCourseOrgDetails(df, orgDF) \
+        .fillna(0.0, subset=["courseDuration"]) \
+        .fillna(0, subset=["courseResourceCount"]) \
+        .drop("data")
+    
+    return courseOrgDetailsDF
+
+def addHierarchyColumn(
+    df: DataFrame, 
+    hierarchyDF: DataFrame, 
+    idCol: str, 
+    asCol: str,
+    children: bool = False, 
+    competencies: bool = False, 
+    l2Children: bool = False,
+) -> DataFrame:
+    # Get the hierarchy schema based on the flags
+    hierarchySchema = schemas.make_hierarchy_schema(children, competencies, l2Children)
+    
+    result_df = df.join(
+        hierarchyDF, 
+        df[idCol] == hierarchyDF["identifier"], 
+        "left"
+    ) \
+    .fillna("{}", subset=["hierarchy"]) \
+    .withColumn(asCol, from_json(col("hierarchy"), hierarchySchema)) \
+    .drop("hierarchy")
+    
+    return result_df
+
+def addCourseOrgDetails(
+    courseDF: DataFrame, 
+    orgDF: DataFrame
+) -> DataFrame:
+    # Prepare organization DataFrame with renamed columns
+    joinOrgDF = orgDF.select(
+        col("orgID").alias("courseOrgID"),
+        col("orgName").alias("courseOrgName"),
+        col("orgStatus").alias("courseOrgStatus")
+    )
+    df = courseDF.join(joinOrgDF, ["courseOrgID"], "left")
+    
+    return df

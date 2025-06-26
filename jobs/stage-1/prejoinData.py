@@ -80,6 +80,7 @@ def main():
         ("Content Ratings & Summary", contentDFUtil.preComputeRatingAndSummaryDataFrame),
         ("All Course/Program (ES)", contentDFUtil.preComputeAllCourseProgramESDataFrame),
         ("Content Master Data", contentDFUtil.preComputeContentDataFrame),
+        ("Content Hierarchy Computation", contentDFUtil.precomputeContentHierarchyDataFrame),
         ("Assessment Master Data", assessmentDFUtil.precomputeAssessmentEsDataframe),
         ("External Content", contentDFUtil.preComputeExternalContentDataFrame),
         ("User Profile Computation", userDFUtil.preComputeUser),
