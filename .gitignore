@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.log
+venv/
+.env
+**/*.parquet
+/output/**
+/data-res/**
+**/*.tmp
+.DS_Store
+/warehouse
+/reports
