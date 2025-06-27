@@ -75,15 +75,21 @@ def explodeAcbpData(spark,acbp_df):
     # Union the three DataFrames
     dfs = [acbp_custom_user_df, acbp_designation_df, acbp_all_user_df]
     selected_dfs = [df.select([col(c) for c in selectColumns]) for df in dfs]
-    acbp_allotment_df = selected_dfs[0]
+
+    # Equivalent to Scala's .reduce((a, b) => a.union(b))
+    from functools import reduce
+    acbp_allotment_df = reduce(lambda a, b: a.union(b), selected_dfs)
+
+    print(f"acbp_allotment_df data: {acbp_allotment_df.count():,} rows")
+
 
     
     exportDFToParquet(acbp_allotment_df,ParquetFileConstants.ACBP_COMPUTED_FILE)
 
 
 def exportDFToParquet(df,outputFile):
-   df_cleaned = drop_all_ntz_fields(df)
-   df_cleaned.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
+#    df_cleaned = drop_all_ntz_fields(df)
+   df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
 
 def cast_ntz_to_string_recursively(schema, prefix=""):
     """
