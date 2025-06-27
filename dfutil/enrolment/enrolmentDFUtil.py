@@ -5,7 +5,7 @@ from typing import List
 from dfutil.user.userDFUtil import exportDFToParquet
 from pyspark.sql import SparkSession, DataFrame,functions as F
 from pyspark.sql.functions import (
-    col, lit, element_at, size, when, coalesce
+    col, lit, element_at, size, when, coalesce,expr
 )
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -31,7 +31,7 @@ def preComputeEnrolment(
     select_cols = base_cols + extra_cols
         
     enrolmentRawDF=spark.read.parquet(ParquetFileConstants.ENROLMENT_PARQUET_FILE)
-    enrolmentDF=enrolmentRawDF.withColumn("courseCompletedTimestamp", col("completedon")) \
+    enrolmentDF=enrolmentRawDF.where(expr("active=true")).withColumn("courseCompletedTimestamp", col("completedon")) \
         .withColumn("courseEnrolledTimestamp", col("enrolled_date")) \
         .withColumn("lastContentAccessTimestamp", col("lastcontentaccesstime")) \
         .withColumn("cert_array_size", coalesce(size(col("issued_certificates")), lit(0))) \
