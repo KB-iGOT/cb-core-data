@@ -103,6 +103,9 @@ def preComputeEnrolment(
             ) \
             .fillna("{}", subset=["courseBatchAttrs"])
     
+    exportDFToParquet(batchDF,ParquetFileConstants.BATCH_SELECT_PARQUET_FILE)
+
+    
     enrolmentDF = enrolmentDF.join(
     batchDF,
     on=["courseID", "batchID"],
@@ -214,7 +217,7 @@ def withUserCourseCompletionStatusColumn(df: DataFrame) -> DataFrame:
     100.0                  completed           completed
     """
     return df.withColumn(
-        "completionStatus",
+        "userCourseCompletionStatus",
         F.expr("""
             CASE 
                 WHEN completionPercentage IS NULL THEN 'not-enrolled' 
@@ -225,3 +228,13 @@ def withUserCourseCompletionStatusColumn(df: DataFrame) -> DataFrame:
             END
         """)
     )
+
+
+def calculateCourseProgress(userCourseProgramCompletionDF):
+    # Apply completion percentage column transformation
+    df = withCompletionPercentageColumn(userCourseProgramCompletionDF)
+    
+    # Apply user course completion status column transformation
+    df = withUserCourseCompletionStatusColumn(df)
+    
+    return df

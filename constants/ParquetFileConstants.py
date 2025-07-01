@@ -58,6 +58,7 @@ class ParquetFileConstants:
     CONTENT_RATING_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content-rating-computed/")
     TEMP_COMPUTE_FILE = str(OUTPUT_COMPUTED_DIR / "temp-computed/")
     CONTENT_HIERARCHY_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content-hierarchy-select/")
+    BATCH_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "batch-select/")
 
     ###
     ###  Output CSV File
