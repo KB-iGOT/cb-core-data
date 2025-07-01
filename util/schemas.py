@@ -41,6 +41,25 @@ profile_schema = StructType([
     StructField("personaldetails", personal_details_schema)
 ])
 
+hierarchySchema = StructType([
+    StructField("children", ArrayType(StructType([
+        StructField("identifier", StringType(), True),
+        StructField("primaryCategory", StringType(), True),
+        StructField("name", StringType(), True),
+        StructField("duration", StringType(), True),
+        StructField("expectedDuration", StringType(), True),
+        StructField("mimeType", StringType(), True),
+        StructField("children", ArrayType(StructType([
+            StructField("identifier", StringType(), True),
+            StructField("primaryCategory", StringType(), True),
+            StructField("name", StringType(), True),
+            StructField("duration", StringType(), True),
+            StructField("mimeType", StringType(), True),
+            StructField("expectedDuration", StringType(), True)
+        ]), True), True)
+    ]), True), True)
+])
+
 # Method to build the profileDetails schema
 def makeProfileDetailsSchema(
     competencies=False,
