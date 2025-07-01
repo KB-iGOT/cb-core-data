@@ -183,10 +183,7 @@ class ACBPModel:
 
             userSummaryReportDF = acbpEnrolmentDF \
                 .filter(
-                    (col("userStatus").cast("int") == 1) &
-                    (col("userID").isNotNull()) &
-                    (col("courseID").isNotNull()) &
-                    (col("dbCompletionStatus").isNotNull())
+                    (col("userStatus").cast("int") == 1)
                 ) \
                 .groupBy(
                     "userID", "fullName", "userPrimaryEmail", "userMobile", 
@@ -234,14 +231,21 @@ class ACBPModel:
                     col("userOrgID").alias("mdoid"),
                     lit(currentDateTime).alias("Report_Last_Generated_On"))
             
-            
-            dfexportutil.write_single_csv_duckdb(userSummaryReportDF, f"reports/standalone-reports/cbp-report/{today}/CBPUserSummaryReport/CBPUserSummaryReport.csv", "temp/cbp-summary-report/{today}")
+            distinct_user_orgids = userSummaryReportDF \
+                      .select("mdoid") \
+                      .distinct() \
+                      .collect()  
+    
+            # Extract values from Row objects
+            user_orgid_list = [row.mdoid for row in distinct_user_orgids]
+
+            dfexportutil.write_single_csv_duckdb(userSummaryReportDF, f"reports/standalone-reports/cbp-report/{today}/CBPUserSummaryReport/CBPUserSummaryReport.csv", f"temp/cbp-summary-report/{today}")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 userSummaryReportDF, 
-                f"{'reports'}/standalone-reports/cbp-report-mdo-enrolment/{today}", 
+                f"{'reports'}/standalone-reports/cbp-report-mdo-summary/{today}", 
                 'mdoid',
                 f"temp/cbp-summary-report/{today}",
-                orgid_list
+                user_orgid_list
             )
 
             print("📦 Writing warehouse data...")
@@ -258,8 +262,8 @@ def main():
     spark = SparkSession.builder \
         .appName("User Enrolment Report Model - Cached") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "42g") \
-        .config("spark.driver.memory", "10g") \
+        .config("spark.executor.memory", "40g") \
+        .config("spark.driver.memory", "12g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \
