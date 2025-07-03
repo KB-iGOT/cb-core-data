@@ -14,7 +14,7 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType, 
 from pyspark import StorageLevel
 import logging
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from constants.ParquetFileConstants import ParquetFileConstants
 
