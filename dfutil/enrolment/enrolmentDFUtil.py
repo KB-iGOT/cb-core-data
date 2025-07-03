@@ -21,7 +21,7 @@ def preComputeEnrolment(
     
     # Define base columns - using list for better performance
     base_cols = [
-        "userID", "courseID", "batchID", "courseProgress", 
+        "userID", "courseID", "batchID", "courseProgress","courseContentStatus", 
         "dbCompletionStatus", "courseCompletedTimestamp",
         "courseEnrolledTimestamp", "lastContentAccessTimestamp", 
         "issuedCertificateCount", "issuedCertificateCountPerContent", 

@@ -68,11 +68,11 @@ class CourseReportModel:
             
             resultDF = getContentResourceWithCategoryDF \
                 .filter(col("category").isin(["Program", "Curated Program", "Course"])) \
-                .withColumn("hierarchy_parsed", from_json(col("hierarchy"), schemas.hierarchySchema)) \
+                .withColumn("hierarchy", from_json(col("hierarchy"), schemas.hierarchySchema)) \
                 .select(
                     col("courseID").alias("content_id"),
                     col("category"),
-                    explode_outer(col("hierarchy_parsed.children")).alias("first_level_child")
+                    explode_outer(col("hierarchy.children")).alias("first_level_child")
                 ).withColumn("second_level_child", explode_outer(col("first_level_child.children"))) \
                 .select(
                     col("content_id"),
@@ -119,7 +119,7 @@ class CourseReportModel:
             distinctDF  = contentDFUtil.duration_format(resultDF, "resource_duration") \
                 .filter((col("resource_id").isNotNull()) & (col("resource_id") != "")) \
                 .dropDuplicates() \
-                .withColumn("data_last_generated_on", current_timestamp()) \
+                .withColumn("data_last_generated_on", currentDateTime) \
                 .cache()  # Cache the final result since it's used multiple times
 
             # Generate report path
@@ -224,19 +224,19 @@ class CourseReportModel:
                 col("courseOrgName").alias("content_provider_name"),
                 col("courseName").alias("content_name"),
                 col("category").alias("content_type"),
-                lit("Not Available").alias("batch_id"),  # Match order
-                lit("Not Available").alias("batch_name"),  # Match order
-                lit(None).cast(DateType()).alias("batch_start_date"),  # Match order
-                lit(None).cast(DateType()).alias("batch_end_date"),  # Match order
+                lit("Not Available").alias("batch_id"),  
+                lit("Not Available").alias("batch_name"),  
+                lit(None).cast(DateType()).alias("batch_start_date"),  
+                lit(None).cast(DateType()).alias("batch_end_date"),  
                 col("courseDuration").alias("content_duration"),
-                lit("Not Available").alias("content_rating"),  # Match order
+                lit("Not Available").alias("content_rating"),  
                 to_date(col("courseLastPublishedOn"), ParquetFileConstants.DATE_FORMAT).alias("last_published_on"),
-                lit(None).cast(DateType()).alias("content_retired_on"),  # Match order
+                lit(None).cast(DateType()).alias("content_retired_on"),  
                 col("courseStatus").alias("content_status"),
-                lit("Not Available").alias("resource_count"),  # Match order
+                lit("Not Available").alias("resource_count"),  
                 col("totalCertificatesIssued").alias("total_certificates_issued"),
-                lit("Not Available").alias("content_substatus"),  # Match order
-                lit("Not Available").alias("language"),  # Match order
+                lit("Not Available").alias("content_substatus"),  
+                lit("Not Available").alias("language"),  
                 lit("External Content").alias("content_sub_type"),
                 lit("0").alias("scorm_flag"),
                 col("data_last_generated_on")
@@ -248,10 +248,10 @@ class CourseReportModel:
                 col("courseOrgName").alias("Content_Provider"),
                 col("courseName").alias("Content_Name"),
                 col("category").alias("Content_Type"),
-                lit("Not Available").alias("Batch_Id"),  # Match order
-                lit("Not Available").alias("Batch_Name"),  # Match order
-                lit(None).cast(DateType()).alias("Batch_Start_Date"),  # Match order
-                lit(None).cast(DateType()).alias("Batch_End_Date"),  # Match order
+                lit("Not Available").alias("Batch_Id"),  
+                lit("Not Available").alias("Batch_Name"),  
+                lit(None).cast(DateType()).alias("Batch_Start_Date"),  
+                lit(None).cast(DateType()).alias("Batch_End_Date"),  
                 col("courseDuration").alias("Content_Duration"),
                 col("enrolledUserCount").cast(LongType()).alias("Enrolled"),
                 col("notStartedCount").cast(LongType()).alias("Not_Started"),
@@ -261,14 +261,13 @@ class CourseReportModel:
                 to_date(col("courseLastPublishedOn"), ParquetFileConstants.DATE_FORMAT).alias("Last_Published_On"),
                 col("firstCompletedOn").alias("First_Completed_On"),
                 col("lastCompletedOn").alias("Last_Completed_On"),
-                lit(None).cast(DateType()).alias("Content_Retired_On"),  # Match order
+                lit(None).cast(DateType()).alias("Content_Retired_On"),  
                 col("totalCertificatesIssued").cast(LongType()).alias("Total_Certificates_Issued"),
                 col("courseOrgID").alias("mdoid"),
                 col("data_last_generated_on").alias("Report_Last_Generated_On")
             ) 
             
 
-        # Create platform content MDO report DataFrame
             platformContentMdoReportDF = fullDF \
                 .select(
                     col("courseStatus").alias("Content_Status"),
@@ -363,7 +362,6 @@ class CourseReportModel:
             sys.exit(1)
 
 def main():
-    # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
         .appName("Course Report Model - Cached") \
         .config("spark.sql.shuffle.partitions", "200") \
