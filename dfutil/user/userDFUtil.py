@@ -45,6 +45,7 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         .withColumn("professionalDetails", explode_outer(col("profileDetails.professionalDetails"))) \
         .withColumn("userVerified", coalesce(col("profileDetails.verifiedKarmayogi"), lit(False))) \
         .withColumn("userMandatoryFieldsExists", col("profileDetails.mandatoryFieldsExists")) \
+        .withColumn("userGender", col("personalDetails.gender")) \
         .withColumn("userProfileImgUrl", col("profileDetails.profileImageUrl")) \
         .withColumn("userProfileStatus", col("profileDetails.profileStatus")) \
         .withColumn("userPhoneVerified", expr("LOWER(personalDetails.phoneVerified) = 'true'")) \
