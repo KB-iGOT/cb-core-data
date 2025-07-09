@@ -374,7 +374,7 @@ class UserEnrolmentModel:
             
             print("📦 Writing warehouse data...")
             warehouseDF = platformWarehouseDF.union(marketPlaceWarehouseDF)
-            warehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/user_enrolment_report_{today}")
+            warehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/user_enrolment_report/{today}")
 
             print("✅ Processing completed successfully!")
 

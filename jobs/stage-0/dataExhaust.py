@@ -170,7 +170,7 @@ class DataExhaustModel:
             enrolment_df = self.read_cassandra_table(
                 self.config['cassandra_course_keyspace'], 
                 self.config['cassandra_user_enrolments_table']
-            ).cache()
+            )
             
             self.write_parquet(enrolment_df, f"{output_base_path}/enrolment")
             enrolment_df.unpersist()
@@ -180,7 +180,7 @@ class DataExhaustModel:
             batch_df = self.read_cassandra_table(
                 self.config['cassandra_course_keyspace'], 
                 self.config['cassandra_course_batch_table']
-            ).cache()
+            )
             
             self.write_parquet(batch_df, f"{output_base_path}/batch")
             batch_df.unpersist()
@@ -190,7 +190,7 @@ class DataExhaustModel:
             kcm_v6_hierarchy = self.read_cassandra_table(
                 self.config['cassandra_hierarchy_store_keyspace'], 
                 self.config['cassandra_framework_hierarchy_table']
-            ).filter(col("identifier") == "kcmfinal_fw").cache()
+            ).filter(col("identifier") == "kcmfinal_fw")
             
             self.write_parquet(kcm_v6_hierarchy, f"{output_base_path}/kcmV6")
             kcm_v6_hierarchy.unpersist()
@@ -250,7 +250,7 @@ class DataExhaustModel:
                 col("submitResponse.passPercentage").alias("assessPassPercentage"),
                 col("assessStartTimestamp"),
                 col("assessEndTimestamp")
-            ).cache()
+            )
             
             self.write_parquet(final_assessment_df, f"{output_base_path}/userAssessment")
             user_assessment_df.unpersist()
@@ -261,7 +261,7 @@ class DataExhaustModel:
             hierarchy_df = self.read_cassandra_table(
                 self.config['cassandra_hierarchy_store_keyspace'], 
                 self.config['cassandra_content_hierarchy_table']
-            ).cache()
+            )
             
             self.write_parquet(hierarchy_df, f"{output_base_path}/hierarchy")
             hierarchy_df.unpersist()
@@ -271,7 +271,7 @@ class DataExhaustModel:
             rating_summary_df = self.read_cassandra_table(
                 self.config['cassandra_user_keyspace'], 
                 self.config['cassandra_rating_summary_table']
-            ).cache()
+            )
             
             self.write_parquet(rating_summary_df, f"{output_base_path}/ratingSummary")
             rating_summary_df.unpersist()
@@ -281,7 +281,7 @@ class DataExhaustModel:
             acbp_df = self.read_cassandra_table(
                 self.config['cassandra_user_keyspace'], 
                 self.config['cassandra_acbp_table']
-            ).cache()
+            )
             
             self.write_parquet(acbp_df, f"{output_base_path}/acbp")
             acbp_df.unpersist()
@@ -291,7 +291,7 @@ class DataExhaustModel:
             rating_df = self.read_cassandra_table(
                 self.config['cassandra_user_keyspace'], 
                 self.config['cassandra_ratings_table']
-            ).cache()
+            )
             
             self.write_parquet(rating_df, f"{output_base_path}/rating")
             rating_df.unpersist()
@@ -301,7 +301,7 @@ class DataExhaustModel:
             role_df = self.read_cassandra_table(
                 self.config['cassandra_user_keyspace'], 
                 self.config['cassandra_user_roles_table']
-            ).cache()
+            )
             
             self.write_parquet(role_df, f"{output_base_path}/role")
             role_df.unpersist()
@@ -324,7 +324,7 @@ class DataExhaustModel:
                 query, 
                 fields, 
                 array_fields
-            ).cache()
+            )
             
             self.write_parquet(es_content_df, f"{output_base_path}/esContent")
             es_content_df.unpersist()
@@ -334,7 +334,7 @@ class DataExhaustModel:
             org_df = self.read_cassandra_table(
                 self.config['cassandra_user_keyspace'], 
                 self.config['cassandra_org_table']
-            ).cache()
+            )
 
             self.write_parquet(org_df, f"{output_base_path}/org")
 
@@ -345,7 +345,7 @@ class DataExhaustModel:
                 self.config['app_org_hierarchy_table'], 
                 self.config['app_postgres_username'], 
                 self.config['app_postgres_credential']
-            ).cache()
+            )
             
             # Transform organization data
             org_cassandra_df = org_df.withColumn(
@@ -402,7 +402,7 @@ class DataExhaustModel:
                 "cios_content_entity", 
                 self.config['app_postgres_username'], 
                 self.config['app_postgres_credential']
-            ).cache()
+            )
             
             self.write_parquet(marketplace_content_df, f"{output_base_path}/externalContent")
             marketplace_content_df.unpersist()
@@ -412,7 +412,7 @@ class DataExhaustModel:
             marketplace_enrolments_df = self.read_cassandra_table(
                 "sunbird_courses", 
                 "user_external_enrolments"
-            ).cache()
+            )
             
             self.write_parquet(marketplace_enrolments_df, f"{output_base_path}/externalCourseEnrolments")
             marketplace_enrolments_df.unpersist()
@@ -429,7 +429,7 @@ class DataExhaustModel:
             
             for table_name, keyspace, table in tables_to_process:
                 self.logger.info(f"Processing {table_name}...")
-                df = self.read_cassandra_table(keyspace, table).cache()
+                df = self.read_cassandra_table(keyspace, table)
                 self.write_parquet(df, f"{output_base_path}/{table_name}")
                 df.unpersist()
             
