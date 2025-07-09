@@ -20,14 +20,16 @@ node() {
 
             ansiColor('xterm') {
                  values = lp_dp_params()
-    //            stage('get artifact') {
+                stage('get artifact') {
                     currentWs = sh(returnStdout: true, script: 'pwd').trim()
-//                    artifact = values.artifact_name + ":" + values.artifact_version
+                    artifact = values.artifact_name + ":" + values.artifact_version
                     values.put('currentWs', currentWs)
                     values.put('artifact', artifact)
-//                    artifact_download(values)
+                    artifact_download(values)
                 }
-                stage('deploy artifact'){
+                
+
+		stage('deploy artifact'){
                     ansiblePlaybook = "--extra-vars \"remote=${params.remote}\" ${currentWs}/ansible/lpa_data-products_deploy.yml"
                     ansibleExtraArgs = " --tags ${params.module} --vault-password-file /var/lib/jenkins/secrets/vault-pass"
                     values.put('ansiblePlaybook', ansiblePlaybook)
