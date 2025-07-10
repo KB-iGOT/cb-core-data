@@ -158,6 +158,46 @@ class DataExhaustModel:
             "event_progress_detail": event_progress_detail_schema
         }
     
+    def read_cassandra_safe_columns(self, keyspace: str, table: str) -> "DataFrame":
+        """Read only safe columns that don't cause timestamp overflow"""
+        try:
+            self.logger.info(f"Reading safe columns only from {keyspace}.{table}")
+            
+            # Define safe columns for user_assessment_master (exclude problematic timestamp columns)
+            safe_columns = [
+                "correct_count", 
+                "id", 
+                "incorrect_count", 
+                "not_answered_count",
+                "parent_content_type", 
+                "parent_source_id", 
+                "pass_percent", 
+                "result_percent", 
+                "root_org", 
+                "source_id", 
+                "source_title", 
+                "user_id"
+            ]
+            
+            self.logger.info(f"Reading columns: {safe_columns}")
+            
+            # Read the table normally first
+            df = self.spark.read \
+                .format("org.apache.spark.sql.cassandra") \
+                .option("keyspace", keyspace) \
+                .option("table", table) \
+                .load()
+            
+            # Select only the safe columns
+            df_safe = df.select(*safe_columns)
+            
+            self.logger.info(f"Successfully read {len(safe_columns)} safe columns")
+            return df_safe
+            
+        except Exception as e:
+            self.logger.error(f"Failed to read safe columns: {str(e)}")
+            raise e
+    
     def process_data(self, timestamp: int, output_base_path: str):
         """
         Main processing method - optimized for performance
@@ -170,7 +210,7 @@ class DataExhaustModel:
             enrolment_df = self.read_cassandra_table(
                 self.config['cassandra_course_keyspace'], 
                 self.config['cassandra_user_enrolments_table']
-            ).cache()
+            )
             
             self.write_parquet(enrolment_df, f"{output_base_path}/enrolment")
             enrolment_df.unpersist()
@@ -180,7 +220,7 @@ class DataExhaustModel:
             batch_df = self.read_cassandra_table(
                 self.config['cassandra_course_keyspace'], 
                 self.config['cassandra_course_batch_table']
-            ).cache()
+            )
             
             self.write_parquet(batch_df, f"{output_base_path}/batch")
             batch_df.unpersist()
@@ -190,7 +230,7 @@ class DataExhaustModel:
             kcm_v6_hierarchy = self.read_cassandra_table(
                 self.config['cassandra_hierarchy_store_keyspace'], 
                 self.config['cassandra_framework_hierarchy_table']
-            ).filter(col("identifier") == "kcmfinal_fw").cache()
+            ).filter(col("identifier") == "kcmfinal_fw")
             
             self.write_parquet(kcm_v6_hierarchy, f"{output_base_path}/kcmV6")
             kcm_v6_hierarchy.unpersist()
@@ -250,7 +290,7 @@ class DataExhaustModel:
                 col("submitResponse.passPercentage").alias("assessPassPercentage"),
                 col("assessStartTimestamp"),
                 col("assessEndTimestamp")
-            ).cache()
+            )
             
             self.write_parquet(final_assessment_df, f"{output_base_path}/userAssessment")
             user_assessment_df.unpersist()
@@ -261,7 +301,7 @@ class DataExhaustModel:
             hierarchy_df = self.read_cassandra_table(
                 self.config['cassandra_hierarchy_store_keyspace'], 
                 self.config['cassandra_content_hierarchy_table']
-            ).cache()
+            )
             
             self.write_parquet(hierarchy_df, f"{output_base_path}/hierarchy")
             hierarchy_df.unpersist()
@@ -271,7 +311,7 @@ class DataExhaustModel:
             rating_summary_df = self.read_cassandra_table(
                 self.config['cassandra_user_keyspace'], 
                 self.config['cassandra_rating_summary_table']
-            ).cache()
+            )
             
             self.write_parquet(rating_summary_df, f"{output_base_path}/ratingSummary")
             rating_summary_df.unpersist()
@@ -281,7 +321,7 @@ class DataExhaustModel:
             acbp_df = self.read_cassandra_table(
                 self.config['cassandra_user_keyspace'], 
                 self.config['cassandra_acbp_table']
-            ).cache()
+            )
             
             self.write_parquet(acbp_df, f"{output_base_path}/acbp")
             acbp_df.unpersist()
@@ -291,7 +331,7 @@ class DataExhaustModel:
             rating_df = self.read_cassandra_table(
                 self.config['cassandra_user_keyspace'], 
                 self.config['cassandra_ratings_table']
-            ).cache()
+            )
             
             self.write_parquet(rating_df, f"{output_base_path}/rating")
             rating_df.unpersist()
@@ -301,7 +341,7 @@ class DataExhaustModel:
             role_df = self.read_cassandra_table(
                 self.config['cassandra_user_keyspace'], 
                 self.config['cassandra_user_roles_table']
-            ).cache()
+            )
             
             self.write_parquet(role_df, f"{output_base_path}/role")
             role_df.unpersist()
@@ -324,7 +364,7 @@ class DataExhaustModel:
                 query, 
                 fields, 
                 array_fields
-            ).cache()
+            )
             
             self.write_parquet(es_content_df, f"{output_base_path}/esContent")
             es_content_df.unpersist()
@@ -334,7 +374,7 @@ class DataExhaustModel:
             org_df = self.read_cassandra_table(
                 self.config['cassandra_user_keyspace'], 
                 self.config['cassandra_org_table']
-            ).cache()
+            )
 
             self.write_parquet(org_df, f"{output_base_path}/org")
 
@@ -345,7 +385,7 @@ class DataExhaustModel:
                 self.config['app_org_hierarchy_table'], 
                 self.config['app_postgres_username'], 
                 self.config['app_postgres_credential']
-            ).cache()
+            )
             
             # Transform organization data
             org_cassandra_df = org_df.withColumn(
@@ -402,7 +442,7 @@ class DataExhaustModel:
                 "cios_content_entity", 
                 self.config['app_postgres_username'], 
                 self.config['app_postgres_credential']
-            ).cache()
+            )
             
             self.write_parquet(marketplace_content_df, f"{output_base_path}/externalContent")
             marketplace_content_df.unpersist()
@@ -412,10 +452,21 @@ class DataExhaustModel:
             marketplace_enrolments_df = self.read_cassandra_table(
                 "sunbird_courses", 
                 "user_external_enrolments"
-            ).cache()
+            )
             
             self.write_parquet(marketplace_enrolments_df, f"{output_base_path}/externalCourseEnrolments")
             marketplace_enrolments_df.unpersist()
+
+            # Process marketplace enrolments
+            self.logger.info("Processing old assessments...")
+            old_assessments_df = self.read_cassandra_safe_columns(
+                self.config['cassandra_user_keyspace'], 
+                self.config['cassandra_old_assessment_table']
+            )
+            
+            self.write_parquet(old_assessments_df, f"{output_base_path}/oldAssessmentDetails")
+            old_assessments_df.unpersist()
+
             
             # Process remaining tables efficiently
             tables_to_process = [
@@ -423,13 +474,12 @@ class DataExhaustModel:
                 ("learnerLeaderBoard", self.config['cassandra_user_keyspace'], self.config['cassandra_learner_leaderboard_table']),
                 ("userKarmaPoints", self.config['cassandra_user_keyspace'], self.config['cassandra_karma_points_table']),
                 ("userKarmaPointsSummary", self.config['cassandra_user_keyspace'], self.config['cassandra_karma_points_summary_table']),
-                ("oldAssessmentDetails", self.config['cassandra_user_keyspace'], self.config['cassandra_old_assessment_table']),
                 ("weeklyClaps", self.config['cassandra_user_keyspace'], self.config['cassandra_learner_stats_table'])
             ]
             
             for table_name, keyspace, table in tables_to_process:
                 self.logger.info(f"Processing {table_name}...")
-                df = self.read_cassandra_table(keyspace, table).cache()
+                df = self.read_cassandra_table(keyspace, table)
                 self.write_parquet(df, f"{output_base_path}/{table_name}")
                 df.unpersist()
             
@@ -570,7 +620,7 @@ def create_spark_session_with_packages():
         .config("spark.sql.parquet.compression.codec", "snappy") \
         .config("spark.sql.legacy.json.allowEmptyString.enabled", "true") \
         .config("spark.sql.caseSensitive", "true") \
-        .config("spark.cassandra.connection.host", "10.175.4.9") \
+        .config("spark.cassandra.connection.host", "10.175.5.7") \
         .config("spark.cassandra.connection.port", "9042") \
         .config("spark.cassandra.output.batch.size.rows", "10000") \
         .config("spark.cassandra.connection.keepAliveMS", "60000") \
@@ -613,8 +663,8 @@ def main():
         'cassandra_karma_points_summary_table': 'user_karma_points_summary',
         'cassandra_old_assessment_table': 'user_assessment_master',
         'cassandra_learner_stats_table': 'learner_stats',
-        'spark_elasticsearch_connection_host': '10.175.4.9',
-        'app_postgres_host': '10.175.4.17:5432',
+        'spark_elasticsearch_connection_host': '10.175.5.10',
+        'app_postgres_host': '10.175.5.15:5432',
         'app_postgres_schema': 'sunbird',
         'app_org_hierarchy_table': 'org_hierarchy_v4',
         'app_postgres_username': 'sunbird',
@@ -623,7 +673,7 @@ def main():
     
     # Initialize and run the model
     model = DataExhaustModel(spark, config)
-    output_path = "/home/ubuntu/cb-core-data/parquet"
+    output_path = "/home/ubuntu/cb-core-data/data-res/pq_files/cache_pq/"
     
     import time
     timestamp = int(time.time())
