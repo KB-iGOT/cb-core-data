@@ -2,3 +2,5 @@
 # defaults file for pyspark-deploy
 analytics:
   home: /home/analytics/pyspark
+
+app_postgres_host: "{{groups['app-postgres'][0]}}:5432"
