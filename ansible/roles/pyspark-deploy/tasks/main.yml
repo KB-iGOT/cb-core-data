@@ -8,5 +8,5 @@
     mode: '0755'
 
 - name: Copy dataExhaust.py file to stage-0
-  template: src=dataExhaust.py.j2 dest={{ analytics.home }}/jobs/stage-0/dataExhaust.py.j2 mode=755 owner={{ analytics_user }} group={{ analytics_group }}
+  template: src=dataExhaust.py.j2 dest={{ analytics.home }}/jobs/stage-0/dataExhaust.py mode=755 owner={{ analytics_user }} group={{ analytics_group }}
 
