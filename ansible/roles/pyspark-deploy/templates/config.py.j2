@@ -28,9 +28,9 @@ DATABASE_CONFIG = {
     'cassandra_learner_stats_table': 'learner_stats',
     
     'app_postgres_host': '{{ app_postgres_host }}',
-    'app_postgres_schema': '{{ app_postgres_schema }}',
+    'app_postgres_schema': '{{ app_postgres_schema | default(sunbird) }}',
     'app_org_hierarchy_table': 'org_hierarchy_v4',
-    'app_postgres_username': '{{ app_postgres_username | default(sunbird)}}',
+    'app_postgres_username': '{{ app_postgres_username | default(sunbird) }}',
     'app_postgres_credential': '{{ app_postgres_password | default(sunbird) }}',
     
     'spark_elasticsearch_connection_host': '{{ single_node_es_host }}',
