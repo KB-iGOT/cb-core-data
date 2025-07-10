@@ -16,7 +16,7 @@ node('build-slave') {
         }
         stage('Archive artifacts'){
             sh """
-                        zip -r cb-core-data-artifacts.zip:${artifact_version} ./*
+                        zip -r cb-core-data-artifacts.zip:${artifact_version} ./* -x "*.git/*" ".gitignore" ".DS_Store" "Jenkinsfile" "ansible/*" "pipelines/*"
                     """
             archiveArtifacts artifacts: "cb-core-data-artifacts.zip:${artifact_version}", fingerprint: true, onlyIfSuccessful: true
             sh """echo {\\"artifact_name\\" : \\"cb-core-data-artifacts.zip\\", \\"artifact_version\\" : \\"${artifact_version}\\", \\"node_name\\" : \\"${env.NODE_NAME}\\"} > metadata.json"""
