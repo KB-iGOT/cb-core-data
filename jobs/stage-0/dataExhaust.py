@@ -620,7 +620,7 @@ def create_spark_session_with_packages():
         .config("spark.sql.parquet.compression.codec", "snappy") \
         .config("spark.sql.legacy.json.allowEmptyString.enabled", "true") \
         .config("spark.sql.caseSensitive", "true") \
-        .config("spark.cassandra.connection.host", "10.175.4.9") \
+        .config("spark.cassandra.connection.host", "10.175.5.7") \
         .config("spark.cassandra.connection.port", "9042") \
         .config("spark.cassandra.output.batch.size.rows", "10000") \
         .config("spark.cassandra.connection.keepAliveMS", "60000") \
@@ -663,8 +663,8 @@ def main():
         'cassandra_karma_points_summary_table': 'user_karma_points_summary',
         'cassandra_old_assessment_table': 'user_assessment_master',
         'cassandra_learner_stats_table': 'learner_stats',
-        'spark_elasticsearch_connection_host': '10.175.4.9',
-        'app_postgres_host': '10.175.4.17:5432',
+        'spark_elasticsearch_connection_host': '10.175.5.10',
+        'app_postgres_host': '10.175.5.15:5432',
         'app_postgres_schema': 'sunbird',
         'app_org_hierarchy_table': 'org_hierarchy_v4',
         'app_postgres_username': 'sunbird',
@@ -673,7 +673,7 @@ def main():
     
     # Initialize and run the model
     model = DataExhaustModel(spark, config)
-    output_path = "/home/ubuntu/cb-core-data/parquet"
+    output_path = "/home/ubuntu/cb-core-data/data-res/pq_files/cache_pq/"
     
     import time
     timestamp = int(time.time())
