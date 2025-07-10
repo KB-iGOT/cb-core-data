@@ -1,2 +1,9 @@
 ---
 # tasks file for pyspark-deploy
+- name: Copy application.conf file
+  become: yes
+  become_user: "{{learner_user}}"
+  copy:
+    src: pyspark-data/
+    dest: {{ analytics.home }}
+    mode: '0755'
