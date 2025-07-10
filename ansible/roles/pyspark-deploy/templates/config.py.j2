@@ -1,0 +1,67 @@
+# config.py - Environment Configuration
+# This file contains all configuration values that will be dynamically updated during deployment
+# Template variables will be replaced with actual values based on environment
+
+# Database Configuration
+DATABASE_CONFIG = {
+    # Cassandra Configuration
+    'cassandra_course_keyspace': 'sunbird_courses',
+    'cassandra_user_keyspace': 'sunbird',
+    'cassandra_hierarchy_store_keyspace': 'prod_hierarchy_store',
+    
+    # Cassandra Table Names
+    'cassandra_user_enrolments_table': 'user_enrolments',
+    'cassandra_course_batch_table': 'course_batch',
+    'cassandra_framework_hierarchy_table': 'framework_hierarchy',
+    'cassandra_user_assessment_table': 'user_assessment_data',
+    'cassandra_content_hierarchy_table': 'content_hierarchy',
+    'cassandra_rating_summary_table': 'ratings_summary',
+    'cassandra_acbp_table': 'cb_plan',
+    'cassandra_ratings_table': 'ratings',
+    'cassandra_user_roles_table': 'user_roles',
+    'cassandra_org_table': 'organisation',
+    'cassandra_user_table': 'user',
+    'cassandra_learner_leaderboard_table': 'learner_leaderboard',
+    'cassandra_karma_points_table': 'user_karma_points',
+    'cassandra_karma_points_summary_table': 'user_karma_points_summary',
+    'cassandra_old_assessment_table': 'user_assessment_master',
+    'cassandra_learner_stats_table': 'learner_stats',
+    
+    'app_postgres_host': '{{ app_postgres_host }}',
+    'app_postgres_schema': '{{ app_postgres_schema }}',
+    'app_org_hierarchy_table': 'org_hierarchy_v4',
+    'app_postgres_username': '{{ app_postgres_username | default(sunbird)}}',
+    'app_postgres_credential': '{{ app_postgres_password | default(sunbird) }}',
+    
+    'spark_elasticsearch_connection_host': '{{ single_node_es_host }}',
+    'elasticsearch_port': '{{ elasticsearch_port | default(9200) }}',
+}
+
+# Spark Configuration
+SPARK_CONFIG = {
+
+    'cassandra_host': '{{ core_cassandra_host }}',
+    'cassandra_port': '{{ sparkCassandraConnectionPort | default(9042) }}',
+    
+    'es_nodes': '{{ single_node_es_host }}',
+    'es_port': '{{ elasticsearch_port | default(9200) }}',
+}
+
+
+
+# Combined configuration for easy access
+def get_config():
+    """
+    Returns the complete configuration dictionary
+    """
+    config = {}
+    config.update(DATABASE_CONFIG)
+    config.update(SPARK_CONFIG)
+    return config
+
+# Environment-specific overrides
+def get_environment_config():
+    
+    base_config = get_config()
+    
+    return base_config
