@@ -158,6 +158,46 @@ class DataExhaustModel:
             "event_progress_detail": event_progress_detail_schema
         }
     
+    def read_cassandra_safe_columns(self, keyspace: str, table: str) -> "DataFrame":
+        """Read only safe columns that don't cause timestamp overflow"""
+        try:
+            self.logger.info(f"Reading safe columns only from {keyspace}.{table}")
+            
+            # Define safe columns for user_assessment_master (exclude problematic timestamp columns)
+            safe_columns = [
+                "correct_count", 
+                "id", 
+                "incorrect_count", 
+                "not_answered_count",
+                "parent_content_type", 
+                "parent_source_id", 
+                "pass_percent", 
+                "result_percent", 
+                "root_org", 
+                "source_id", 
+                "source_title", 
+                "user_id"
+            ]
+            
+            self.logger.info(f"Reading columns: {safe_columns}")
+            
+            # Read the table normally first
+            df = self.spark.read \
+                .format("org.apache.spark.sql.cassandra") \
+                .option("keyspace", keyspace) \
+                .option("table", table) \
+                .load()
+            
+            # Select only the safe columns
+            df_safe = df.select(*safe_columns)
+            
+            self.logger.info(f"Successfully read {len(safe_columns)} safe columns")
+            return df_safe
+            
+        except Exception as e:
+            self.logger.error(f"Failed to read safe columns: {str(e)}")
+            raise e
+    
     def process_data(self, timestamp: int, output_base_path: str):
         """
         Main processing method - optimized for performance
@@ -416,6 +456,17 @@ class DataExhaustModel:
             
             self.write_parquet(marketplace_enrolments_df, f"{output_base_path}/externalCourseEnrolments")
             marketplace_enrolments_df.unpersist()
+
+            # Process marketplace enrolments
+            self.logger.info("Processing old assessments...")
+            old_assessments_df = self.read_cassandra_safe_columns(
+                self.config['cassandra_user_keyspace'], 
+                self.config['cassandra_old_assessment_table']
+            )
+            
+            self.write_parquet(old_assessments_df, f"{output_base_path}/oldAssessmentDetails")
+            old_assessments_df.unpersist()
+
             
             # Process remaining tables efficiently
             tables_to_process = [
@@ -423,7 +474,6 @@ class DataExhaustModel:
                 ("learnerLeaderBoard", self.config['cassandra_user_keyspace'], self.config['cassandra_learner_leaderboard_table']),
                 ("userKarmaPoints", self.config['cassandra_user_keyspace'], self.config['cassandra_karma_points_table']),
                 ("userKarmaPointsSummary", self.config['cassandra_user_keyspace'], self.config['cassandra_karma_points_summary_table']),
-                ("oldAssessmentDetails", self.config['cassandra_user_keyspace'], self.config['cassandra_old_assessment_table']),
                 ("weeklyClaps", self.config['cassandra_user_keyspace'], self.config['cassandra_learner_stats_table'])
             ]
             
