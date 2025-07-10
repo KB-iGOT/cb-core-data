@@ -32,6 +32,7 @@ node() {
 		stage('deploy artifact'){
                     sh """
                       unzip ${artifact} -d ./pyspark-data
+                      mv ./pyspark-data ansible
                       """
 
                     ansiblePlaybook = "--extra-vars \"remote=${params.remote}\" ${currentWs}/ansible/lpa_data-products_deploy.yml"
