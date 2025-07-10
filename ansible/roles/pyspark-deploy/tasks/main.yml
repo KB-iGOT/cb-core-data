@@ -1,9 +1,9 @@
----
 # tasks file for pyspark-deploy
-- name: Copy application.conf file
+- name: Copy pyspark-data folder to remote machine
   become: yes
-  become_user: "{{learner_user}}"
+  become_user: "{{ learner_user }}"
   copy:
     src: pyspark-data/
-    dest: {{ analytics.home }}
+    dest: "{{ analytics.home }}/"
     mode: '0755'
+
