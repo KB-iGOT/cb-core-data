@@ -1,3 +1,4 @@
+{% raw %}
 from datetime import datetime
 import findspark
 findspark.init()
@@ -556,6 +557,7 @@ def create_spark_session_with_packages():
     # Set environment variables for PySpark to find packages
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
     
+{% endraw %}
     spark = SparkSession.builder \
         .appName("DataExhaustModel-Optimized") \
         .master("local[*]") \
@@ -570,13 +572,13 @@ def create_spark_session_with_packages():
         .config("spark.sql.parquet.compression.codec", "snappy") \
         .config("spark.sql.legacy.json.allowEmptyString.enabled", "true") \
         .config("spark.sql.caseSensitive", "true") \
-        .config("spark.cassandra.connection.host", "10.175.4.9") \
+        .config("spark.cassandra.connection.host", "{{ core_cassandra_host }}") \
         .config("spark.cassandra.connection.port", "9042") \
         .config("spark.cassandra.output.batch.size.rows", "10000") \
         .config("spark.cassandra.connection.keepAliveMS", "60000") \
         .config("spark.cassandra.connection.timeoutMS", "30000") \
         .config("spark.cassandra.read.timeoutMS", "30000") \
-        .config("es.nodes", "10.175.4.9") \
+        .config("es.nodes", "{{ single_node_es_host }}") \
         .config("es.port", "9200") \
         .config("es.index.auto.create", "false") \
         .config("es.nodes.wan.only", "true") \
@@ -623,7 +625,7 @@ def main():
     
     # Initialize and run the model
     model = DataExhaustModel(spark, config)
-    output_path = "/home/ubuntu/cb-core-data/parquet"
+    output_path = "{{ analytics.home }}/cb-core-data/parquet"
     
     import time
     timestamp = int(time.time())
