@@ -30,6 +30,10 @@ node() {
                 
 
 		stage('deploy artifact'){
+                    sh """
+                      unzip ${artifact} ./pyspark-data
+                      """
+
                     ansiblePlaybook = "--extra-vars \"remote=${params.remote}\" ${currentWs}/ansible/lpa_data-products_deploy.yml"
                     ansibleExtraArgs = " --vault-password-file /var/lib/jenkins/secrets/vault-pass"
                     values.put('ansiblePlaybook', ansiblePlaybook)
