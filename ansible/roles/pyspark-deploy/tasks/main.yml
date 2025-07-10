@@ -1,7 +1,7 @@
 # tasks file for pyspark-deploy
 - name: Copy pyspark-data folder to remote machine
   become: yes
-  become_user: "{{ learner_user }}"
+  become_user: "{{ analytics_user }}"
   copy:
     src: pyspark-data/
     dest: "{{ analytics.home }}/"
