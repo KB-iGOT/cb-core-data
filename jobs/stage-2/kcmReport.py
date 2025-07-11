@@ -41,11 +41,7 @@ class KCMModel:
         Process KCM data
         
         Args:
-            timestamp: Long timestamp
             spark: SparkSession
-            sc: SparkContext
-            fc: FrameworkContext
-            conf: DashboardConfig
         """
         try:
             today = self.get_date()
@@ -54,40 +50,66 @@ class KCMModel:
 
             # Content - Competency Mapping data
             categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Standalone Assessment", "Curated Program"]
-            cbp_details=spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(F.col("category").isin(categories)).where("courseStatus IN ('Live', 'Retired')") \
+            initial_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)\
+                .filter(F.col("category").isin(categories))\
+                .where("courseStatus IN ('Live', 'Retired')")\
                 .select("courseID", "competencyAreaRefId", "competencyThemeRefId", "competencySubThemeRefId", "courseName")
             
-            def parse_array_string(col_name):
-                """Convert string like '[item1, item2]' back to array"""
-                return F.when(
-                    (F.col(col_name).isNotNull()) & 
-                    (F.col(col_name) != "") & 
-                    (F.col(col_name) != "null") & 
-                    (F.col(col_name) != "[]"),
-                    F.split(
-                        F.regexp_replace(
-                            F.regexp_replace(F.col(col_name), r"^\[|\]$", ""),  # Remove [ ]
-                            r"\s*,\s*", ","  # Clean up spaces around commas
-                        ), 
-                        ","
-                    )
-                ).otherwise(F.array())
+            schema = initial_df.schema
+            competency_area_type = None
+            competency_theme_type = None
+            competency_sub_theme_type = None
             
-            # Convert the string fields back to arrays
-            cbp_details = cbp_details.select(
-                F.col("courseID"),
-                parse_array_string("competencyAreaRefId").alias("competencyAreaRefId"),
-                parse_array_string("competencyThemeRefId").alias("competencyThemeRefId"), 
-                parse_array_string("competencySubThemeRefId").alias("competencySubThemeRefId"),
-                F.col("courseName")
-            )
+            for field in schema.fields:
+                if field.name == "competencyAreaRefId":
+                    competency_area_type = field.dataType
+                elif field.name == "competencyThemeRefId":
+                    competency_theme_type = field.dataType
+                elif field.name == "competencySubThemeRefId":
+                    competency_sub_theme_type = field.dataType
+            
+            # If columns are already arrays, use them directly. If strings, parse them.
+            if isinstance(competency_area_type, ArrayType):
+                print("Columns are already arrays - using them directly")
+                cbp_details = initial_df.select(
+                    F.col("courseID"),
+                    F.when(F.size(F.col("competencyAreaRefId")) == 0, F.array()).otherwise(F.col("competencyAreaRefId")).alias("competencyAreaRefId"),
+                    F.when(F.size(F.col("competencyThemeRefId")) == 0, F.array()).otherwise(F.col("competencyThemeRefId")).alias("competencyThemeRefId"),
+                    F.when(F.size(F.col("competencySubThemeRefId")) == 0, F.array()).otherwise(F.col("competencySubThemeRefId")).alias("competencySubThemeRefId"),
+                    F.col("courseName")
+                )
+            else:
+                print("Columns are strings - parsing them into arrays")
+                def parse_array_string(col_name):
+                    """Convert string like '[item1, item2]' back to array"""
+                    return F.when(
+                        (F.col(col_name).isNotNull()) & 
+                        (F.col(col_name) != "") & 
+                        (F.col(col_name) != "null") & 
+                        (F.col(col_name) != "[]"),
+                        F.split(
+                            F.regexp_replace(
+                                F.regexp_replace(F.col(col_name), r"^\[|\]$", ""),  # Remove [ ]
+                                r"\s*,\s*", ","  # Clean up spaces around commas
+                            ), 
+                            ","
+                        )
+                    ).otherwise(F.array())
+                
+                # Convert the string fields back to arrays
+                cbp_details = initial_df.select(
+                    F.col("courseID"),
+                    parse_array_string("competencyAreaRefId").alias("competencyAreaRefId"),
+                    parse_array_string("competencyThemeRefId").alias("competencyThemeRefId"), 
+                    parse_array_string("competencySubThemeRefId").alias("competencySubThemeRefId"),
+                    F.col("courseName")
+                )
 
             #explode area, theme and sub theme separately
             area_exploded = cbp_details.select(
                 F.col("courseID"), 
                 F.expr("posexplode_outer(competencyAreaRefId) as (pos, competency_area_id)")
             ).repartition(F.col("courseID"))
-            
             
             theme_exploded = cbp_details.select(
                 F.col("courseID"), 
@@ -99,15 +121,14 @@ class KCMModel:
                 F.expr("posexplode_outer(competencySubThemeRefId) as (pos, competency_sub_theme_id)")
             ).repartition(F.col("courseID"))
             
-            # # Joining area, theme and subtheme based on position
+            # Joining area, theme and subtheme based on position
             competency_joined_df = area_exploded.join(theme_exploded, ["courseID", "pos"]) \
                 .join(sub_theme_exploded, ["courseID", "pos"])
             
-          
-            # # joining with cbp_details for getting courses with no competencies mapped to it
+            # joining with cbp_details for getting courses with no competencies mapped to it
             competency_content_mapping_df = cbp_details \
                 .join(competency_joined_df, ["courseID"], "left") \
-                .dropDuplicates(["courseID", "competency_area_id", "competency_theme_id", "competency_sub_theme_id"]) \
+                .dropDuplicates(["courseID", "competency_area_id", "competency_theme_id", "competency_sub_theme_id"])
             
             content_mapping_df = competency_content_mapping_df \
                 .withColumn("data_last_generated_on", F.lit(self.current_date_time())) \
@@ -121,11 +142,10 @@ class KCMModel:
 
             content_mapping_df.distinct().coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"warehouse/kcm_content_mapping/")
 
-            # # Load KCM v6 data
-            # 1. Read the data
+            # Load KCM v6 data
             kcmv6 = spark.read.parquet(ParquetFileConstants.KCMV6_PARQUET_FILE)
 
-            # 2. Define the schema
+            # Define the schema
             hierarchy_schema = """
             STRUCT<
                 categories: ARRAY<
@@ -149,13 +169,13 @@ class KCMModel:
             >
             """
 
-            # 3. Parse the JSON column (ONLY ONCE)
+            # Parse the JSON column (ONLY ONCE)
             kcmv6 = kcmv6.withColumn(
                 "hierarchy_parsed", 
                 F.from_json(F.col("hierarchy"), hierarchy_schema)
             )
 
-            # 4. Process area data (using hierarchy_parsed)
+            # Process area data (using hierarchy_parsed)
             kcm_area = kcmv6.withColumn(
                 "competencyAreaData", 
                 F.col("hierarchy_parsed.categories")[0]
@@ -173,7 +193,7 @@ class KCMModel:
                 F.col("associatedTheme.name").alias("themeName")
             )
 
-            # 5. Process theme data (using hierarchy_parsed)
+            # Process theme data (using hierarchy_parsed)
             kcm_theme = kcmv6.withColumn(
                 "competencyThemeData", 
                 F.col("hierarchy_parsed.categories")[1]
@@ -192,7 +212,7 @@ class KCMModel:
                 F.col("associatedSubTheme.description").alias("subThemeDescription")
             )
 
-            # 6. Join and finalize
+            # Join and finalize
             competency_details_df = kcm_area.join(
                 kcm_theme, 
                 ["themeID", "themeName"], 
@@ -215,9 +235,9 @@ class KCMModel:
                 F.lit(self.current_date_time())
             )
 
-            competency_details_df.distinct().write.mode("overwrite").option("compression", "snappy").parquet(f"warehouse/kcm_dictionary/",)
+            competency_details_df.distinct().write.mode("overwrite").option("compression", "snappy").parquet(f"warehouse/kcm_dictionary/")
 
-            # # Competency reporting
+            # Competency reporting
             competency_reporting = competency_content_mapping_df \
                 .join(competency_details_df, ["competency_area_id", "competency_theme_id", "competency_sub_theme_id"]) \
                 .withColumn("competency_theme_type", F.lit("Null")) \
@@ -239,7 +259,6 @@ class KCMModel:
                 .mode("overwrite") \
                 .option("header", "true") \
                 .csv(f"{report_path_content_competency_mapping}/{file_name}")
-                
         except Exception as e:
             print(f"Error occurred during KCMModel processing: {str(e)}")
             sys.exit(1)
@@ -247,7 +266,6 @@ class KCMModel:
     @staticmethod
     def get_kcm_schema():
         """Returns the schema for KCM data"""
-        # KCM v6 schema translation from Scala
         from pyspark.sql.types import StructType, StructField, StringType, ArrayType
         
         return StructType([
@@ -285,15 +303,11 @@ def main():
     start_time = datetime.now()
     print(f"[START] KCMModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = KCMModel()
-    model.process_data( spark=spark)
+    model.process_data(spark=spark)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] KCMModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
-
-   
 # Example usage:
 if __name__ == "__main__":
-    # Initialize Spark Session
     main()
-    
