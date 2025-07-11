@@ -6,7 +6,7 @@ from dfutil.user.userDFUtil import exportDFToParquet
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
     col, explode_outer, from_json, 
-    unix_timestamp, expr
+    unix_timestamp, expr, lit, concat_ws, when
 )
 from pyspark.sql.types import FloatType
 from util import schemas
@@ -92,6 +92,42 @@ def precomputeAssessmentEsDataframe(spark: SparkSession) -> DataFrame:
         print(f"❌ Error in assessment_es_dataframe: {str(e)}")
         raise
 
+def precomputeOldAssessmentDataframe(spark: SparkSession) -> DataFrame:
+    """
+    Creates old assessment DataFrame from cassandra data with comprehensive logging.
+    """
+    print(f"\n🚀 Starting old_assessment_dataframe function")
+    start_time = time.time()
+
+    try:
+        print("📥 Fetching data from cassandra cache...")
+        raw_df = spark.read.parquet(ParquetFileConstants.OLD_ASSESSMENT_PARQUET_FILE)\
+            .withColumnRenamed("user_id", "userID") \
+            .withColumnRenamed("parent_source_id", "courseID")
+
+        print("🔧 Selecting and aliasing columns...")
+        oldassessmentdf = raw_df\
+            .join(spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE), on="courseID", how="left")\
+            .join(spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE), on="userID", how="left")\
+            .withColumn("assessment_type", lit("Learning Resource")) \
+            .withColumn("total_questions", col("correct_count") + col("incorrect_count") + col("not_answered_count")) \
+            .withColumn("assessment_publish_date", lit(None).cast("date")) \
+            .withColumn("assessment_duration", lit(None).cast("string")) \
+            .withColumn("last_attempted_date", lit(None).cast("date")) \
+            .withColumn("retakes", lit(None).cast("integer")) \
+            .withColumn("assessEndTime", lit(None).cast("bigint")) \
+            .withColumn("assessChildID", lit(None).cast("string")) \
+            .withColumn("Pass", when(col("result_percent") >= col("pass_percent"), lit("Yes")).otherwise(lit("No"))) \
+            .withColumn("Tags", concat_ws(", ", col("additionalProperties.tag")))
+
+        execution_time = time.time() - start_time
+        print(f"⏱️ Function completed in {execution_time:.2f} seconds")
+        exportDFToParquet(oldassessmentdf, ParquetFileConstants.OLD_ASSESSMENT_COMPUTED_PARQUET_FILE)
+
+
+    except Exception as e:
+        print(f"❌ Error in assessment_es_dataframe: {str(e)}")
+        raise
 
 def transform_assessment_data(assess_with_hierarchy_data: DataFrame, org_df: DataFrame) -> DataFrame:
     """
