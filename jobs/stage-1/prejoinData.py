@@ -25,7 +25,7 @@ def initialize_spark():
     
     spark = SparkSession.builder \
         .appName("DataProcessing_Pipeline") \
-        .config("spark.executor.memory", "12g") \
+        .config("spark.executor.memory", "42g") \
         .config("spark.driver.memory", "10g") \
         .config("spark.sql.shuffle.partitions", "64") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
@@ -87,7 +87,8 @@ def main():
         ("Enrolment Master Data", enrolmentDFUtil.preComputeEnrolment),
         ("External Enrolment", enrolmentDFUtil.preComputeExternalEnrolment),
         ("Org-User Mapping with Hierarchy", userDFUtil.preComputeOrgHierarchyWithUser),
-        ("ACBP Enrolment Computation", acbpDFUtil.preComputeACBPData)
+        ("ACBP Enrolment Computation", acbpDFUtil.preComputeACBPData),
+        ("Old Assessment Data", assessmentDFUtil.precomputeOldAssessmentDataframe)
     ]
     
     try:
