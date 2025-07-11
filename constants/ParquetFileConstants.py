@@ -33,6 +33,7 @@ class ParquetFileConstants:
     USER_KARMA_POINTS_PARQUET_FILE = str(INPUT_DIR / "userKarmaPoints/**.parquet")
     USER_KARMA_POINTS_SUMMARY_PARQUET_FILE = str(INPUT_DIR / "userKarmaPointsSummary/**.parquet")
     USER_ASSESSMENT_PARQUET_FILE = str(INPUT_DIR / "userAssessment/**.parquet")
+    OLD_ASSESSMENT_PARQUET_FILE = str(INPUT_DIR / "oldAssessmentDetails/**.parquet")
 
     ###
     ###  Computed Parquet File
@@ -59,6 +60,7 @@ class ParquetFileConstants:
     TEMP_COMPUTE_FILE = str(OUTPUT_COMPUTED_DIR / "temp-computed/")
     CONTENT_HIERARCHY_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content-hierarchy-select/")
     BATCH_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "batch-select/")
+    OLD_ASSESSMENT_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "old-assessment/")
 
     ###
     ###  Output CSV File
