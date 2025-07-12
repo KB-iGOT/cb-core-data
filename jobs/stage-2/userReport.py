@@ -20,6 +20,8 @@ from dfutil.enrolment.acbp import acbpDFUtil
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.dfexport import dfexportutil
+from jobs.default_config import create_config
+from jobs.config import get_environment_config
 
 # Initialize Spark
 spark = SparkSession.builder \
@@ -32,13 +34,14 @@ spark = SparkSession.builder \
 
 print("✅ Spark Session initialized")
 
-def processUserReport():
+def processUserReport(self,config):
     """
     User Report Generation with minimal traceable steps
     """
 
     try:
         start_time = time.time()
+        today = self.get_date()
 
         # Step 1: Load User Master Data
         print("📊 Step 1: Loading User Master Data...")
@@ -142,7 +145,7 @@ def processUserReport():
 
         # Step 9: Export Data
         print("📁 Step 9: Exporting Data...")
-        dfexportutil.write_csv_per_mdo_id(user_complete_df, ParquetFileConstants.USER_REPORT_CSV, 'mdo_id')
+        dfexportutil.write_csv_per_mdo_id(user_complete_df, f"{config.localReportDir}/{config.userReportPath}/{today}", 'mdo_id')
         print("✅ Step 9 Complete")
 
         # Performance Summary
@@ -156,12 +159,9 @@ def processUserReport():
         raise
 
 def main():
-    """
-    Main function for User Report Generation
-    """
-    
-    print("🚀 Starting User Report Generation...")
-    processUserReport()
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
+    processUserReport(config)
     print("🏆 User Report Generation completed successfully!")
 
 if __name__ == "__main__":

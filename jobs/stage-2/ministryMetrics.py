@@ -21,6 +21,8 @@ from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
 from dfutil.utils import utils
 from dfutil.utils.redis import Redis
+from jobs.default_config import create_config
+from jobs.config import get_environment_config
 
 
 from constants.ParquetFileConstants import ParquetFileConstants
@@ -45,7 +47,7 @@ class MinistryMetricsModel:
             primary_categories= ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
             
             # Load and cache base DataFrames that are used multiple times
-            enrolmentDF = spark.read.parquet(f"{'warehouse'}/user_enrolment_report/{today}/**.parquet")
+            enrolmentDF = spark.read.parquet(f"{conf.warehouseReportDir}/{conf.dwEnrollmentsTable}/**.parquet")
             org_hierarchyDF = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE)
             ministryNamesDF = org_hierarchyDF.select(col("mdo_name").alias("ministry"), col("mdo_id").alias("ministryID"))
             userDF= spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE) \
@@ -55,8 +57,7 @@ class MinistryMetricsModel:
             
             # Druid query for active users
             query = """SELECT DISTINCT(uid) as user_ID FROM "summary-events" WHERE dimensions_type='app' AND __time > CURRENT_TIMESTAMP - INTERVAL '24' HOUR"""
-            # usersLoggedInLast24HrsDF = utils.druidDFOption(query, conf.get("sparkDruidRouterHost"))
-            usersLoggedInLast24HrsDF=spark.read.format("csv").option("header", "true").option("inferSchema", "true").load(f"/Users/abhishekpn/projects/kb-igot/cb-core-data/query.csv")
+            usersLoggedInLast24HrsDF = utils.druidDFOption(query, conf.sparkDruidRouterHost)
             twentyFoutHrActiveUserDF = userDF.join(usersLoggedInLast24HrsDF, ["user_ID"], "inner")
             joined24HrActiveUserDF = twentyFoutHrActiveUserDF.join(
                 org_hierarchyDF, 
@@ -198,14 +199,12 @@ def main():
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .getOrCreate()
     
-    conf = {
-         "sparkDruidRouterHost" : "192.168.3.91"
-    }
-    # Create model instance
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     start_time = datetime.now()
     print(f"[START] MinistryMetricsModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = MinistryMetricsModel()
-    model.process_data(spark=spark, conf=conf)
+    model.process_data(spark,config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] MinistryMetricsModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")

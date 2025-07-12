@@ -26,7 +26,7 @@ def initialize_spark():
     spark = SparkSession.builder \
         .appName("DataProcessing_Pipeline") \
         .config("spark.executor.memory", "42g") \
-        .config("spark.driver.memory", "10g") \
+        .config("spark.driver.memory", "12g") \
         .config("spark.sql.shuffle.partitions", "64") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .getOrCreate()

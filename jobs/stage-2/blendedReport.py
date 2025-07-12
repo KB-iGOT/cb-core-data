@@ -20,7 +20,8 @@ from dfutil.user import userDFUtil
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.dfexport import dfexportutil
-
+from jobs.config import get_environment_config
+from jobs.default_config import create_config
 
 class BlendedModel:
     def __init__(self):
@@ -33,7 +34,7 @@ class BlendedModel:
     def get_date():
         return datetime.now().strftime("%Y-%m-%d")
 
-    def process_data(self, spark):
+    def process_data(self, spark,config):
         try:
             start_time = time.time()
             today = self.get_date()
@@ -245,17 +246,17 @@ class BlendedModel:
             print(f"📊 Writing MDO reports for {len(mdo_orgid_list)} organizations...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 mdoReportDF,
-                f"reports/standalone-reports/blended-program-report-mdo/{today}",
+                f"{config.localReportDir}/{config.blendedReportPath}-mdo/{today}",
                 'mdoid',
-                f"temp/blended-program-report-mdo/{today}",
+                f"{config.localReportDir}/temp/blended-program-report-mdo/{today}",
                 mdo_orgid_list)
 
             print(f"📊 Writing CBP reports for {len(cbp_orgid_list)} organizations...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 cbpReportDF,
-                f"reports/standalone-reports/blended-program-report-cbp/{today}",
+                f"{config.localReportDir}/{config.blendedReportPath}-cbp/{today}",
                 'mdoid',
-                f"temp/blended-program-report-cbp/{today}",
+                f"{config.localReportDir}/temp/blended-program-report-cbp/{today}",
                 cbp_orgid_list)
 
             print("🏗️ Creating warehouse data...")
@@ -289,7 +290,7 @@ class BlendedModel:
              .write
              .mode("overwrite")
              .option("compression", "snappy")
-             .parquet(f"warehouse/blended-program"))
+             .parquet(f"{config.warehouseReportDir}/{config.dwBPEnrollmentsTable}"))
 
             cleanup_order = [
                 warehouseDF, cbpReportDF, mdoReportDF, finalResDF, bpBatchSessionDetailsDF,
@@ -507,8 +508,10 @@ def main():
     # Create model instance
     start_time = datetime.now()
     print(f"[START] BlendedModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     model = BlendedModel()
-    model.process_data(spark=spark)
+    model.process_data(spark,config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] BlendedModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
