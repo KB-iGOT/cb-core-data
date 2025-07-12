@@ -13,9 +13,10 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from dfutil.content import contentDFUtil
 from dfutil.enrolment import enrolmentDFUtil
-from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
 from util import schemas
+from jobs.config import get_environment_config
+from jobs.default_config import create_config
 
 
 from constants.ParquetFileConstants import ParquetFileConstants
@@ -48,7 +49,7 @@ class CourseReportModel:
                 )
             )
         )
-    def process_data(self, spark):
+    def process_data(self, spark,config):
         try:
             today = self.get_date()
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
@@ -123,10 +124,10 @@ class CourseReportModel:
                 .cache()  # Cache the final result since it's used multiple times
 
             # Generate report path
-            report_path = f"reports/standalone-reports/course-report/{today}"
+            report_path=f"{config.localReportDir}/{config.courseReportPath}/{today}"
 
             # Write to warehouse - single coalesce operation
-            distinctDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/content-resource")
+            distinctDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwContentResourceTable}")
 
             courseResCountDF = allCourseProgramDetailsDF.select("courseID", "courseResourceCount")
             userEnrolmentDF=enrolmentDF.join(
@@ -307,7 +308,7 @@ class CourseReportModel:
                 mdoReportDF, 
                 report_path,
                 'mdoid',
-                "tmp/course_report_{today}",
+                f"{config.localReportDir}/temp/course_report/{today}",
                 orgid_list
             )
             contentHierarchyExploded = contentHierarchyDF.withColumn("hierarchy", from_json(col("hierarchy"), schemas.hierarchySchema))
@@ -354,7 +355,7 @@ class CourseReportModel:
                 )
             
             df_warehouse = platformContentWarehouseDF.union(marketPlaceContentWarehouseDF)
-            df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/content")
+            df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
 
         except Exception as e:
             print(f"❌ Error occurred during CourseReportModel processing: {str(e)}")
@@ -363,7 +364,7 @@ class CourseReportModel:
 
 def main():
     spark = SparkSession.builder \
-        .appName("Course Report Model - Cached") \
+        .appName("Course Report Model") \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "42g") \
         .config("spark.driver.memory", "10g") \
@@ -375,16 +376,16 @@ def main():
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .getOrCreate()
-    # Create model instance
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     start_time = datetime.now()
     print(f"[START] CourseReportModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = CourseReportModel()
-    model.process_data(spark=spark)
+    model.process_data(spark,config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] CourseReportModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
 
-# Example usage:
 if __name__ == "__main__":
    main()

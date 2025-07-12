@@ -17,7 +17,8 @@ import logging
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from constants.ParquetFileConstants import ParquetFileConstants
-from jobs.config import get_config, get_environment_config
+from jobs.config import get_environment_config
+from jobs.default_config import create_config
 
 class DataExhaustModel:
     @staticmethod
@@ -40,8 +41,7 @@ class DataExhaustModel:
         self.config = config
         self.logger = logging.getLogger(__name__)
         
-        # Set logging level from config
-        log_level = getattr(logging, config.get('log_level', 'INFO'))
+        log_level = getattr(logging, 'INFO')
         self.logger.setLevel(log_level)
         
     def read_cassandra_table(self, keyspace: str, table: str) -> "DataFrame":
@@ -67,7 +67,7 @@ class DataExhaustModel:
         dfr = self.spark.read.format("org.elasticsearch.spark.sql") \
                 .option("es.read.metadata", "false") \
                 .option("es.nodes", host) \
-                .option("es.port", self.config.get('elasticsearch_port', '9200')) \
+                .option("es.port", self.config.sparkElasticsearchConnectionPort) \
                 .option("es.index.auto.create", "false") \
                 .option("es.nodes.wan.only", "true") \
                 .option("es.nodes.discovery", "false")
@@ -178,9 +178,7 @@ class DataExhaustModel:
                 "source_title", 
                 "user_id"
             ]
-            
-            self.logger.info(f"Reading columns: {safe_columns}")
-            
+                        
             # Read the table normally first
             df = self.spark.read \
                 .format("org.apache.spark.sql.cassandra") \
@@ -208,8 +206,8 @@ class DataExhaustModel:
             # Process enrolment data
             self.logger.info("Processing enrolment data...")
             enrolment_df = self.read_cassandra_table(
-                self.config['cassandra_course_keyspace'], 
-                self.config['cassandra_user_enrolments_table']
+                self.config.cassandraCourseKeyspace,
+                self.config.cassandraUserEnrolmentsTable
             )
             
             self.write_parquet(enrolment_df, f"{output_base_path}/enrolment")
@@ -218,8 +216,8 @@ class DataExhaustModel:
             # Process batch data
             self.logger.info("Processing batch data...")
             batch_df = self.read_cassandra_table(
-                self.config['cassandra_course_keyspace'], 
-                self.config['cassandra_course_batch_table']
+                self.config.cassandraCourseKeyspace,
+                self.config.cassandraCourseBatchTable
             )
             
             self.write_parquet(batch_df, f"{output_base_path}/batch")
@@ -228,8 +226,8 @@ class DataExhaustModel:
             # Process KCM V6 hierarchy
             self.logger.info("Processing KCM V6 hierarchy...")
             kcm_v6_hierarchy = self.read_cassandra_table(
-                self.config['cassandra_hierarchy_store_keyspace'], 
-                self.config['cassandra_framework_hierarchy_table']
+                self.config.cassandraHierarchyStoreKeyspace,
+                self.config.cassandraFrameworkHierarchyTable
             ).filter(col("identifier") == "kcmfinal_fw")
             
             self.write_parquet(kcm_v6_hierarchy, f"{output_base_path}/kcmV6")
@@ -238,8 +236,8 @@ class DataExhaustModel:
             # Process user assessment data (complex transformation)
             self.logger.info("Processing user assessment data...")
             user_assessment_df = self.read_cassandra_table(
-                self.config['cassandra_user_keyspace'], 
-                self.config['cassandra_user_assessment_table']
+                self.config.cassandraUserKeyspace,
+                self.config.cassandraUserAssessmentTable
             ).select(
                 col("assessmentid").alias("assessChildID"),
                 col("starttime").alias("assessStartTime"),
@@ -299,8 +297,8 @@ class DataExhaustModel:
             # Process content hierarchy
             self.logger.info("Processing content hierarchy...")
             hierarchy_df = self.read_cassandra_table(
-                self.config['cassandra_hierarchy_store_keyspace'], 
-                self.config['cassandra_content_hierarchy_table']
+                self.config.cassandraHierarchyStoreKeyspace,
+                self.config.cassandraContentHierarchyTable
             )
             
             self.write_parquet(hierarchy_df, f"{output_base_path}/hierarchy")
@@ -309,8 +307,8 @@ class DataExhaustModel:
             # Process rating summary
             self.logger.info("Processing rating summary...")
             rating_summary_df = self.read_cassandra_table(
-                self.config['cassandra_user_keyspace'], 
-                self.config['cassandra_rating_summary_table']
+                self.config.cassandraUserKeyspace,
+                self.config.cassandraRatingSummaryTable
             )
             
             self.write_parquet(rating_summary_df, f"{output_base_path}/ratingSummary")
@@ -319,8 +317,8 @@ class DataExhaustModel:
             # Process ACBP data
             self.logger.info("Processing ACBP data...")
             acbp_df = self.read_cassandra_table(
-                self.config['cassandra_user_keyspace'], 
-                self.config['cassandra_acbp_table']
+                self.config.cassandraUserKeyspace,
+                self.config.cassandraAcbpTable
             )
             
             self.write_parquet(acbp_df, f"{output_base_path}/acbp")
@@ -329,8 +327,8 @@ class DataExhaustModel:
             # Process ratings
             self.logger.info("Processing ratings...")
             rating_df = self.read_cassandra_table(
-                self.config['cassandra_user_keyspace'], 
-                self.config['cassandra_ratings_table']
+                self.config.cassandraUserKeyspace,
+                self.config.cassandraRatingsTable
             )
             
             self.write_parquet(rating_df, f"{output_base_path}/rating")
@@ -339,8 +337,8 @@ class DataExhaustModel:
             # Process user roles
             self.logger.info("Processing user roles...")
             role_df = self.read_cassandra_table(
-                self.config['cassandra_user_keyspace'], 
-                self.config['cassandra_user_roles_table']
+                self.config.cassandraUserKeyspace,
+                self.config.cassandraUserRolesTable
             )
             
             self.write_parquet(role_df, f"{output_base_path}/role")
@@ -359,7 +357,7 @@ class DataExhaustModel:
             query = f'{{"_source":[{fields_clause}],"query":{{"bool":{{"should":[{should_clause}]}}}}}}'
             
             es_content_df = self.read_elasticsearch_data(
-                self.config['spark_elasticsearch_connection_host'], 
+                self.config.sparkElasticsearchConnectionHost, 
                 "compositesearch", 
                 query, 
                 fields, 
@@ -372,18 +370,18 @@ class DataExhaustModel:
             # Process organization data with hierarchy
             self.logger.info("Processing organization data...")
             org_df = self.read_cassandra_table(
-                self.config['cassandra_user_keyspace'], 
-                self.config['cassandra_org_table']
+                self.config.cassandraUserKeyspace, 
+                self.config.cassandraOrgTable
             )
 
             self.write_parquet(org_df, f"{output_base_path}/org")
 
-            app_postgres_url = f"jdbc:postgresql://{self.config['app_postgres_host']}/{self.config['app_postgres_schema']}"
+            appPostgresUrl = f"jdbc:postgresql://{self.config.appPostgresHost}/{self.config.appPostgresSchema}"
             org_postgres_df = self.read_postgres_table(
-                app_postgres_url, 
-                self.config['app_org_hierarchy_table'], 
-                self.config['app_postgres_username'], 
-                self.config['app_postgres_credential']
+                appPostgresUrl, 
+                self.config.appOrgHierarchyTable, 
+                self.config.appPostgresUsername,  
+                self.config.appPostgresCredential
             )
             
             # Transform organization data
@@ -437,10 +435,10 @@ class DataExhaustModel:
             # Process marketplace content
             self.logger.info("Processing marketplace content...")
             marketplace_content_df = self.read_postgres_table(
-                app_postgres_url, 
+                appPostgresUrl, 
                 "cios_content_entity", 
-                self.config['app_postgres_username'], 
-                self.config['app_postgres_credential']
+                self.config.appPostgresUsername,
+                self.config.appPostgresCredential 
             )
             
             self.write_parquet(marketplace_content_df, f"{output_base_path}/externalContent")
@@ -458,19 +456,19 @@ class DataExhaustModel:
 
             self.logger.info("Processing old assessments...")
             old_assessments_df = self.read_cassandra_safe_columns(
-                self.config['cassandra_user_keyspace'], 
-                self.config['cassandra_old_assessment_table']
+                self.config.cassandraUserKeyspace, 
+                self.config.cassandraOldAssesmentTable
             )
             
             self.write_parquet(old_assessments_df, f"{output_base_path}/oldAssessmentDetails")
             old_assessments_df.unpersist()
             # Process remaining tables efficiently
             tables_to_process = [
-                ("user", self.config['cassandra_user_keyspace'], self.config['cassandra_user_table']),
-                ("learnerLeaderBoard", self.config['cassandra_user_keyspace'], self.config['cassandra_learner_leaderboard_table']),
-                ("userKarmaPoints", self.config['cassandra_user_keyspace'], self.config['cassandra_karma_points_table']),
-                ("userKarmaPointsSummary", self.config['cassandra_user_keyspace'], self.config['cassandra_karma_points_summary_table']),
-                ("weeklyClaps", self.config['cassandra_user_keyspace'], self.config['cassandra_learner_stats_table'])
+                ("user", self.config.cassandraUserKeyspace, self.config.cassandraUserTable),
+                ("learnerLeaderBoard", self.config.cassandraUserKeyspace, self.config.cassandraLearnerLeaderBoardTable),
+                ("userKarmaPoints", self.config.cassandraUserKeyspace, self.config.cassandraKarmaPointsTable),
+                ("userKarmaPointsSummary", self.config.cassandraUserKeyspace, self.config.cassandraKarmaPointsSummaryTable),
+                ("weeklyClaps", self.config.cassandraUserKeyspace, self.config.cassandraLearnerStatsTable)
             ]
             
             for table_name, keyspace, table in tables_to_process:
@@ -490,7 +488,7 @@ class DataExhaustModel:
             event_query = f'{{"_source":[{fields_clause_events}],"query":{{"bool":{{"should":[{should_clause_events}]}}}}}}'
             
             event_data_df = self.read_elasticsearch_data(
-                self.config['spark_elasticsearch_connection_host'], 
+                self.config.sparkElasticsearchConnectionHost, 
                 "compositesearch", 
                 event_query, 
                 fields_events, 
@@ -539,7 +537,7 @@ class DataExhaustModel:
             """
             
             events_enrolment_df = self.read_cassandra_table(
-                self.config['cassandra_course_keyspace'], 
+                self.config.cassandraCourseKeyspace, 
                 "user_entity_enrolments"
             ).withColumn(
                 "certificate_id", 
@@ -595,47 +593,32 @@ class DataExhaustModel:
             raise e
 
 
-def create_spark_session_with_packages(config: dict):
+def create_spark_session_with_packages(config):
     # Set environment variables for PySpark to find packages
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
     
-    # Get configuration values with defaults
-    app_name =  'DataExhaustModel'
-    executor_memory = config.get('executor_memory', '42g')
-    driver_memory = config.get('driver_memory', '10g')
-    executor_memory_fraction = config.get('executor_memory_fraction', '0.7')
-    storage_memory_fraction = config.get('storage_memory_fraction', '0.2')
-    cassandra_host = config.get('cassandra_host', '10.175.5.7')
-    cassandra_port = config.get('cassandra_port', '9042')
-    batch_size_rows = config.get('batch_size_rows', '10000')
-    connection_timeout_ms = config.get('connection_timeout_ms', '30000')
-    read_timeout_ms = config.get('read_timeout_ms', '30000')
-    es_nodes = config.get('es_nodes','10.175.5.10')
-    es_port = config.get('es_port', '9200')
-    parquet_compression = config.get('parquet_compression', 'snappy')
-    
     spark = SparkSession.builder \
-        .appName(app_name) \
+        .appName('DataExhaustModel') \
         .master("local[*]") \
-        .config("spark.executor.memory", executor_memory) \
-        .config("spark.driver.memory", driver_memory) \
-        .config("spark.executor.memoryFraction", executor_memory_fraction) \
-        .config("spark.storage.memoryFraction", storage_memory_fraction) \
+        .config("spark.executor.memory", '42g') \
+        .config("spark.driver.memory", '12g') \
+        .config("spark.executor.memoryFraction", '0.7') \
+        .config("spark.storage.memoryFraction", '0.2') \
         .config("spark.storage.unrollFraction", "0.1") \
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.adaptive.skewJoin.enabled", "true") \
-        .config("spark.sql.parquet.compression.codec", parquet_compression) \
+        .config("spark.sql.parquet.compression.codec", 'snappy') \
         .config("spark.sql.legacy.json.allowEmptyString.enabled", "true") \
         .config("spark.sql.caseSensitive", "true") \
-        .config("spark.cassandra.connection.host", cassandra_host) \
-        .config("spark.cassandra.connection.port", cassandra_port) \
-        .config("spark.cassandra.output.batch.size.rows", batch_size_rows) \
+        .config("spark.cassandra.connection.host", config.sparkCassandraConnectionHost) \
+        .config("spark.cassandra.connection.port", '9042') \
+        .config("spark.cassandra.output.batch.size.rows", '10000') \
         .config("spark.cassandra.connection.keepAliveMS", "60000") \
-        .config("spark.cassandra.connection.timeoutMS", connection_timeout_ms) \
-        .config("spark.cassandra.read.timeoutMS", read_timeout_ms) \
-        .config("es.nodes", es_nodes) \
-        .config("es.port", es_port) \
+        .config("spark.cassandra.connection.timeoutMS", '30000') \
+        .config("spark.cassandra.read.timeoutMS", '30000') \
+        .config("es.nodes", config.sparkElasticsearchConnectionHost) \
+        .config("es.port", config.sparkElasticsearchConnectionPort) \
         .config("es.index.auto.create", "false") \
         .config("es.nodes.wan.only", "true") \
         .config("es.nodes.discovery", "false") \
@@ -645,14 +628,15 @@ def create_spark_session_with_packages(config: dict):
 
 
 def main():
-    config = get_environment_config()
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     
     # Initialize Spark Session with optimizations from config
     spark = create_spark_session_with_packages(config)
     
     # Set up logging
     logging.basicConfig(
-        level=getattr(logging, config.get('log_level', 'INFO')),
+        level=getattr(logging, 'INFO'), 
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     logger = logging.getLogger(__name__)
@@ -662,9 +646,8 @@ def main():
     # Initialize and run the model
     model = DataExhaustModel(spark, config)
     
-    output_path = config.get('base_output_path', '/home/ubuntu/cb-core-data/data-res/pq_files/cache_pq/')
+    output_path = getattr(config, 'base_output_path', '/home/ubuntu/cb-core-data/data-res/pq_files/cache_pq/')
     
-    import time
     start_time = datetime.now()
     
     logger.info(f"[START] Data Exhaust processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")

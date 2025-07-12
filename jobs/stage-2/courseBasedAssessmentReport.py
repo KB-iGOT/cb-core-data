@@ -17,6 +17,8 @@ from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.assessment import assessmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.dfexport import dfexportutil
+from jobs.default_config import create_config
+from jobs.config import get_environment_config
 
 
 
@@ -31,7 +33,7 @@ class CourseBasedAssessmentModel:
     def get_date():
         return datetime.now().strftime("%Y-%m-%d")
 
-    def process_data(self, spark):
+    def process_data(self, spark,config):
         try:
             start_time = time.time()
             today = self.get_date()
@@ -246,16 +248,16 @@ class CourseBasedAssessmentModel:
             print(f"📊 Writing MDO reports for {len(mdo_orgid_list)} organizations...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 mdoReportDF,
-                f"reports/standalone-reports/cba-report/{today}",
+                f"{config.localReportDir}/{config.cbaReportPath}/{today}",
                 'mdoid',
-                f"temp/cba-report/{today}",
+                f"{config.localReportDir}/temp/cba-report/{today}",
                mdo_orgid_list)
 
             (warehouseDF.coalesce(1)
              .write
              .mode("overwrite")
              .option("compression", "snappy")
-             .parquet(f"warehouse/cba-report"))
+             .parquet(f"{config.warehouseReportDir}/{config.dwAssessmentTable}"))
             total_time = time.time() - start_time
             print(
                 f"\n✅ Optimized Course Based Assessment Report generation completed in {total_time:.2f} seconds ({total_time / 60:.1f} minutes)")
@@ -363,8 +365,10 @@ def main():
     # Create model instance
     start_time = datetime.now()
     print(f"[START] Course based assessment processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     model = CourseBasedAssessmentModel()
-    model.process_data(spark=spark)
+    model.process_data(spark, config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] Course based assessment completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")

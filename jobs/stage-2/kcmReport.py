@@ -9,10 +9,11 @@ from datetime import datetime
 import sys
 import time
 
-# Ensure the parent directory is in sys.path for absolute imports
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from dfutil.content import contentDFUtil
 from constants.ParquetFileConstants import ParquetFileConstants
+from jobs.config import get_environment_config
+from jobs.default_config import create_config
 
 
 class KCMModel:
@@ -36,7 +37,7 @@ class KCMModel:
         """Get current datetime in required format"""
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    def process_data(self, spark):
+    def process_data(self, spark,config):
         """
         Process KCM data
         
@@ -45,7 +46,7 @@ class KCMModel:
         """
         try:
             today = self.get_date()
-            report_path_content_competency_mapping = f"reports/standalone-reports/kcm-report/{today}/ContentCompetencyMapping"
+            report_path_content_competency_mapping = f"{config.localReportDir}/{config.kcmReportPath}/{today}/ContentCompetencyMapping"
             file_name = "ContentCompetencyMapping"
 
             # Content - Competency Mapping data
@@ -140,7 +141,7 @@ class KCMModel:
                     F.col("data_last_generated_on")
                 )
 
-            content_mapping_df.distinct().coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"warehouse/kcm_content_mapping/")
+            content_mapping_df.distinct().coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}/")
 
             # Load KCM v6 data
             kcmv6 = spark.read.parquet(ParquetFileConstants.KCMV6_PARQUET_FILE)
@@ -235,7 +236,7 @@ class KCMModel:
                 F.lit(self.current_date_time())
             )
 
-            competency_details_df.distinct().write.mode("overwrite").option("compression", "snappy").parquet(f"warehouse/kcm_dictionary/")
+            competency_details_df.distinct().write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
 
             # Competency reporting
             competency_reporting = competency_content_mapping_df \
@@ -302,8 +303,10 @@ def main():
     # Create model instance
     start_time = datetime.now()
     print(f"[START] KCMModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     model = KCMModel()
-    model.process_data(spark=spark)
+    model.process_data(spark,config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] KCMModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
