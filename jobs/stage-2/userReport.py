@@ -9,6 +9,8 @@ from pyspark.sql.functions import (
 )
 import os
 import time
+from datetime import datetime
+
 
 # Add parent directory to sys.path for importing project-specific modules
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -34,14 +36,14 @@ spark = SparkSession.builder \
 
 print("✅ Spark Session initialized")
 
-def processUserReport(self,config):
+def processUserReport(config):
     """
     User Report Generation with minimal traceable steps
     """
 
     try:
         start_time = time.time()
-        today = self.get_date()
+        today = datetime.now().strftime("%Y-%m-%d")
 
         # Step 1: Load User Master Data
         print("📊 Step 1: Loading User Master Data...")

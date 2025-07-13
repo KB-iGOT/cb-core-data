@@ -237,27 +237,19 @@ class BlendedModel:
                            .distinct()
                            .cache())
 
-            mdo_orgids = mdoReportDF.select("mdoid").distinct().collect()
-            cbp_orgids = cbpReportDF.select("mdoid").distinct().collect()
-
-            mdo_orgid_list = [row.mdoid for row in mdo_orgids]
-            cbp_orgid_list = [row.mdoid for row in cbp_orgids]
-
-            print(f"📊 Writing MDO reports for {len(mdo_orgid_list)} organizations...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 mdoReportDF,
                 f"{config.localReportDir}/{config.blendedReportPath}-mdo/{today}",
                 'mdoid',
                 f"{config.localReportDir}/temp/blended-program-report-mdo/{today}",
-                mdo_orgid_list)
+                )
 
-            print(f"📊 Writing CBP reports for {len(cbp_orgid_list)} organizations...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 cbpReportDF,
                 f"{config.localReportDir}/{config.blendedReportPath}-cbp/{today}",
                 'mdoid',
                 f"{config.localReportDir}/temp/blended-program-report-cbp/{today}",
-                cbp_orgid_list)
+                )
 
             print("🏗️ Creating warehouse data...")
 
@@ -494,8 +486,8 @@ def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
         .appName("Blended Program Report Model - Cached") \
-        .config("spark.executor.memory", "42g") \
-        .config("spark.driver.memory", "10g") \
+        .config("spark.executor.memory", "18g") \
+        .config("spark.driver.memory", "18g") \
         .config("spark.sql.shuffle.partitions", "64") \
         .config("spark.driver.bindAddress", "127.0.0.1") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \

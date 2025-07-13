@@ -242,16 +242,16 @@ class CourseBasedAssessmentModel:
                     col("incorrect_count").alias("number_of_incorrect_responses"),
                     col("retakes").alias("number_of_retakes"),
                     col("data_last_generated_on"))
-            mdo_orgids = mdoReportDF.select("mdoid").distinct().collect()
-            mdo_orgid_list = [row.mdoid for row in mdo_orgids]
+            # mdo_orgids = mdoReportDF.select("mdoid").distinct().collect()
+            # mdo_orgid_list = [row.mdoid for row in mdo_orgids]
 
-            print(f"📊 Writing MDO reports for {len(mdo_orgid_list)} organizations...")
+            # print(f"📊 Writing MDO reports for {len(mdo_orgid_list)} organizations...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 mdoReportDF,
                 f"{config.localReportDir}/{config.cbaReportPath}/{today}",
                 'mdoid',
                 f"{config.localReportDir}/temp/cba-report/{today}",
-               mdo_orgid_list)
+               )
 
             (warehouseDF.coalesce(1)
              .write
@@ -352,8 +352,8 @@ def main():
     spark = SparkSession.builder \
         .appName("Course Based Assessment Report Model - Cached") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "40g") \
-        .config("spark.driver.memory", "12g") \
+        .config("spark.executor.memory", "18g") \
+        .config("spark.driver.memory", "18g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \

@@ -18,14 +18,6 @@ from dfutil.enrolment.acbp import acbpDFUtil
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
 
-# Initialize the Spark Session with tuning configurations
-spark = SparkSession.builder \
-    .appName("UserReportGenerator") \
-    .config("spark.executor.memory", "32g") \
-    .config("spark.driver.memory", "32g") \
-    .config("spark.sql.shuffle.partitions", "64") \
-    .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
-    .getOrCreate()
 
 def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, threshold=100000):
     """
@@ -96,7 +88,7 @@ def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, t
             .option("compression", "snappy") \
             .parquet(output_dir)
 
-def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet_tmp_path: str, large_ids):
+def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet_tmp_path: str, large_ids=None):
     """
     Optimized: Writes CSVs per group_by_attr using pre-filtered DataFrame.
     Only processes large groups that were already filtered by Spark.
@@ -109,12 +101,11 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
         large_ids (list): List of large group IDs (for validation/logging)
     """
     print(f"📦 Step 1: Writing filtered large groups to Parquet...")
-    print(f"    - Processing {len(large_ids)} large groups")
+    # print(f"    - Processing {len(large_ids)} large groups")
     print(f"    - Parquet path: {parquet_tmp_path}")
     
     # Write only the pre-filtered large groups to parquet
     df \
-        .coalesce(4) \
         .write \
         .mode("overwrite") \
         .option("compression", "snappy") \
@@ -124,8 +115,10 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
     con = duckdb.connect()
     
     # DuckDB optimizations
-    con.execute("PRAGMA memory_limit='30GB';")
-    con.execute("PRAGMA threads=8;")
+    con.execute("PRAGMA memory_limit='40GB';")
+    con.execute("PRAGMA threads=14;")
+    con.execute("PRAGMA enable_progress_bar=false;")
+    con.execute("PRAGMA preserve_insertion_order=false;")
     con.execute("PRAGMA temp_directory='/tmp/duckdb_spill';")
     con.execute("INSTALL parquet; LOAD parquet;")
     
@@ -134,11 +127,11 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
 
     print("🔍 Step 3: Verifying large group IDs...")
     # Use the provided large_ids directly (since we already filtered)
-    group_ids = [(val,) for val in large_ids]
+    # group_ids = [(val,) for val in large_ids]
     
     # Optional: Verify that our filtering worked correctly
     actual_groups = con.execute(f"SELECT DISTINCT {group_by_attr} FROM result_df").fetchall()
-    print(f"    - Expected groups: {len(group_ids)}")
+    # print(f"    - Expected groups: {len(group_ids)}")
     print(f"    - Actual groups in parquet: {len(actual_groups)}")
 
     # Ensure output directory exists
@@ -149,9 +142,9 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
     # Tracking variables
     successful_writes = 0
     failed_writes = 0
-    total_groups = len(group_ids)
+    total_groups = len(actual_groups)
     
-    for i, (group_val,) in enumerate(group_ids, 1):
+    for i, (group_val,) in enumerate(actual_groups, 1):
         try:
             safe_val = str(group_val).replace("/", "_") if group_val is not None else "null"
             output_path = Path(output_dir) / f"{group_by_attr}={safe_val}.csv"
@@ -223,7 +216,6 @@ def write_single_csv_duckdb(df, output_path: str, parquet_tmp_path: str, filter_
     
     # Write DataFrame to parquet with optimization
     df \
-        .coalesce(4) \
         .write \
         .mode("overwrite") \
         .option("compression", "snappy") \
@@ -234,8 +226,8 @@ def write_single_csv_duckdb(df, output_path: str, parquet_tmp_path: str, filter_
     
     try:
         # DuckDB optimizations
-        con.execute("PRAGMA memory_limit='30GB';")
-        con.execute("PRAGMA threads=8;")
+        con.execute("PRAGMA memory_limit='40GB';")
+        con.execute("PRAGMA threads=14;")
         con.execute("PRAGMA temp_directory='/tmp/duckdb_spill';")
         con.execute("INSTALL parquet; LOAD parquet;")
         

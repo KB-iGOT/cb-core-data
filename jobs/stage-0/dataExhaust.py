@@ -601,7 +601,7 @@ def create_spark_session_with_packages(config):
         .appName('DataExhaustModel') \
         .master("local[*]") \
         .config("spark.executor.memory", '42g') \
-        .config("spark.driver.memory", '12g') \
+        .config("spark.driver.memory", '18g') \
         .config("spark.executor.memoryFraction", '0.7') \
         .config("spark.storage.memoryFraction", '0.2') \
         .config("spark.storage.unrollFraction", "0.1") \
