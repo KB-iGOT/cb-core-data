@@ -164,13 +164,6 @@ class ACBPModel:
                 .fillna("").cache()
             
 
-            distinct_orgids = enrolmentReportDF \
-                      .select("mdoid") \
-                      .distinct() \
-                      .collect()  
-    
-            # Extract values from Row objects
-            orgid_list = [row.mdoid for row in distinct_orgids]
 
             print("📝 Writing CSV reports...")
             dfexportutil.write_single_csv_duckdb(enrolmentReportDF, f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/CBPEnrollmentReport.csv",  f"{config.localReportDir}/temp/cbp-enrolment-report/{today}")
@@ -178,8 +171,7 @@ class ACBPModel:
                 enrolmentReportDF, 
                 f"{config.localReportDir}/{config.acbpMdoEnrolmentReportPath}/{today}", 
                 'mdoid',
-                f"{config.localReportDir}/temp/cbp-enrolment-report/{today}",
-                orgid_list
+                f"{config.localReportDir}/temp/cbp-enrolment-report/{today}"
             )
 
             userSummaryReportDF = acbpEnrolmentDF \
@@ -231,26 +223,17 @@ class ACBPModel:
                     col("completedBeforeDueDateCount").alias("Number of CBP Courses Completed within due date"),      
                     col("userOrgID").alias("mdoid"),
                     lit(currentDateTime).alias("Report_Last_Generated_On"))
-            
-            distinct_user_orgids = userSummaryReportDF \
-                      .select("mdoid") \
-                      .distinct() \
-                      .collect()  
-    
-            # Extract values from Row objects
-            user_orgid_list = [row.mdoid for row in distinct_user_orgids]
 
             dfexportutil.write_single_csv_duckdb(userSummaryReportDF, f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/CBPUserSummaryReport.csv", f"{config.localReportDir}/temp/cbp-summary-report/{today}")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 userSummaryReportDF, 
                 f"{config.localReportDir}/{config.acbpMdoSummaryReportPath}/{today}", 
                 'mdoid',
-                f"{config.localReportDir}/temp/cbp-summary-report/{today}",
-                user_orgid_list
+                f"{config.localReportDir}/temp/cbp-summary-report/{today}"
             )
 
             print("📦 Writing warehouse data...")
-            cbPlanWarehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
+            cbPlanWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
             print("✅ Processing completed successfully!")
 
         except Exception as e:
@@ -263,8 +246,8 @@ def main():
     spark = SparkSession.builder \
         .appName("User Enrolment Report Model - Cached") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "40g") \
-        .config("spark.driver.memory", "12g") \
+        .config("spark.executor.memory", "15g") \
+        .config("spark.driver.memory", "15g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \

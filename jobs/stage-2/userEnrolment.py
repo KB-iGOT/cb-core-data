@@ -357,13 +357,6 @@ class UserEnrolmentModel:
                 mdoPlatformReport
                 .union(mdoMarketplaceReport)
             )
-            distinct_orgids = mdoPlatformReport \
-                      .select("mdoid") \
-                      .distinct() \
-                      .collect()  
-    
-            # Extract values from Row objects
-            orgid_list = [row.mdoid for row in distinct_orgids]
 
             print("📝 Writing CSV reports...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
@@ -371,7 +364,6 @@ class UserEnrolmentModel:
                 f"{config.localReportDir}/{config.userEnrolmentReportPath}/{today}", 
                 'mdoid',
                 f"{config.localReportDir}/temp/user_enrolment_report/{today}",
-                orgid_list
             )
             
             print("📦 Writing warehouse data...")
@@ -390,8 +382,8 @@ def main():
     spark = SparkSession.builder \
         .appName("User Enrolment Report Model - Cached") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "42g") \
-        .config("spark.driver.memory", "10g") \
+        .config("spark.executor.memory", "15g") \
+        .config("spark.driver.memory", "15g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \
