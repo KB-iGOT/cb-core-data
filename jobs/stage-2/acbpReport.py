@@ -18,9 +18,10 @@ import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from dfutil.content import contentDFUtil
-from dfutil.enrolment import enrolmentDFUtil
-from dfutil.user import userDFUtil
+
 from dfutil.dfexport import dfexportutil
+from jobs.config import get_environment_config
+from jobs.default_config import create_config
 
 from constants.ParquetFileConstants import ParquetFileConstants
 
@@ -35,7 +36,7 @@ class ACBPModel:
     def get_date():
         return datetime.now().strftime("%Y-%m-%d")
 
-    def process_data(self, spark):
+    def process_data(self, spark,config):
         try:
             today = self.get_date()
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
@@ -163,22 +164,14 @@ class ACBPModel:
                 .fillna("").cache()
             
 
-            distinct_orgids = enrolmentReportDF \
-                      .select("mdoid") \
-                      .distinct() \
-                      .collect()  
-    
-            # Extract values from Row objects
-            orgid_list = [row.mdoid for row in distinct_orgids]
 
             print("📝 Writing CSV reports...")
-            dfexportutil.write_single_csv_duckdb(enrolmentReportDF, f"reports/standalone-reports/cbp-report/{today}/CBPEnrollmentReport/CBPEnrollmentReport.csv",  f"temp/cbp-enrolment-report/{today}")
+            dfexportutil.write_single_csv_duckdb(enrolmentReportDF, f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/CBPEnrollmentReport.csv",  f"{config.localReportDir}/temp/cbp-enrolment-report/{today}")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 enrolmentReportDF, 
-                f"{'reports'}/standalone-reports/cbp-report-mdo-enrolment/{today}", 
+                f"{config.localReportDir}/{config.acbpMdoEnrolmentReportPath}/{today}", 
                 'mdoid',
-                f"temp/cbp-enrolment-report/{today}",
-                orgid_list
+                f"{config.localReportDir}/temp/cbp-enrolment-report/{today}"
             )
 
             userSummaryReportDF = acbpEnrolmentDF \
@@ -230,26 +223,17 @@ class ACBPModel:
                     col("completedBeforeDueDateCount").alias("Number of CBP Courses Completed within due date"),      
                     col("userOrgID").alias("mdoid"),
                     lit(currentDateTime).alias("Report_Last_Generated_On"))
-            
-            distinct_user_orgids = userSummaryReportDF \
-                      .select("mdoid") \
-                      .distinct() \
-                      .collect()  
-    
-            # Extract values from Row objects
-            user_orgid_list = [row.mdoid for row in distinct_user_orgids]
 
-            dfexportutil.write_single_csv_duckdb(userSummaryReportDF, f"reports/standalone-reports/cbp-report/{today}/CBPUserSummaryReport/CBPUserSummaryReport.csv", f"temp/cbp-summary-report/{today}")
+            dfexportutil.write_single_csv_duckdb(userSummaryReportDF, f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/CBPUserSummaryReport.csv", f"{config.localReportDir}/temp/cbp-summary-report/{today}")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 userSummaryReportDF, 
-                f"{'reports'}/standalone-reports/cbp-report-mdo-summary/{today}", 
+                f"{config.localReportDir}/{config.acbpMdoSummaryReportPath}/{today}", 
                 'mdoid',
-                f"temp/cbp-summary-report/{today}",
-                user_orgid_list
+                f"{config.localReportDir}/temp/cbp-summary-report/{today}"
             )
 
             print("📦 Writing warehouse data...")
-            cbPlanWarehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/cb_plan/{today}")
+            cbPlanWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
             print("✅ Processing completed successfully!")
 
         except Exception as e:
@@ -262,8 +246,8 @@ def main():
     spark = SparkSession.builder \
         .appName("User Enrolment Report Model - Cached") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "40g") \
-        .config("spark.driver.memory", "12g") \
+        .config("spark.executor.memory", "15g") \
+        .config("spark.driver.memory", "15g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \
@@ -273,10 +257,14 @@ def main():
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .getOrCreate()
     # Create model instance
+
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
+    
     start_time = datetime.now()
     print(f"[START] ACBPModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = ACBPModel()
-    model.process_data(spark=spark)
+    model.process_data(spark,config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] ACBPModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")

@@ -21,6 +21,9 @@ from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
 
 from constants.ParquetFileConstants import ParquetFileConstants
+from jobs.default_config import create_config
+from jobs.config import get_environment_config
+
 
 class UserEnrolmentModel:    
     def __init__(self):
@@ -50,7 +53,7 @@ class UserEnrolmentModel:
                 )
             )
         )
-    def process_data(self, spark):
+    def process_data(self, spark,config):
         try:
             today = self.get_date()
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
@@ -354,27 +357,18 @@ class UserEnrolmentModel:
                 mdoPlatformReport
                 .union(mdoMarketplaceReport)
             )
-            distinct_orgids = mdoPlatformReport \
-                      .select("mdoid") \
-                      .distinct() \
-                      .collect()  
-    
-            # Extract values from Row objects
-            orgid_list = [row.mdoid for row in distinct_orgids]
 
             print("📝 Writing CSV reports...")
-            # dfexportutil.write_csv_per_mdo_id(mdoReportDF, f"{'reports'}/user_enrolment_report_{today}", 'mdoid')
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 mdoReportDF, 
-                f"{'reports'}/user_enrolment_report_{today}", 
+                f"{config.localReportDir}/{config.userEnrolmentReportPath}/{today}", 
                 'mdoid',
-                "tmp/user_enrolment_report_{today}_all_groups",
-                orgid_list
+                f"{config.localReportDir}/temp/user_enrolment_report/{today}",
             )
             
             print("📦 Writing warehouse data...")
             warehouseDF = platformWarehouseDF.union(marketPlaceWarehouseDF)
-            warehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(f"{'warehouse'}/user_enrolment_report/{today}")
+            warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
 
             print("✅ Processing completed successfully!")
 
@@ -388,8 +382,8 @@ def main():
     spark = SparkSession.builder \
         .appName("User Enrolment Report Model - Cached") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "42g") \
-        .config("spark.driver.memory", "10g") \
+        .config("spark.executor.memory", "15g") \
+        .config("spark.driver.memory", "15g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \
@@ -399,10 +393,13 @@ def main():
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .getOrCreate()
     # Create model instance
+
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     start_time = datetime.now()
     print(f"[START] UserEnrolmentModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = UserEnrolmentModel()
-    model.process_data(spark=spark)
+    model.process_data(spark,config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] UserEnrolmentModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")

@@ -13,6 +13,8 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from constants.ParquetFileConstants import ParquetFileConstants
+from jobs.config import get_environment_config
+from jobs.default_config import create_config
 
 class InAppReviewModel:    
     def __init__(self):
@@ -29,7 +31,7 @@ class InAppReviewModel:
     def current_date_time():
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    def process_data(self, spark,conf=None):
+    def process_data(self, spark,conf):
         try:
             today = self.get_date()
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
@@ -88,8 +90,8 @@ class InAppReviewModel:
             result_df.write \
                 .format("org.apache.spark.sql.cassandra") \
                 .options({
-                    "keyspace": conf.cassandra_user_feed_keyspace,
-                    "table": conf.cassandra_user_feed_table
+                    "keyspace": conf.cassandraUserFeedKeyspace,
+                    "table": conf.cassandraUserFeedTable
                 }) \
                 .mode("append") \
                 .save()
@@ -115,16 +117,14 @@ def main():
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .getOrCreate()
     
-    # Configuration dictionary (replace with your actual config)
-    config = {
-        'cassandra_user_feed_keyspace': 'sunbird_notifications',
-        'cassandra_user_feed_table': 'notification_feed'
-    }
+
     # Create model instance
     start_time = datetime.now()
     print(f"[START] InAppReviewModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     model = InAppReviewModel()
-    model.process_data(spark=spark,config=config)
+    model.process_data(spark,config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] InAppReviewModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")

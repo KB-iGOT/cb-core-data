@@ -5,48 +5,262 @@
 # Database Configuration
 DATABASE_CONFIG = {
     # Cassandra Configuration
-    'cassandra_course_keyspace': 'sunbird_courses',
-    'cassandra_user_keyspace': 'sunbird',
-    'cassandra_hierarchy_store_keyspace': 'prod_hierarchy_store',
+    'cassandraCourseKeyspace': '{{ course_keyspace }}',
+    'cassandraUserKeyspace': '{{ user_table_keyspace }}',
+    'cassandraHierarchyStoreKeyspace': '{{ hierarchy_store_keyspace }}',
+    
+    # Cassandra Core Host
+    'sparkCassandraConnectionHost': '{{ core_cassandra_host }}',
+    'lpCassandraHost': '{{ lp_cassandra_host }}',
     
     # Cassandra Table Names
-    'cassandra_user_enrolments_table': 'user_enrolments',
-    'cassandra_course_batch_table': 'course_batch',
-    'cassandra_framework_hierarchy_table': 'framework_hierarchy',
-    'cassandra_user_assessment_table': 'user_assessment_data',
-    'cassandra_content_hierarchy_table': 'content_hierarchy',
-    'cassandra_rating_summary_table': 'ratings_summary',
-    'cassandra_acbp_table': 'cb_plan',
-    'cassandra_ratings_table': 'ratings',
-    'cassandra_user_roles_table': 'user_roles',
-    'cassandra_org_table': 'organisation',
-    'cassandra_user_table': 'user',
-    'cassandra_learner_leaderboard_table': 'learner_leaderboard',
-    'cassandra_karma_points_table': 'user_karma_points',
-    'cassandra_karma_points_summary_table': 'user_karma_points_summary',
-    'cassandra_old_assessment_table': 'user_assessment_master',
-    'cassandra_learner_stats_table': 'learner_stats',
+    'cassandraUserEnrolmentsTable': '{{ dashboards_cassandra_user_enrolments_table }}',
+    'cassandraCourseBatchTable': '{{ dashboards_cassandra_course_batch_table }}',
+    'cassandraFrameworkHierarchyTable': '{{ dashboards_cassandra_framework_hierarchy_table }}',
+    'cassandraUserAssessmentTable': '{{ dashboards_cassandra_user_assessment_table }}',
+    'cassandraContentHierarchyTable': '{{ dashboards_cassandra_content_hierarchy_table }}',
+    'cassandraRatingSummaryTable': '{{ dashboards_cassandra_rating_summary_table }}',
+    'cassandraAcbpTable': '{{ dashboards_cassandra_acbp_table }}',
+    'cassandraRatingsTable': '{{ dashboards_cassandra_ratings_table }}',
+    'cassandraUserRolesTable': '{{ dashboards_cassandra_user_roles_table }}',
+    'cassandraOrgTable': '{{ dashboards_cassandra_org_table }}',
+    'cassandraUserTable': '{{ dashboards_cassandra_user_table }}',
+    'cassandraLearnerLeaderBoardTable': '{{ dashboards_cassandra_learner_leaderboard_table }}',
+    'cassandraLearnerLeaderBoardLookupTable': '{{ dashboards_cassandra_learner_leaderboard_lookup_table }}',
+    'cassandraKarmaPointsTable': '{{ dashboards_cassandra_karma_points_table }}',
+    'cassandraKarmaPointsSummaryTable': '{{ dashboards_cassandra_karma_points_summary_table }}',
+    'cassandraKarmaPointsLookupTable': '{{ dashboards_cassandra_karma_points_lookup_table }}',
+    'cassandraOldAssesmentTable': '{{ dashboards_cassandra_old_assessment_table }}',
+    'cassandraLearnerStatsTable': '{{ dashboards_cassandra_learner_stats_table }}',
+    'cassandraOrgHierarchyTable': '{{ dashboards_cassandra_org_hierarchy_table }}',
+    'cassandraUserEntityEnrolmentTable': '{{ dashboards_cassandra_user_entity_enrolment_table }}',
+    'cassandraPublicUserAssessmentDataTable': '{{ dashboards_cassandra_public_userassessmenttable }}',
+    'cassandraUserFeedKeyspace': '{{ dashboards_cassandra_user_feed_keyspace }}',
+    'cassandraUserFeedTable': '{{ dashboards_cassandra_user_feed_table }}',
+    'cassandraHallOfFameTable': '{{ dashboards_cassandra_mdo_karma_points_table }}',
+    'cassandraMDOLearnerLeaderboardTable': '{{ dashboards_cassandra_mdo_learner_leaderboard_table }}',
+    'cassandraSLWMdoLeaderboardTable': '{{ dashboards_cassandra_slw_mdo_leaderboard_table }}',
+    'cassandraSLWMdoTopLearnerTable': '{{ dashboards_cassandra_slw_mdo_top_learners_table }}',
+    'cassandraNLWMdoLeaderboardTable': '{{ dashboards_cassandra_nlw_mdo_table }}',
+    'cassandraNLWUserLeaderboardTable': '{{ dashboards_cassandra_nlw_user_table }}',
+    'cassandraGroupDesignationTable': '{{ dashboards_cassandra_group_designation_table }}',
     
-    'app_postgres_host': '{{ app_postgres_host }}',
-    'app_postgres_schema': '{{ app_postgres_schema }}',
-    'app_org_hierarchy_table': 'org_hierarchy_v4',
-    'app_postgres_username': '{{ app_postgres_username }}',
-    'app_postgres_credential': '{{ app_postgres_password }}',
+    # PostgreSQL Application Database
+    'appPostgresHost': '{{ app_postgres_host }}',
+    'appPostgresSchema': 'sunbird',
+    'appOrgHierarchyTable': 'org_hierarchy_v4',
+    'appPostgresUsername': 'sunbird',
+    'appPostgresCredential': 'sunbird',
+    'postgresCompetencyTable': 'data_node',
+    'postgresCompetencyHierarchyTable': 'node_mapping',
     
-    'spark_elasticsearch_connection_host': '{{ single_node_es_host }}',
-    'elasticsearch_port': '{{ elasticsearch_port }}',
+    # PostgreSQL Data Warehouse
+    'dwPostgresHost': '{{ dw_postgres_host }}',
+    'dwPostgresSchema': 'warehouse',
+    'dwPostgresUsername': 'postgres',
+    'dwPostgresCredential': '{{ dw_postgres_credential }}',
+    'dwUserTable': 'user_detail',
+    'dwCourseTable': 'content',
+    'dwContentResourceTable': 'content_resource',
+    'dwEventsTable': 'events',
+    'dwEventsEnrolmentTable': 'events_enrolment',
+    'dwEnrollmentsTable': 'user_enrolments',
+    'dwOrgTable': 'org_hierarchy',
+    'dwAssessmentTable': 'assessment_detail',
+    'dwBPEnrollmentsTable': 'bp_enrolments',
+    'dwKcmDictionaryTable': 'kcm_dictionary',
+    'dwKcmContentTable': 'kcm_content_mapping',
+    'dwCBPlanTable': 'cb_plan',
+    'dwLearnerStatsTable': 'learner_stats',
+    'dwSLWMdoLeaderboardTable': 'slw_mdo_leaderboard',
+    'dwSLWMdoTopLearnerTable': 'slw_mdo_top_learners',
+    'dwNLWUserLeaderboardTable': 'nlw_user_leaderboard',
+    
+    # Elasticsearch Configuration
+    'sparkElasticsearchConnectionHost': '{{ single_node_es_host }}',
+    'sparkElasticsearchAuditConnectionHost': '{{ es_host_audit_logs }}',
+    'sparkElasticsearchConnectionPort': '{{ single_node_es_port }}',
+    'esFormDataIndex': '{{ es_form_data_index }}',
+    'esFormDataIds': '{{ es_form_data_ids }}',
+    
+    # MongoDB Configuration
+    'mongoDatabase': '{{ dashboards_mongo_discussions_db }}',
+    'mongoDBCollection': '{{ dashboards_mongo_discussions_db_collection }}',
+    'mlSparkMongoConnectionHost': '{{ ml_mongo_host }}',
+    'mlMongoDatabase': '{{ dashboards_mongo_survey_observation_db }}',
+    'surveyCollection': '{{ dashboards_mongo_survey_collection }}',
+    'reportConfigCollection': '{{ dashboards_mongo_report_config_collection }}',
 }
 
 # Spark Configuration
 SPARK_CONFIG = {
-
-    'cassandra_host': '{{ sparkCassandraConnectionHost }}',
-    'cassandra_port': '{{ sparkCassandraConnectionPort }}',
-    
-    'es_nodes': '{{ single_node_es_host }}',
-    'es_port': '{{ elasticsearch_port }}',
+    'sparkCassandraConnectionHost': '{{ core_cassandra_host }}',
+    'sparkDruidRouterHost': '{{ druid_router_host }}',
+    'mlSparkDruidRouterHost': '{{ ml_druid_router_host }}',
+    'sparkElasticsearchConnectionHost': '{{ single_node_es_host }}',
+    'sparkElasticsearchAuditConnectionHost': '{{ es_host_audit_logs }}',
 }
 
+# Redis Configuration
+REDIS_CONFIG = {
+    'redisHost': '{{ dashboards_redis_host }}',
+    'redisPort': '{{ dashboards_redis_port }}',
+    'redisDB': '{{ dashboards_redis_db }}',
+}
+
+# Storage Configuration
+STORAGE_CONFIG = {
+    'bucket': '{{ cloud_storage_bucket_secor }}',
+    'container': '{{ cloud_storage_bucket_reports }}',
+    'key': 'storage.key.config',
+    'secret': 'storage.secret.config',
+    'storageKeyConfig': 'storage.key.config',
+    'storageSecretConfig': 'storage.secret.config',
+    'store': '{{ report_storage_type }}',
+    'dpRawTelemetryBackupLocation': '{{ dp_raw_telemetry_backup_location }}',
+}
+
+# Report Path Configuration
+REPORT_PATHS = {
+    'userReportPath': '{{ user_report_path }}',
+    'userEnrolmentReportPath': '{{ user_enrolment_report_path }}',
+    'courseReportPath': '{{ course_report_path }}',
+    'cbaReportPath': '{{ cba_report_path }}',
+    'standaloneAssessmentReportPath': '{{ standalone_assessment_report_path }}',
+    'taggedUsersPath': '{{ tagged_users_path }}',
+    'blendedReportPath': '{{ blended_report_path }}',
+    'orgHierarchyReportPath': '{{ org_hierarchy_report_path }}',
+    'commsConsoleReportPath': '{{ comms_console_report_path }}',
+    'acbpReportPath': '{{ acbp_report_path }}',
+    'acbpMdoEnrolmentReportPath': '{{ acbp_mdo_enrolment_report_path }}',
+    'acbpMdoSummaryReportPath': '{{ acbp_mdo_summary_report_path }}',
+    'kcmReportPath': '{{ kcm_report_path }}',
+    'mlReportPath': '{{ ml_report_path }}',
+    'bqScriptPath': '{{ bq_script_path }}',
+}
+
+# Kafka/Messaging Configuration
+KAFKA_CONFIG = {
+    'brokerList': '{{ brokerlist }}',
+    'topic': '{{ topic }}',
+    'compression': '{{ dashboards_broker_compression }}',
+    
+    # Side Output Topics
+    'sideOutput': {
+        'brokerList': '{{ brokerlist }}',
+        'compression': '{{ dashboards_broker_compression }}',
+        'topics': {
+            'roleUserCount': '{{ dashboards_role_count_topic }}',
+            'orgRoleUserCount': '{{ dashboards_org_role_count_topic }}',
+            'allCourses': '{{ dashboards_courses_topic }}',
+            'userCourseProgramProgress': '{{ dashboards_user_course_program_progress_topic }}',
+            'fracCompetency': '{{ dashboards_frac_competency_topic }}',
+            'courseCompetency': '{{ dashboards_course_competency_topic }}',
+            'expectedCompetency': '{{ dashboards_expected_competency_topic }}',
+            'declaredCompetency': '{{ dashboards_declared_competency_topic }}',
+            'competencyGap': '{{ dashboards_competency_gap_topic }}',
+            'userOrg': '{{ dashboards_user_org_topic }}',
+            'org': '{{ dashboards_org_topic }}',
+            'userAssessment': '{{ dashboards_user_assessment_topic }}',
+            'assessment': '{{ dashboards_assessment_topic }}',
+            'acbpEnrolment': '{{ dashboards_acbp_enrolment_topic }}',
+        }
+    }
+}
+
+# Job Configuration Parameters
+JOB_CONFIG = {
+    'debug': 'false',
+    'validation': 'false',
+    'parallelization': 16,
+    'parallelizationSmall': 8,
+    'cutoffTime': '60.0',
+    'deviceMapping': False,
+    'apiVersion': 'v2',
+    'modelParamsParallelization': 200,
+    
+    # Report Sync Configuration
+    'reportSyncEnable': '{{ operational_report_sync_enable }}',
+    'reportSyncEnableSL': '{{ operational_sl_report_sync_enable }}',
+    'reportZipSyncEnable': '{{ operational_report_zip_sync_enable }}',
+    
+    # Survey and Assessment Configuration
+    'mdoIDs': '{{ report_mdo_ids }}',
+    'solutionIDs': '{{ report_solution_ids }}',
+    'anonymousAssessmentNonLoggedInUserAssessmentIDs': '{{ anonymous_assessment_non_loggedIn_user_assessment_ids }}',
+    'anonymousAssessmentLoggedInUserContentIDs': '{{ anonymous_assessment_loggedIn_user_content_ids }}',
+    'platformRatingSurveyId': '{{ dashboards_platform_rating_survey_id }}',
+    'gracePeriod': '{{ report_grace_period }}',
+    'baseUrlForEvidences': '{{ report_base_url_for_evidences }}',
+    'includeExpiredSolutionIDs': '{{ report_include_expired_solution_ids }}',
+    
+    # Batch Size Configuration
+    'SurveyQuestionReportBatchSize': '{{ survey_question_report_batch_size }}',
+    'SurveyStatusReportBatchSize': '{{ survey_status_report_batch_size }}',
+    'ObservationQuestionReportBatchSize': '{{ observation_question_report_batch_size }}',
+    'ObservationStatusReportBatchSize': '{{ observation_status_report_batch_size }}',
+    
+    # Learning Week Configuration
+    'nationalLearningWeekStart': '{{ national_learning_week_start }}',
+    'nationalLearningWeekEnd': '{{ national_learning_week_end }}',
+    'stateLearningWeekStart': '{{ state_learning_week_start }}',
+    'stateLearningWeekEnd': '{{ state_learning_week_end }}',
+    'sizeBucketString': '{{ state_learning_week_bucket_size }}',
+    
+    # Communications Console Configuration
+    'commsConsolePrarambhEmailSuffix': '{{ comms_console_prarambh_email_suffix }}',
+    'commsConsoleNumDaysToConsider': '{{ comms_console_num_days_to_consider }}',
+    'commsConsoleNumTopLearnersToConsider': '{{ comms_console_num_top_learners_to_consider }}',
+    'commsConsolePrarambhTags': '{{ comms_console_prarambh_tags }}',
+    'commsConsolePrarambhCbpIds': '{{ comms_console_prarambh_cbp_ids }}',
+    'commsConsolePrarambhNCount': '{{ comms_console_prarambh_n_count }}',
+    
+    # Zip Reports Configuration
+    'prefixDirectoryPath': '{{ zip_reports_prefix_directory_path }}',
+    'destinationDirectoryPath': '{{ zip_reports_destination_path }}',
+    'directoriesToSelect': '{{ directories_to_select }}',
+    'password': '{{ zip_reports_password }}',
+}
+
+# External Service Configuration
+EXTERNAL_SERVICES = {
+    'fracBackendHost': '{{ dashboards_frac_backend_host }}',
+}
+
+# Search Configuration
+SEARCH_CONFIG = {
+    'search': {
+        'type': 'gcloud',
+        'queries': [{
+            'bucket': '{{ cloud_storage_bucket_secor }}',
+            'prefix': '{{ dp_raw_telemetry_backup_location }}',
+            'endDate': '',  # Will be set dynamically
+            'delta': 0
+        }]
+    }
+}
+
+# Workflow Summary Model Configuration
+WFS_MODEL_CONFIG = {
+    'model': 'org.ekstep.analytics.model.WorkflowSummary',
+    'modelParams': {
+        'storageKeyConfig': 'storage.key.config',
+        'storageSecretConfig': 'storage.secret.config',
+        'apiVersion': 'v2',
+        'parallelization': 200
+    },
+    'output': [{
+        'to': 'kafka',
+        'params': {
+            'brokerList': '{{ brokerlist }}',
+            'topic': '{{ topic }}',
+            'compression': '{{ dashboards_broker_compression }}'
+        }
+    }],
+    'parallelization': 200,
+    'appName': 'Workflow Summarizer',
+    'deviceMapping': True
+}
 
 
 # Combined configuration for easy access
@@ -57,11 +271,86 @@ def get_config():
     config = {}
     config.update(DATABASE_CONFIG)
     config.update(SPARK_CONFIG)
+    config.update(REDIS_CONFIG)
+    config.update(STORAGE_CONFIG)
+    config.update(REPORT_PATHS)
+    config.update(KAFKA_CONFIG)
+    config.update(JOB_CONFIG)
+    config.update(EXTERNAL_SERVICES)
     return config
 
 # Environment-specific overrides
 def get_environment_config():
-    
+    base_config = get_config()
+    return base_config
+
+# Utility functions for specific configurations
+def getCassandraConfig():
+    """Returns only Cassandra-related configuration"""
+    config = get_config()
+    return {k: v for k, v in config.items() if 'cassandra' in k.lower()}
+
+def getPostgresConfig():
+    """Returns only PostgreSQL-related configuration"""
+    config = get_config()
+    return {k: v for k, v in config.items() if 'postgres' in k.lower() or k.startswith('dw') or k.startswith('app')}
+
+def getKafkaConfig():
+    """Returns only Kafka-related configuration"""
+    return KAFKA_CONFIG
+
+def getReportPaths():
+    """Returns only report path configuration"""
+    return REPORT_PATHS
+
+
+def buildJobConfig(jobType, endDate=None):
+    """
+    Builds a complete job configuration for a specific job type
+    Args:
+        jobType (str): The job type identifier
+        endDate (str): Optional end date for the job
+    Returns:
+        dict: Complete job configuration
+    """
     base_config = get_config()
     
-    return base_config
+    if jobType == 'wfs':
+        config = {
+            'search': {
+                'type': 'gcloud',
+                'queries': [{
+                    'bucket': base_config.get('bucket'),
+                    'prefix': base_config.get('dpRawTelemetryBackupLocation'),
+                    'endDate': endDate or '',
+                    'delta': 0
+                }]
+            },
+            'modelParams': {
+                'storageKeyConfig': base_config.get('storageKeyConfig'),
+                'storageSecretConfig': base_config.get('storageSecretConfig'),
+                'apiVersion': base_config.get('apiVersion'),
+                'parallelization': base_config.get('modelParamsParallelization')
+            },
+            'output': [{
+                'to': 'kafka',
+                'params': {
+                    'brokerList': base_config.get('brokerList'),
+                    'topic': base_config.get('topic'),
+                    'compression': base_config.get('compression')
+                }
+            }],
+            'parallelization': base_config.get('modelParamsParallelization'),
+            'deviceMapping': True
+        }
+    else:
+        # For other job types, build a standard configuration
+        config = {
+            'search': {'type': 'none'},
+            'modelParams': base_config,
+            'output': [],
+            'parallelization': base_config.get('parallelization'),
+            'deviceMapping': base_config.get('deviceMapping')
+        }
+    
+    return config
