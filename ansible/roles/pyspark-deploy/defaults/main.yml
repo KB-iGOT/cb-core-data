@@ -7,7 +7,7 @@ app_postgres_host: "{{groups['app-postgres'][0]}}:5432"
 
 analytics_user: analytics
 analytics_group: analytics
-spark_output_temp_dir: /mount/data/analytics/tmp/
+spark_output_temp_dir: /home/analytics/pyspark/tmp/
 
 bucket: "telemetry-data-store"
 secor_bucket: "telemetry-data-store"
@@ -159,8 +159,7 @@ zip_reports_destination_path: "standalone-reports/merged"
 zip_reports_password: "123456"
 directories_to_select: "blended-program-report-mdo,cbp-report-mdo-summary,course-report,cba-report,cbp-report-mdo-enrolment,user-report,user-enrollment-report"
 
-bq_script_path: "/mount/data/analytics/bq-scripts.sh"
-
+bq_script_path: /home/analytics/pyspark/bq-scripts.sh
 es_form_data_ids: "{{ es_form_data_ids }}"
 es_form_data_index: "fs-forms-data"
 single_node_es_port: 9200
@@ -443,9 +442,10 @@ service:
 
 es_search_index: "compositesearch"
 analytics:
+  home: /home/analytics/pyspark
   ##  home: /mount/data/analytics
-  soft_path: /mount/data/analytics
-  paths: ['/mount/data/analytics', '/mount/data/analytics/logs', '/mount/data/analytics/logs/services', '/mount/data/analytics/logs/data-products', '/mount/data/analytics/tmp', '/mount/data/analytics/scripts', '/mount/data/analytics/models' ]
+  soft_path: /home/analytics/pyspark
+    ##  paths: ['/mount/data/analytics', '/mount/data/analytics/logs', '/mount/data/analytics/logs/services', '/mount/data/analytics/logs/data-products', '/mount/data/analytics/tmp', '/mount/data/analytics/scripts', '/mount/data/analytics/models' ]
   scripts: ['model-config', 'replay-job', 'replay-updater', 'replay-utils', 'run-job', 'submit-job', 'start-jobmanager', 'submit-script']
   dockScripts: ['model-dock-config','run-dock-job']
 
