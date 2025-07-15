@@ -443,7 +443,7 @@ service:
 
 es_search_index: "compositesearch"
 analytics:
-  home: /mount/data/analytics
+  ##  home: /mount/data/analytics
   soft_path: /mount/data/analytics
   paths: ['/mount/data/analytics', '/mount/data/analytics/logs', '/mount/data/analytics/logs/services', '/mount/data/analytics/logs/data-products', '/mount/data/analytics/tmp', '/mount/data/analytics/scripts', '/mount/data/analytics/models' ]
   scripts: ['model-config', 'replay-job', 'replay-updater', 'replay-utils', 'run-job', 'submit-job', 'start-jobmanager', 'submit-script']
