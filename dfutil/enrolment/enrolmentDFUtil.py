@@ -5,7 +5,7 @@ from typing import List
 from dfutil.user.userDFUtil import exportDFToParquet
 from pyspark.sql import SparkSession, DataFrame,functions as F
 from pyspark.sql.functions import (
-    col, lit, element_at, size, when, coalesce,expr
+    col, lit, element_at, size, when, coalesce,expr,sum
 )
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -115,11 +115,15 @@ def preComputeEnrolment(
     userRatingDF= spark.read.parquet(ParquetFileConstants.RATING_COMPUTED_PARQUET_FILE)
     enrolmentUserBatchRatingDF=enrolmentDF.join(userRatingDF, on=["userID", "courseID"], how="left") 
 
-    userKarmaPointsDF= spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE).select(
-                            col("userid").alias("userID"),     
+    userKarmaPointsRawDF = spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE).select(
+                            col("userid").alias("userID"),
                             col("context_id").alias("courseID"),
-                            col("points").alias("karma_points")
+                            col("points")
                         )
+    userKarmaPointsDF = userKarmaPointsRawDF \
+    .groupBy("userID", "courseID") \
+    .agg(sum(coalesce(col("points").cast("double"), lit(0.0))).alias("karma_points"))
+                        
     enrolmentUserBatchRatingKarmaDF=enrolmentUserBatchRatingDF.join(userKarmaPointsDF, on=["userID", "courseID"], how="left") 
 
     exportDFToParquet(enrolmentUserBatchRatingKarmaDF,ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)

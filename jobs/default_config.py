@@ -171,11 +171,11 @@ DEFAULT_CONFIG = {
     # Zip Reports Configuration
     'prefixDirectoryPath': 'standalone-reports',
     'destinationDirectoryPath': 'standalone-reports/merged',
-    'localReportDir': '/mount/data/analytics/reports',
-    'warehouseReportDir':'/mount/data/analytics/warehouse',
+    'localReportDir': '/home/ubuntu/cb-core-data/reports',
+    'warehouseReportDir':'/home/ubuntu/cb-core-data/warehouse',
     'directoriesToSelect': 'blended-program-report-mdo,cbp-report-mdo-summary,course-report,cba-report,cbp-report-mdo-enrolment,user-report,user-enrollment-report',
     'password': '123456',
-    'bqScriptPath': '/mount/data/analytics/bq-scripts.sh',
+    'bqScriptPath': '/home/ubuntu/cb-core-data/bq-scripts.sh',
     
     # Job Configuration
     'parallelization': '16',
