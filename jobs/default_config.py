@@ -171,11 +171,11 @@ DEFAULT_CONFIG = {
     # Zip Reports Configuration
     'prefixDirectoryPath': 'standalone-reports',
     'destinationDirectoryPath': 'standalone-reports/merged',
-    'localReportDir': '/home/analytics/pyspark/cb-core-data/reports',
-    'warehouseReportDir':'/home/analytics/pyspark/cb-core-data/warehouse',
+    'localReportDir': '/home/analytics/pyspark/reports',
+    'warehouseReportDir':'/home/analytics/pyspark/warehouse',
     'directoriesToSelect': 'blended-program-report-mdo,cbp-report-mdo-summary,course-report,cba-report,cbp-report-mdo-enrolment,user-report,user-enrollment-report',
     'password': '123456',
-    'bqScriptPath': '/home/analytics/pyspark/cb-core-data/bq-scripts.sh',
+    'bqScriptPath': '/home/analytics/pyspark/bq-scripts.sh',
     
     # Job Configuration
     'parallelization': '16',
