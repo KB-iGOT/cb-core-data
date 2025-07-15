@@ -5,7 +5,7 @@ from typing import List
 from dfutil.user.userDFUtil import exportDFToParquet
 from pyspark.sql import SparkSession, DataFrame,functions as F
 from pyspark.sql.functions import (
-    col, lit, element_at, size, when, coalesce,expr
+    col, lit, element_at, size, when, coalesce,expr,sum
 )
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
