@@ -46,7 +46,7 @@ class KCMModel:
         """
         try:
             today = self.get_date()
-            report_path_content_competency_mapping = f"{config.localReportDir}/{config.kcmReportPath}/{today}/ContentCompetencyMapping"
+            report_path_content_competency_mapping = f"{config.localReportDir}/{config.kcmReportPath}/{today}"
             file_name = "ContentCompetencyMapping"
 
             # Content - Competency Mapping data
@@ -311,6 +311,7 @@ def main():
     duration = end_time - start_time
     print(f"[END] KCMModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
-# Example usage:
+    spark.stop()
+
 if __name__ == "__main__":
     main()

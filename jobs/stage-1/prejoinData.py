@@ -123,6 +123,7 @@ Pipeline Execution Failed:
     
     finally:
         print("Data Processing Pipeline finished")
+        spark.stop()
 
 if __name__ == "__main__":
     main()

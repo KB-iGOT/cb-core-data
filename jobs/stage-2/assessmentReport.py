@@ -135,7 +135,7 @@ class UserAssessmentModel:
                 broadcast(latest),
                 on=["assessChildID", "userID", "assessEndTimestamp"],
                 how="inner"
-            ).withColumn("Assessment_Status", expr(case_expr)) \
+            ).filter(col("userStatus").cast("int") == 1).withColumn("Assessment_Status", expr(case_expr)) \
             .withColumn("Overall_Status", expr(completion_status_expr)) \
             .withColumn("Report_Last_Generated_On", current_timestamp()) \
             .dropDuplicates(["userID", "assessID"]) \
@@ -148,7 +148,6 @@ class UserAssessmentModel:
                 col("assessPassPercentage").alias("Percentage_Of_Score"),
                 col("noOfAttempts").alias("Number_of_Attempts"),
                 col("maskedEmail").alias("Email"),
-                col("userStatus").alias("status"),
                 col("maskedPhone").alias("Phone"),
                 col("assessOrgID").alias("mdoid"),
                 col("Report_Last_Generated_On")
@@ -158,13 +157,8 @@ class UserAssessmentModel:
 
             # Stage 10: Generate Final Report
             print("Stage 10: Generating final report...")
-            
-            # Filter active users and prepare final dataset
-            columns_to_keep = [c for c in original_df.columns if c != "status"]
-            final_df = original_df.filter(col("status").cast("int") == 1).select([col(c) for c in columns_to_keep])
-
             # Export report
-            dfexportutil.write_csv_per_mdo_id(final_df, f"{config.localReportDir}/{config.standaloneAssessmentReportPath}/{today}", 'mdoid')
+            dfexportutil.write_csv_per_mdo_id(original_df, f"{config.localReportDir}/{config.standaloneAssessmentReportPath}/{today}", 'mdoid')
             print("Stage 10: Complete")
 
             # Performance Summary
@@ -193,6 +187,6 @@ def main():
     total_time = end_time - start_time
     
     print(f"Assessment report generation completed in {total_time:.2f} seconds")
-
+    spark.stop()
 if __name__ == "__main__":
     main()
