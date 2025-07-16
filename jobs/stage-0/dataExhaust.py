@@ -646,7 +646,7 @@ def main():
     # Initialize and run the model
     model = DataExhaustModel(spark, config)
     
-    output_path = getattr(config, 'base_output_path', '/home/ubuntu/cb-core-data/data-res/pq_files/cache_pq/')
+    output_path = getattr(config, 'base_output_path', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
     
     start_time = datetime.now()
     
