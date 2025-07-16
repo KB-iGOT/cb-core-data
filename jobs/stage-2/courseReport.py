@@ -366,8 +366,8 @@ def main():
     spark = SparkSession.builder \
         .appName("Course Report Model") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "42g") \
-        .config("spark.driver.memory", "10g") \
+        .config("spark.executor.memory", "30g") \
+        .config("spark.driver.memory", "25g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \
@@ -386,6 +386,6 @@ def main():
     duration = end_time - start_time
     print(f"[END] CourseReportModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
-
+    spark.stop()
 if __name__ == "__main__":
    main()

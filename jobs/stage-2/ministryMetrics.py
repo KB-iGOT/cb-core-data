@@ -209,7 +209,7 @@ def main():
     duration = end_time - start_time
     print(f"[END] MinistryMetricsModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
-
+    spark.stop()
 # Example usage:
 if __name__ == "__main__":
    main()

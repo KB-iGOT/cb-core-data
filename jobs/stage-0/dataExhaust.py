@@ -658,6 +658,7 @@ def main():
         duration = end_time - start_time
         logger.info(f"[END] Data Exhaust processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"[INFO] Total duration: {duration}")
+        spark.stop()
         
     except Exception as e:
         logger.error(f"Data Exhaust processing failed: {str(e)}")
