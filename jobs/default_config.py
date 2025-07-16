@@ -1,5 +1,8 @@
 # config_defaults.py - Default configuration values
 import os
+from pathlib import Path
+BASE_DIR = Path(__file__).resolve().parents[1]
+
 DEFAULT_CONFIG = {
     # Debug and Validation
     'debug': 'true',
@@ -171,12 +174,12 @@ DEFAULT_CONFIG = {
     # Zip Reports Configuration
     'prefixDirectoryPath': 'standalone-reports',
     'destinationDirectoryPath': 'standalone-reports/merged',
-    'localReportDir': '/home/analytics/pyspark/reports',
-    'warehouseReportDir':'/home/analytics/pyspark/warehouse',
-    'baseCachePath': '/home/analytics/pyspark/data-res/pq_files/cache_pq/',
     'directoriesToSelect': 'blended-program-report-mdo,cbp-report-mdo-summary,course-report,cba-report,cbp-report-mdo-enrolment,user-report,user-enrollment-report',
     'password': '123456',
-    'bqScriptPath': '/home/analytics/pyspark/bq-scripts.sh',
+    'localReportDir': f'{BASE_DIR}/reports',
+    'warehouseReportDir': f'{BASE_DIR}/warehouse',
+    'baseCachePath': f'{BASE_DIR}/data-res/pq_files/cache_pq/',
+    'bqScriptPath': f'{BASE_DIR}/bq-scripts.sh',
     
     # Job Configuration
     'parallelization': '16',
