@@ -173,6 +173,7 @@ DEFAULT_CONFIG = {
     'destinationDirectoryPath': 'standalone-reports/merged',
     'localReportDir': '/home/analytics/pyspark/reports',
     'warehouseReportDir':'/home/analytics/pyspark/warehouse',
+    'baseCachePath': '/home/analytics/pyspark/data-res/pq_files/cache_pq/',
     'directoriesToSelect': 'blended-program-report-mdo,cbp-report-mdo-summary,course-report,cba-report,cbp-report-mdo-enrolment,user-report,user-enrollment-report',
     'password': '123456',
     'bqScriptPath': '/home/analytics/pyspark/bq-scripts.sh',
