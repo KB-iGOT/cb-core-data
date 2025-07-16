@@ -246,7 +246,7 @@ def main():
     spark = SparkSession.builder \
         .appName("User Enrolment Report Model - Cached") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "15g") \
+        .config("spark.executor.memory", "20g") \
         .config("spark.driver.memory", "15g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
@@ -269,7 +269,7 @@ def main():
     duration = end_time - start_time
     print(f"[END] ACBPModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
-
+    spark.stop()
 # Example usage:
 if __name__ == "__main__":
    main()

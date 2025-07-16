@@ -165,6 +165,6 @@ def main():
     config = create_config(config_dict)
     processUserReport(config)
     print("🏆 User Report Generation completed successfully!")
-
+    spark.stop()
 if __name__ == "__main__":
     main()

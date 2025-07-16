@@ -486,8 +486,8 @@ def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
         .appName("Blended Program Report Model - Cached") \
-        .config("spark.executor.memory", "18g") \
-        .config("spark.driver.memory", "18g") \
+        .config("spark.executor.memory", "25g") \
+        .config("spark.driver.memory", "25g") \
         .config("spark.sql.shuffle.partitions", "64") \
         .config("spark.driver.bindAddress", "127.0.0.1") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
@@ -508,7 +508,7 @@ def main():
     duration = end_time - start_time
     print(f"[END] BlendedModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
-
+    spark.stop()
 
 if __name__ == "__main__":
     main()

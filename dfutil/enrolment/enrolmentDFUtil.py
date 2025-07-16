@@ -159,7 +159,6 @@ def preComputeUserOrgEnrolment(
         how="left"
     )
     
-    # Add calculated columns - FIXED ORDER: completion percentage first
     completion_percentage_df = withCompletionPercentageColumn(df)
     old_completions_df = withOldCompletionStatusColumn(completion_percentage_df)
     final_df = withUserCourseCompletionStatusColumn(old_completions_df)
@@ -193,42 +192,42 @@ def withCompletionPercentageColumn(df: DataFrame) -> DataFrame:
 
 def withOldCompletionStatusColumn(df: DataFrame) -> DataFrame:
     """
-    dbCompletionStatus     userCourseCompletionStatus
-    NULL                   not-enrolled
-    0                      not-started
-    1                      in-progress
-    2                      completed
+    completionPercentage   → completionStatus
+    NULL                   → 'not-enrolled'
+    0.0                    → 'enrolled'
+    < 10.0                 → 'started'
+    < 100.0                → 'in-progress'
+    >= 100.0               → 'completed'
     """
     return df.withColumn(
-        "userCourseCompletionStatus",
+        "completionStatus",
         F.expr("""
             CASE 
-                WHEN dbCompletionStatus IS NULL THEN 'not-enrolled' 
-                WHEN dbCompletionStatus = 0 THEN 'not-started' 
-                WHEN dbCompletionStatus = 1 THEN 'in-progress' 
-                ELSE 'completed' 
+                WHEN completionPercentage IS NULL THEN 'not-enrolled'
+                WHEN completionPercentage = 0.0 THEN 'enrolled'
+                WHEN completionPercentage < 10.0 THEN 'started'
+                WHEN completionPercentage < 100.0 THEN 'in-progress'
+                ELSE 'completed'
             END
         """)
     )
 
 def withUserCourseCompletionStatusColumn(df: DataFrame) -> DataFrame:
     """
-    completionPercentage   completionStatus    IDI status
-    NULL                   not-enrolled        not-started
-    0.0                    enrolled            not-started
-    0.0 < % < 10.0         started             enrolled
-    10.0 <= % < 100.0      in-progress         in-progress
-    100.0                  completed           completed
+    dbCompletionStatus     → userCourseCompletionStatus
+    NULL                   → 'not-enrolled'
+    0                      → 'not-started'
+    1                      → 'in-progress'
+    2 (else)               → 'completed'
     """
     return df.withColumn(
         "userCourseCompletionStatus",
         F.expr("""
             CASE 
-                WHEN completionPercentage IS NULL THEN 'not-enrolled' 
-                WHEN completionPercentage = 0.0 THEN 'enrolled' 
-                WHEN completionPercentage < 10.0 THEN 'started' 
-                WHEN completionPercentage < 100.0 THEN 'in-progress' 
-                ELSE 'completed' 
+                WHEN dbCompletionStatus IS NULL THEN 'not-enrolled'
+                WHEN dbCompletionStatus = 0 THEN 'not-started'
+                WHEN dbCompletionStatus = 1 THEN 'in-progress'
+                ELSE 'completed'
             END
         """)
     )
