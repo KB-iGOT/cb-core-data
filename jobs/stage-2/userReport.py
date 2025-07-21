@@ -44,15 +44,16 @@ def processUserReport(config):
     try:
         start_time = time.time()
         today = datetime.now().strftime("%Y-%m-%d")
+        currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
 
         # Step 1: Load User Master Data
         print("📊 Step 1: Loading User Master Data...")
-        user_master_df = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
+        user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
         print("✅ Step 1 Complete")
 
         # Step 2: Load Enrolment Data
         print("📚 Step 2: Loading Enrolment Data...")
-        user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+        user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
         print("✅ Step 2 Complete")
 
         # Step 3: Load Content Duration
@@ -70,13 +71,6 @@ def processUserReport(config):
 
         # Step 4: Add User Status Classification
         print("🏷️ Step 4: Classifying User Status...")
-        user_enrolment_df = user_enrolment_df.withColumn(
-            "user_consumption_status",
-            when(col("dbCompletionStatus").isNull(), "not-enrolled")
-            .when(col("dbCompletionStatus") == 0, "not-started")
-            .when(col("dbCompletionStatus") == 1, "in-progress")
-            .otherwise("completed")
-        )
         print("✅ Step 4 Complete")
 
         # Step 5: Join User and Content Data
@@ -108,10 +102,68 @@ def processUserReport(config):
 
         # Step 8: Final Column Selection
         print("🎯 Step 8: Final Column Selection...")
-        dateTimeFormat = "yyyy-MM-dd HH:mm:ss"
-        currentDateTime = current_timestamp()
 
-        user_complete_df = user_complete_data \
+        mdoWiseReportDF = user_complete_data.filter(col("userStatus").cast("int") == 1) \
+            .withColumn("Report_Last_Generated_On", currentDateTime) \
+            .withColumn("Total_Enrolments", 
+                        coalesce(col("total_event_enrolments"), lit(0)) + 
+                        coalesce(col("total_content_enrolments"), lit(0))) \
+            .withColumn("Total_Completions", 
+                        coalesce(col("total_event_completions"), lit(0)) + 
+                        coalesce(col("total_content_completions"), lit(0))) \
+            .withColumn("MDO_Name", col("userOrgName")) \
+            .withColumn("Ministry", 
+                        when(col("ministry_name").isNull(), col("userOrgName"))
+                        .otherwise(col("ministry_name"))) \
+            .withColumn("Department", 
+                        when((col("Ministry").isNotNull()) & 
+                            (col("Ministry") != col("userOrgName")) & 
+                            ((col("dept_name").isNull()) | (col("dept_name") == "")), 
+                            col("userOrgName"))
+                        .otherwise(col("dept_name"))) \
+            .withColumn("Organization", 
+                        when((col("Ministry") != col("userOrgName")) & 
+                            (col("Department") != col("userOrgName")), 
+                            col("userOrgName"))
+                        .otherwise(lit(""))) \
+            .select(
+                col("fullName").alias("Full_Name"),
+                col("professionalDetails.designation").alias("Designation"),
+                col("personalDetails.primaryEmail").alias("Email"),
+                col("personalDetails.mobile").alias("Phone_Number"),
+                col("MDO_Name"),
+                col("professionalDetails.group").alias("Group"),
+                col("Tag"),
+                col("Ministry"),
+                col("Department"),
+                col("Organization"),
+                from_unixtime(col("userCreatedTimestamp") / 1000, ParquetFileConstants.DATE_FORMAT).alias("User_Registration_Date"),
+                col("role").alias("Roles"),
+                col("personalDetails.gender").alias("Gender"),
+                col("personalDetails.category").alias("Category"),
+                col("additionalProperties.externalSystem").alias("External_System"),
+                col("additionalProperties.externalSystemId").alias("External_System_Id"),
+                col("employmentDetails.employeeCode").alias("Employee_Id"),
+                from_unixtime(col("userOrgCreatedDate") / 1000, ParquetFileConstants.DATE_FORMAT).alias("MDO_Created_On"),
+                col("userProfileStatus").alias("Profile_Status"),
+                col("weekly_claps_day_before_yesterday"),
+                coalesce(col("total_points"), lit(0)).alias("Karma_Points"),
+                coalesce(col("total_event_enrolments"), lit(0)).alias("Event_Enrolments"),
+                coalesce(col("total_event_completions"), lit(0)).alias("Event_Completions"),
+                coalesce(col("total_event_learning_hours_with_certificates"), lit(0)).alias("Event_Learning_Hours"),
+                coalesce(col("total_content_enrolments"), lit(0)).alias("Course_Enrolments"),
+                coalesce(col("total_content_completions"), lit(0)).alias("Course_Completions"),
+                coalesce(col("total_content_duration"), lit(0)).alias("Course_Learning_Hours"),
+                coalesce(col("Total_Enrolments"), lit(0)).alias("Total_Enrolments"),
+                coalesce(col("Total_Completions"), lit(0)).alias("Total_Completions"),
+                coalesce(col("Total_Learning_Hours"), lit(0)).alias("Total_Learning_Hours"),
+                col("Report_Last_Generated_On"),
+                col("userOrgID").alias("mdoid")
+            )
+        
+        dfexportutil.write_csv_per_mdo_id(mdoWiseReportDF, f"{config.localReportDir}/{config.userReportPath}/{today}", 'mdoid')
+
+        warehouseDF = user_complete_data \
             .withColumn("marked_as_not_my_user", when(col("userProfileStatus") == "NOT-MY-USER", lit(True)).otherwise(lit(False))) \
             .withColumn("data_last_generated_on", currentDateTime) \
             .withColumn("is_verified_karmayogi", when(col("userProfileStatus") == "VERIFIED", lit(True)).otherwise(lit(False))) \
@@ -124,10 +176,11 @@ def processUserReport(config):
                 col("professionalDetails.designation").alias("designation"),
                 col("personalDetails.primaryEmail").alias("email"),
                 col("personalDetails.mobile").alias("phone_number"),
+                col("personalDetails.pincode").alias("pincode"),
                 col("professionalDetails.group").alias("groups"),
                 col("Tag").alias("tag"),
                 col("userProfileStatus").alias("profile_status"),
-                date_format(from_unixtime(col("userCreatedTimestamp")), dateTimeFormat).alias("user_registration_date"),
+                date_format(from_unixtime(col("userCreatedTimestamp")/1000), ParquetFileConstants.DATE_TIME_FORMAT).alias("user_registration_date"),
                 col("role").alias("roles"),
                 col("personalDetails.gender").alias("gender"),
                 col("personalDetails.category").alias("category"),
@@ -146,8 +199,8 @@ def processUserReport(config):
         print("✅ Step 8 Complete")
 
         # Step 9: Export Data
-        print("📁 Step 9: Exporting Data...")
-        dfexportutil.write_csv_per_mdo_id(user_complete_df, f"{config.localReportDir}/{config.userReportPath}/{today}", 'mdo_id')
+        print("📁 Step 9: Exporting Warehouse Data...")
+        warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwUserTable}")
         print("✅ Step 9 Complete")
 
         # Performance Summary

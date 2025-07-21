@@ -7,7 +7,7 @@ from pathlib import Path
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     col, expr, max as spark_max, 
-    expr, current_timestamp, broadcast
+    expr, current_timestamp, broadcast,date_format
 )
 
 # Add parent directory to sys.path for importing project-specific modules
@@ -40,6 +40,7 @@ class UserAssessmentModel:
         
         try:
             today = self.get_date()
+            currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             # Stage 1: Load Assessment Data
             print("Stage 1: Loading assessment data...")
             assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE).filter(col("assessCategory").isin("Standalone Assessment"))
@@ -137,7 +138,7 @@ class UserAssessmentModel:
                 how="inner"
             ).filter(col("userStatus").cast("int") == 1).withColumn("Assessment_Status", expr(case_expr)) \
             .withColumn("Overall_Status", expr(completion_status_expr)) \
-            .withColumn("Report_Last_Generated_On", current_timestamp()) \
+            .withColumn("Report_Last_Generated_On",currentDateTime) \
             .dropDuplicates(["userID", "assessID"]) \
             .select(
                 col("userID").alias("User_ID"),
