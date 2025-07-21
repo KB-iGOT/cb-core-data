@@ -7,6 +7,8 @@ from pyspark.sql import SparkSession, DataFrame,functions as F
 from pyspark.sql.functions import (
     col, lit, element_at, size, when, coalesce,expr,sum
 )
+from pyspark.sql.types import IntegerType
+
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from constants.ParquetFileConstants import ParquetFileConstants
@@ -241,3 +243,54 @@ def calculateCourseProgress(userCourseProgramCompletionDF):
     df = withUserCourseCompletionStatusColumn(df)
     
     return df
+
+def preComputeUserEnrolmentWarehouseData(spark):
+    primary_categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
+    enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+    userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+    contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(
+        col("category").isin(primary_categories)
+    )
+    allCourseProgramCompletionWithDetailsDFWithRating = preComputeUserOrgEnrolment(
+        enrolmentDF, contentOrgDF, userOrgDF, spark
+    )
+    platform_enrolments_df = (
+        allCourseProgramCompletionWithDetailsDFWithRating
+        .filter(col("userStatus").cast(IntegerType()) == 1)  # Only active users
+        .select(
+            col("userID"),
+            col("courseID").alias("content_id"),
+            col("userCourseCompletionStatus").alias("user_consumption_status"),
+            col("certificateID"),
+            col("batchID")
+        )
+        .dropDuplicates(["userID", "content_id", "batchID"]).drop("batchID")
+    )
+    
+    externalEnrolmentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
+    externalContentOrgDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+    
+    marketplace_enrolments_df = (
+        externalContentOrgDF
+        .join(externalEnrolmentDF, "content_id", "inner")
+        .join(userOrgDF, ["userID"], "left")
+        .filter(col("userStatus").cast(IntegerType()) == 1)  # Only active users
+        .withColumn("certificateID", 
+                    when(col("issued_certificates").isNull(), "")
+                    .otherwise(col("issued_certificates")[size(col("issued_certificates")) - 1]["identifier"]))
+        .withColumn("user_consumption_status",
+                    when(col("status").isNull(), "not-enrolled")
+                    .when(col("status") == 0, "not-started")
+                    .when(col("status") == 1, "in-progress")
+                    .otherwise("completed"))
+        .select(
+            col("userID"),
+            col("content_id"),
+            col("user_consumption_status"),
+            col("certificateID")
+        )
+        .dropDuplicates(["userID", "content_id"])
+    )
+    
+    combined_enrolments_df = platform_enrolments_df.union(marketplace_enrolments_df)
+    exportDFToParquet(combined_enrolments_df,ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)

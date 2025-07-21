@@ -3,7 +3,7 @@ from pathlib import Path
 from pyspark.sql.types import *
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
-    sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace,bround,countDistinct
+    sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace,bround,countDistinct,to_timestamp,from_unixtime
 )
 from pyspark.sql.types import LongType
 
@@ -146,7 +146,7 @@ def preComputeOrgHierarchyWithUser(spark: SparkSession):
       col("orgSubType").alias("userOrgSubType"),
       col("dept_name"),
       col("ministry_name"))
-    user_merged_df = spark.read.parquet(ParquetFileConstants.USER_SELECT_PARQUET_FILE+f"/**.parquet")
+    user_merged_df = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE+f"/**.parquet")
     user_org_merged_df = user_merged_df.join(
         org_merged_df,
         user_merged_df["userOrgID"] == org_merged_df["usermergedOrgID"]
@@ -155,7 +155,7 @@ def preComputeOrgHierarchyWithUser(spark: SparkSession):
 
 def appendContentDurationCompletionForEachUser(spark: SparkSession, user_master_df: DataFrame, user_enrolment_df: DataFrame, content_duration_df: DataFrame) -> DataFrame:
     userdf_with_enrolment_counts = user_enrolment_df \
-        .join(content_duration_df, user_enrolment_df["courseid"] == content_duration_df["content_id"], how="left") \
+        .join(content_duration_df, on="content_id", how="left") \
         .groupBy("userID") \
         .agg(
             countDistinct(
@@ -208,21 +208,15 @@ def exportDFToParquet(df: DataFrame, outputFile: str):
     """
     df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
     
-def timestampStringToLong(df: DataFrame, column_names: list, format: str = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'") -> DataFrame:
-    """
-    Converts ISO timestamp string columns to long (epoch milliseconds).
-    
-    Args:
-        df (DataFrame): Input DataFrame.
-        column_names (list): List of column names (timestamp strings).
-        format (str): Timestamp format. Default is ISO-8601 with 'Z'.
-
-    Returns:
-        DataFrame: Modified DataFrame with long timestamps.
-    """
+def timestampStringToLong(df: DataFrame, column_names: list, format: str = "yyyy-MM-dd HH:mm:ss:SSSZ") -> DataFrame:
+    result_df = df
     for col_name in column_names:
-        df = df.withColumn(
-            col_name,
-            (unix_timestamp(col(col_name), format) * 1000).cast("long")
+        result_df = result_df.withColumn(
+            col_name, 
+            to_timestamp(col(col_name), format)
         )
-    return df
+        result_df = result_df.withColumn(
+            col_name,
+            (unix_timestamp(col(col_name)) * 1000).cast("long")
+        )
+    return result_df
