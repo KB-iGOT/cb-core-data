@@ -61,6 +61,7 @@ class ParquetFileConstants:
     CONTENT_HIERARCHY_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content-hierarchy-select/")
     BATCH_SELECT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "batch-select/")
     OLD_ASSESSMENT_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "old-assessment/")
+    ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "enrolment-warehouse-computed/")
 
     ###
     ###  Output CSV File
