@@ -20,7 +20,7 @@ from dfutil.enrolment import enrolmentDFUtil
 from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
 from dfutil.utils import utils
-from dfutil.utils.redis import Redis
+from dfutil.utils import redis
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 
@@ -47,7 +47,7 @@ class MinistryMetricsModel:
             primary_categories= ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
             
             # Load and cache base DataFrames that are used multiple times
-            enrolmentDF = spark.read.parquet(f"{conf.warehouseReportDir}/{conf.dwEnrollmentsTable}/**.parquet")
+            enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
             org_hierarchyDF = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE)
             ministryNamesDF = org_hierarchyDF.select(col("mdo_name").alias("ministry"), col("mdo_id").alias("ministryID"))
             userDF= spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE) \
@@ -88,7 +88,7 @@ class MinistryMetricsModel:
                 .union(twentyFourHrActiveUserCountOrgDF))
             
             # Join user and enrolment data
-            joinUserDF = enrolmentDF.join(userDF, enrolmentDF["user_id"] == userDF["user_ID"], "inner").drop(enrolmentDF["user_id"])
+            joinUserDF = enrolmentDF.join(userDF, enrolmentDF["userID"] == userDF["user_ID"], "inner").drop(enrolmentDF["userID"])
             
             # Join with org_hierarchy data to get ministryID for all DF operations
             joinedWithMinistryIDDF = joinUserDF.join(
@@ -100,16 +100,16 @@ class MinistryMetricsModel:
             # Certificate counts
             certificateMinistryDF = (joinedWithMinistryIDDF
                 .groupBy("ministry")
-                .agg(countDistinct("certificate_id").alias("certificateCount")))
+                .agg(countDistinct("certificateID").alias("certificateCount")))
             
             certificateDeptDF = (joinedWithMinistryIDDF
                 .groupBy("department")
-                .agg(countDistinct("certificate_id").alias("certificateCount"))
+                .agg(countDistinct("certificateID").alias("certificateCount"))
                 .select(col("department").alias("ministry"), col("certificateCount")))
             
             certificateOrgDF = (joinedWithMinistryIDDF
                 .groupBy("mdo_id")
-                .agg(countDistinct("certificate_id").alias("certificateCount"))
+                .agg(countDistinct("certificateID").alias("certificateCount"))
                 .select(col("mdo_id").alias("ministry"), col("certificateCount")))
             
             certificateResultDF = certificateMinistryDF.union(certificateDeptDF).union(certificateOrgDF)
@@ -173,10 +173,10 @@ class MinistryMetricsModel:
             finalCertificateCountDF.show(truncate=False)
             finalUserCountDF.show(truncate=False)
             finalEnrolmentCountDF.show(truncate=False) 
-            # Redis.dispatchDataFrame("dashboard_rolled_up_login_percent_last_24_hrs", finalActiveUserCountDF, "ministryID", "activeUserCount")
-            # Redis.dispatchDataFrame("dashboard_rolled_up_user_count", finalUserCountDF, "ministryID", "userCount")
-            # Redis.dispatchDataFrame("dashboard_rolled_up_certificates_generated_count", finalCertificateCountDF, "ministryID", "certificateCount")
-            # Redis.dispatchDataFrame("dashboard_rolled_up_enrolment_content_count",finalEnrolmentCountDF, "ministryID", "enrolmentCount")
+            redis.dispatchDataFrame("dashboard_rolled_up_login_percent_last_24_hrs", finalActiveUserCountDF, "ministryID", "activeUserCount",conf)
+            redis.dispatchDataFrame("dashboard_rolled_up_user_count", finalUserCountDF, "ministryID", "userCount",conf)
+            redis.dispatchDataFrame("dashboard_rolled_up_certificates_generated_count", finalCertificateCountDF, "ministryID", "certificateCount",conf)
+            redis.dispatchDataFrame("dashboard_rolled_up_enrolment_content_count",finalEnrolmentCountDF, "ministryID", "enrolmentCount",conf)
 
         except Exception as e:
             print(f"❌ Error occurred during MinistryMetricsModel processing: {str(e)}")
@@ -188,8 +188,8 @@ def main():
     spark = SparkSession.builder \
         .appName("Ministri Metrics") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "42g") \
-        .config("spark.driver.memory", "10g") \
+        .config("spark.executor.memory", "20g") \
+        .config("spark.driver.memory", "15g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \
