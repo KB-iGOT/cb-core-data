@@ -173,6 +173,7 @@ DEFAULT_CONFIG = {
     
     # Zip Reports Configuration
     'prefixDirectoryPath': 'standalone-reports',
+    'destinationDirectoryPath': 'standalone-reports/merged',
     'localReportDir': f'{BASE_DIR}/reports',
     'warehouseReportDir': f'{BASE_DIR}/warehouse',
     'baseCachePath': f'{BASE_DIR}/data-res/pq_files/cache_pq/',
@@ -185,7 +186,7 @@ DEFAULT_CONFIG = {
     'gcpBucket': 'igotproddp',
     'password': '123456',
 
-    
+
     # Job Configuration
     'parallelization': '16',
     'parallelizationSmall': '8',
