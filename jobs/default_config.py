@@ -182,6 +182,7 @@ DEFAULT_CONFIG = {
     'fullReportSyncPath': '/mount/data/analytics/standalone-reports/pyspark/fullReport/',
     'directoriesToSelect': 'blended-program-report-mdo,cbp-report-mdo-summary,course-report,cba-report,cbp-report-mdo-enrolment,user-report,user-enrollment-report',
     'googleServiceAccountFilePath': '/home/analytics/pyspark/jobs/gcp_service_account.json',
+    'gcpBucket': 'igotproddp',
     'password': '123456',
 
     
