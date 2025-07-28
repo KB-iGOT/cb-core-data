@@ -43,6 +43,7 @@ def preComputeAllCourseProgramESDataFrame(spark: SparkSession) -> DataFrame:
             col("duration").cast(FloatType()).alias("courseDuration"),
             col("leafNodesCount").alias("courseResourceCount"),
             col("lastStatusChangedOn").alias("lastStatusChangedOn"),
+            col("programDirectorName"),
             col("courseOrgID"),
             F.col("competencyAreaRefId"),
             F.col("competencyThemeRefId"),

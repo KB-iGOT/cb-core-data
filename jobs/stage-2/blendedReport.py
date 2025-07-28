@@ -72,7 +72,7 @@ class BlendedModel:
                                  "maskedEmail", "userPrimaryEmail", "userMobile", "userStatus",
                                  "designation", "group", "Tag", "ministry_name", "dept_name",
                                  "userOrgID", "userOrgName")
-                         )
+                         ).cache()
             userOrgHierarchyDataDF.printSchema()
 
             bpWithOrgDF = (spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
@@ -90,13 +90,11 @@ class BlendedModel:
                      col("courseDuration").cast(FloatType()).alias("bpDuration"),
                      col("courseResourceCount").alias("bpResourceCount"),
                      col("lastStatusChangedOn").alias("bpLastStatusChangedOn"),
-                    #  col("programDirectorName").alias("bpProgramDirectorName"),
+                     col("programDirectorName").alias("bpProgramDirectorName"),
                      col("courseOrgID").alias("bpOrgID"),
-                     # Add the org columns with bp aliases
                      col("courseOrgName").alias("bpOrgName"),
-                     col("courseOrgCreatedDate").alias("bpOrgCreatedDate")
                  )
-                 )
+                 ).cache()
 
             bpWithOrgDF.printSchema()
 
@@ -115,7 +113,7 @@ class BlendedModel:
             
             bpWithBatchDF.printSchema()
 
-            userEnrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+            userEnrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).cache()
 
             bpUserEnrolmentDF = userEnrolmentDF \
                            .select(
@@ -135,7 +133,7 @@ class BlendedModel:
                 bpUserEnrolmentDF.drop("bpContentStatus"), 
                 ["bpID", "bpBatchID"], 
                 "inner"
-            )
+            ).cache()
 
             bpCompletionDF.printSchema()
 
@@ -205,7 +203,7 @@ class BlendedModel:
                 col("courseCompletedTimestamp").alias("bpChildCompletedTimestamp")
             )
 
-            # Create BP Children With Progress DataFrame
+            # Create BP Children With Progress DataFrame and cache it
             bpChildrenWithProgress = bpCompletionWithChildBatchInfoDF.join(bpChildUserEnrolmentDF, ["userID", "bpChildID"], "left") \
                 .na.fill(0, ["bpChildResourceCount", "bpChildProgress"]) \
                 .join(bpUserContentStatusDF, ["userID", "bpID", "bpChildID", "bpBatchID"], "left") \
@@ -215,7 +213,7 @@ class BlendedModel:
                 .withColumnRenamed("completionPercentage", "bpChildProgressPercentage") \
                 .withColumn("bpChildAttendanceStatus", expr("CASE WHEN bpChildUserStatus=2 THEN 'Attended' ELSE 'Not Attended' END")) \
                 .withColumn("bpChildOfflineAttendanceStatus", expr("CASE WHEN bpChildMode='Offline' THEN bpChildAttendanceStatus ELSE '' END")) \
-                .drop("bpContentStatus")
+                .drop("bpContentStatus").cache()
 
             fullDF = bpChildrenWithProgress \
                 .withColumn("bpEnrolledOn", to_date(col("bpEnrolledTimestamp"), ParquetFileConstants.DATE_FORMAT)) \
@@ -232,7 +230,8 @@ class BlendedModel:
                 .withColumn("bpChildOfflineStartDate", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionStartDate ELSE '' END")) \
                 .withColumn("bpChildOfflineStartTime", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionStartTime ELSE '' END")) \
                 .withColumn("bpChildOfflineEndTime", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionEndTime ELSE '' END")) \
-                .withColumn("bpChildUserStatus", expr("CASE WHEN bpChildUserStatus='Completed' THEN 'Completed' ELSE 'Not Completed' END"))
+                .withColumn("bpChildUserStatus", expr("CASE WHEN bpChildUserStatus='Completed' THEN 'Completed' ELSE 'Not Completed' END")) \
+                .cache()
 
             # Apply duration formatting
             fullDF = self.duration_format(fullDF, "bpChildDuration").distinct()
@@ -292,14 +291,13 @@ class BlendedModel:
                     col("bpChildOfflineAttendanceStatus").alias("Offline_Attendance_Status"),
                     col("bpBatchSessionFacilators").alias("Instructor(s)_Name"),
                     col("bpBatchCreatedByName").alias("Program_Coordinator_Name"),
-                    # col("bpProgramDirectorName"),  # Uncomment if this column exists
+                    col("bpProgramDirectorName"),
                     col("Certificate_Generated"),
                     col("userOrgID").alias("mdoid"),
                     col("bpID").alias("contentid"),
                     col("Report_Last_Generated_On")
                 ) \
-                .orderBy("bpID", "userID") \
-                .coalesce(1)
+                .orderBy("bpID", "userID") 
             
             reportPath = f"{config.blendedReportPath}/{today}"
 
@@ -337,7 +335,6 @@ class BlendedModel:
                 col("MDO_Name"),
                 col("Designation"),
                 col("Group"),
-                col("status"),
                 col("Gender"),
                 col("Category"),
                 col("Tag"),
@@ -399,7 +396,7 @@ class BlendedModel:
                     col("bpChildOfflineEndTime").alias("offline_session_end_time"),
                     col("bpChildAttendanceStatus").alias("offline_attendance_status"),
                     col("bpBatchSessionFacilators").alias("instructors_name"),
-                    # col("bpProgramDirectorName").alias("program_coordinator_name"),  # Uncomment if exists
+                    col("bpProgramDirectorName").alias("program_coordinator_name"),
                     col("data_last_generated_on")
                 )
 
@@ -528,8 +525,8 @@ def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
         .appName("Blended Program Report Model - Cached") \
-        .config("spark.executor.memory", "25g") \
-        .config("spark.driver.memory", "25g") \
+        .config("spark.executor.memory", "30g") \
+        .config("spark.driver.memory", "30g") \
         .config("spark.sql.shuffle.partitions", "64") \
         .config("spark.driver.bindAddress", "127.0.0.1") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
