@@ -3,6 +3,8 @@ from pyspark import StorageLevel
 import requests
 import json
 from typing import Optional
+from google.cloud import storage
+import os
 
 def druidDFOption(query: str, host: str, result_format: str = "object", limit: int = 10000, spark: SparkSession = None) -> Optional[DataFrame]:
     """
@@ -94,6 +96,35 @@ def api(method: str, url: str, body: str) -> str:
         print(f"ERROR: API call failed: {e}")
         return ""
 
+def sync_reports(local_path, remote_path, config):
+    """
+    Upload all files from `local_path` to GCS path: gs://<container>/<remote_path> using GCP service account.
+
+    Parameters:
+        local_path (str): Local directory to upload.
+        remote_path (str): GCS path under the bucket (like 'reports/standalone-reports/merged').
+        conf (object): Configuration object with attributes:
+            - conf.container (str): GCS bucket name
+            - conf.store (str): Expected to be 'gcs'
+            - conf.gcp_service_account_key (str): Path to GCP credentials JSON
+    """
+    print(f"REPORT: Syncing reports from {local_path} to gs://{config.gcpBucket}/{remote_path} ...")
+
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config.googleServiceAccountFilePath
+    client = storage.Client()
+    bucket = client.bucket(config.gcpBucket)
+
+    for root, _, files in os.walk(local_path):
+        for file in files:
+            local_file_path = os.path.join(root, file)
+            relative_path = os.path.relpath(local_file_path, local_path)
+            gcs_blob_path = os.path.join(remote_path, relative_path).replace("\\", "/")
+
+            blob = bucket.blob(gcs_blob_path)
+            blob.upload_from_filename(local_file_path)
+            print(f"✅ Synced: {local_file_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
+
+    print(f"REPORT: Finished syncing reports from {local_path} to gs://{config.gcpBucket}/{remote_path}")
 
 def dataframe_from_json_string(json_str: str, spark: SparkSession) -> DataFrame:
     """

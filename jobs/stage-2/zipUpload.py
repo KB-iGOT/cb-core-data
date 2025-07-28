@@ -1,0 +1,190 @@
+import findspark
+
+findspark.init()
+
+import time
+from pyspark.sql import SparkSession
+from datetime import datetime
+from pathlib import Path
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, ArrayType
+from pyspark.sql.functions import (col, lower, when, lit, expr, concat_ws, explode_outer, from_json, to_date,
+                                   current_timestamp, date_format, round, coalesce, broadcast, size, map_keys,
+                                   map_values)
+from zipfile import ZipFile, ZIP_DEFLATED
+import shutil
+import subprocess
+import sys
+import glob
+import os
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+
+# Reusable imports from userReport structure
+from constants.ParquetFileConstants import ParquetFileConstants
+from dfutil.user import userDFUtil
+from dfutil.enrolment import enrolmentDFUtil
+from dfutil.content import contentDFUtil
+from dfutil.dfexport import dfexportutil
+from dfutil.utils.utils import sync_reports
+from jobs.config import get_environment_config
+from jobs.default_config import create_config
+
+
+class ZipUploadModel:
+    def __init__(self):
+        self.class_name = "org.ekstep.analytics.dashboard.report.ZipUpload"
+
+    def name(self):
+        return "ZipUploadModel"
+
+    @staticmethod
+    def get_date():
+        return datetime.now().strftime("%Y-%m-%d")
+
+    def process_data(self, spark, config):
+        try:
+            start_time = time.time()
+            today = self.get_date()
+            print("📊 Loading and filtering data...")
+            spark = SparkSession.getActiveSession()
+            spark.conf.set("spark.sql.adaptive.enabled", "true")
+            spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", "true")
+            spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
+
+            # ------------------ Part 1: Merge & Zip MDOID Reports ------------------ #
+            base_dir = os.path.join(config.localReportDir, config.prefixDirectoryPath)
+            directories_to_select = config.directoriesToSelect
+            today_date = datetime.today().strftime('%Y-%m-%d')
+            merged_dir = os.path.join(config.localReportDir, config.destinationDirectoryPath)
+            kcm_dir = os.path.join(base_dir, "kcm-report", today_date, "ContentCompetencyMapping")
+            kcm_file = glob.glob(os.path.join(kcm_dir, "*.csv"))[0] if os.path.exists(kcm_dir) else None
+            password = config.password
+
+            # Clean and recreate merged directory
+            if os.path.exists(merged_dir):
+                shutil.rmtree(merged_dir)
+            os.makedirs(merged_dir)
+
+            # Collect CSVs for each mdoid from all specified directories
+            for subfolder in directories_to_select:
+                report_dir = os.path.join(base_dir, subfolder, today_date)
+                if os.path.exists(report_dir):
+                    for item in os.listdir(report_dir):
+                        item_path = os.path.join(report_dir, item)
+
+                        if item.startswith("mdoid="):
+                            if item.endswith(".csv"):
+                                mdoid_value = item.replace(".csv", "")
+                            else:
+                                mdoid_value = item
+                            dest_dir = os.path.join(merged_dir, mdoid_value)
+                            os.makedirs(dest_dir, exist_ok=True)
+
+                            if os.path.isdir(item_path):
+                                for f in os.listdir(item_path):
+                                    if f.endswith(".csv"):
+                                        shutil.copy(os.path.join(item_path, f),
+                                                    os.path.join(dest_dir, f"{subfolder}.csv"))
+                            elif item_path.endswith(".csv"):
+                                shutil.copy(item_path, os.path.join(dest_dir, f"{subfolder}.csv"))
+            # Inject KCM file into each mdoid folder
+            if os.path.exists(kcm_file):
+                for mdoid_folder in os.listdir(merged_dir):
+                    mdoid_path = os.path.join(merged_dir, mdoid_folder)
+                    if os.path.isdir(mdoid_path):
+                        shutil.copy(kcm_file, os.path.join(mdoid_path, "ContentCompetencyMapping.csv"))
+            else:
+                print(f"KCM file not found at expected path: {kcm_file}")
+
+            # Password-protected ZIP creation per mdoid folder
+            for mdoid_folder in os.listdir(merged_dir):
+                mdoid_path = os.path.join(merged_dir, mdoid_folder)
+                if os.path.isdir(mdoid_path):
+                    zip_path = os.path.join(mdoid_path, "reports.zip")
+                    csv_files = [f for f in os.listdir(mdoid_path) if f.endswith(".csv")]
+                    if csv_files:
+                        command = ["zip", "-P", password, "-j", zip_path] + [os.path.join(mdoid_path, f) for f in
+                                                                             csv_files]
+                        subprocess.run(command, check=True)
+                        # Delete the individual CSVs after zipping
+                        for f in csv_files:
+                            os.remove(os.path.join(mdoid_path, f))
+
+            print(f"All MDOID folders zipped with password at: {merged_dir}")
+            sync_reports(merged_dir, config.mdoReportsSyncPath, config)
+
+            # ------------------ Part 2: Convert Parquet to CSV & Zip for full reports------------------ # '''
+
+            warehouse_base = config.warehouseReportDir
+            warehouse_output_dir = config.warehouseOutputDir
+            warehouse_zip_path = os.path.join(warehouse_output_dir, "reports.zip")
+
+            # Clean and recreate output directory
+            if os.path.exists(warehouse_output_dir):
+                shutil.rmtree(warehouse_output_dir)
+            os.makedirs(warehouse_output_dir)
+
+            # Traverse subfolders of warehouse and convert to CSV
+            for folder in os.listdir(warehouse_base):
+                folder_path = os.path.join(warehouse_base, folder)
+                if os.path.isdir(folder_path):
+                    parquet_files = [f for f in os.listdir(folder_path) if f.endswith(".parquet")]
+                    if parquet_files:
+                        try:
+                            df = spark.read.parquet(folder_path)
+                            csv_output = os.path.join(warehouse_output_dir, f"{folder}.csv")
+                            df.coalesce(1).write.mode("overwrite").option("header", "true").csv(csv_output + "_tmp")
+
+                            # Move the actual CSV file out of Spark's temp folder
+                            for file in os.listdir(csv_output + "_tmp"):
+                                if file.endswith(".csv"):
+                                    shutil.move(os.path.join(csv_output + "_tmp", file), csv_output)
+                            shutil.rmtree(csv_output + "_tmp")
+                        except Exception as e:
+                            print(f"Error processing {folder_path}: {str(e)}")
+
+            # Password-protected ZIP of all warehouse CSVs
+            warehouse_csvs = [os.path.join(warehouse_output_dir, f) for f in os.listdir(warehouse_output_dir) if
+                              f.endswith(".csv")]
+            if warehouse_csvs:
+                zip_cmd = ["zip", "-P", password, "-j", warehouse_zip_path] + warehouse_csvs
+                subprocess.run(zip_cmd, check=True)
+
+            print(f"Warehouse report zipped at: {warehouse_zip_path}")
+            sync_reports(warehouse_zip_path, config.fullReportSyncPath, config)
+
+            total_time = time.time() - start_time
+            print(f"\n✅ Optimized Zip Upload job generation completed in {total_time:.2f} seconds ({total_time / 60:.1f} minutes)")
+
+
+        except Exception as e:
+            print(f"❌ Error: {str(e)}")
+            raise
+def main():
+    # Initialize Spark Session with optimized settings for caching
+    spark = SparkSession.builder \
+        .appName("Zip Upload Model - Cached") \
+        .config("spark.executor.memory", "42g") \
+        .config("spark.driver.memory", "10g") \
+        .config("spark.sql.shuffle.partitions", "64") \
+        .config("spark.driver.bindAddress", "127.0.0.1") \
+        .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.network.timeout", "600s") \
+        .config("spark.executor.heartbeatInterval", "60s") \
+        .config("spark.shuffle.io.connectionTimeout", "300s") \
+        .config("spark.shuffle.io.maxRetries", "20") \
+        .config("spark.shuffle.io.retryWait", "10s") \
+        .getOrCreate()
+    # Create model instance
+    start_time = datetime.now()
+    print(f"[START] ZipUpload processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    model = ZipUploadModel()
+    model.process_data(spark=spark)
+    end_time = datetime.now()
+    duration = end_time - start_time
+    print(f"[END] ZipUpload completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"[INFO] Total duration: {duration}")
+
+
+if __name__ == "__main__":
+    main()

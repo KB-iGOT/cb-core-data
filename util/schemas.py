@@ -388,3 +388,70 @@ cios_data_schema = StructType([
         ]), True)
     ])
 
+def get_hierarchy_schema():
+        level3 = StructType([
+            StructField("identifier", StringType(), True),
+            StructField("name", StringType(), True),
+            StructField("channel", StringType(), True),
+            StructField("duration", StringType(), True),
+            StructField("primaryCategory", StringType(), True),
+            StructField("leafNodesCount", IntegerType(), True),
+            StructField("contentType", StringType(), True),
+            StructField("objectType", StringType(), True),
+            StructField("showTimer", StringType(), True),
+            StructField("allowSkip", StringType(), True)
+        ])
+
+        level2 = StructType([
+            StructField("identifier", StringType(), True),
+            StructField("name", StringType(), True),
+            StructField("channel", StringType(), True),
+            StructField("duration", StringType(), True),
+            StructField("primaryCategory", StringType(), True),
+            StructField("leafNodesCount", IntegerType(), True),
+            StructField("contentType", StringType(), True),
+            StructField("objectType", StringType(), True),
+            StructField("showTimer", StringType(), True),
+            StructField("allowSkip", StringType(), True),
+            StructField("children", ArrayType(level3), True)
+        ])
+
+        level1 = StructType([
+            StructField("identifier", StringType(), True),
+            StructField("name", StringType(), True),
+            StructField("channel", StringType(), True),
+            StructField("duration", StringType(), True),
+            StructField("primaryCategory", StringType(), True),
+            StructField("leafNodesCount", IntegerType(), True),
+            StructField("contentType", StringType(), True),
+            StructField("objectType", StringType(), True),
+            StructField("showTimer", StringType(), True),
+            StructField("allowSkip", StringType(), True),
+            StructField("children", ArrayType(level2), True)
+        ])
+
+        return StructType([
+            StructField("name", StringType(), True),
+            StructField("status", StringType(), True),
+            StructField("reviewStatus", StringType(), True),
+            StructField("channel", StringType(), True),
+            StructField("duration", StringType(), True),
+            StructField("primaryCategory", StringType(), True),
+            StructField("leafNodesCount", IntegerType(), True),
+            StructField("leafNodes", ArrayType(StringType()), True),
+            StructField("publish_type", StringType(), True),
+            StructField("isExternal", BooleanType(), True),
+            StructField("contentType", StringType(), True),
+            StructField("objectType", StringType(), True),
+            StructField("userConsent", StringType(), True),
+            StructField("visibility", StringType(), True),
+            StructField("createdOn", StringType(), True),
+            StructField("lastUpdatedOn", StringType(), True),
+            StructField("lastPublishedOn", StringType(), True),
+            StructField("lastSubmittedOn", StringType(), True),
+            StructField("lastStatusChangedOn", StringType(), True),
+            StructField("createdFor", ArrayType(StringType()), True),
+            StructField("children", ArrayType(level1), True),
+            StructField("competencies_v3", StringType(), True)
+        ])
+
