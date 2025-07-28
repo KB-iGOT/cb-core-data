@@ -73,8 +73,7 @@ class BlendedModel:
                                  "designation", "group", "Tag", "ministry_name", "dept_name",
                                  "userOrgID", "userOrgName")
                          ).cache()
-            userOrgHierarchyDataDF.printSchema()
-
+            
             bpWithOrgDF = (spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
                  .filter(col("category").isin(primary_categories))
                  .where(expr("courseStatus IN ('Live', 'Retired')"))
@@ -96,8 +95,6 @@ class BlendedModel:
                  )
                  ).cache()
 
-            bpWithOrgDF.printSchema()
-
 
             bpBatchDF, bpBatchSessionDF = bpBatchDataframe(spark)
 
@@ -105,13 +102,11 @@ class BlendedModel:
                 col("userID").alias("bpBatchCreatedBy"),
                 col("fullName").alias("bpBatchCreatedByName")
             )
-            batchCreatedByDF.printSchema()
 
             bpWithBatchDF = bpWithOrgDF \
                 .join(bpBatchDF, on="bpID", how="left") \
                 .join(batchCreatedByDF, on=["bpBatchCreatedBy"], how="left")
             
-            bpWithBatchDF.printSchema()
 
             userEnrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).cache()
 
@@ -127,15 +122,12 @@ class BlendedModel:
                     col("lastContentAccessTimestamp").alias("bpLastContentAccessTimestamp"),
                     col("courseCompletedTimestamp").alias("bpCompletedTimestamp")
                 )
-            bpUserEnrolmentDF.printSchema()
 
             bpCompletionDF = bpWithBatchDF.join(
                 bpUserEnrolmentDF.drop("bpContentStatus"), 
                 ["bpID", "bpBatchID"], 
                 "inner"
             ).cache()
-
-            bpCompletionDF.printSchema()
 
         # Create BP User Content Status DataFrame
             bpUserContentStatusDF = bpUserEnrolmentDF \
@@ -146,16 +138,10 @@ class BlendedModel:
             # Add user and user org info
             bpCompletionWithUserDetailsDF = userOrgHierarchyDataDF.join(bpCompletionDF, ["userID"], "right")
 
-            bpUserContentStatusDF.printSchema()
-
-            bpCompletionWithUserDetailsDF.printSchema()
-
             hierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
             parsedHierarchyDF = hierarchyDF.withColumn("data", from_json(col("hierarchy"), schemas.get_hierarchy_schema())) \
                 .select("identifier", "data.*")
             bpChildDF = bpChildDataFrame(bpWithOrgDF, hierarchyDF, parsedHierarchyDF,spark)
-
-            bpChildDF.printSchema()
 
             bpCompletionWithChildrenDF = bpCompletionWithUserDetailsDF.join(bpChildDF, ["bpID"], "left") \
                 .withColumn("bpChildMode", expr("CASE WHEN LOWER(bpChildCategory) = 'offline session' THEN 'Offline' ELSE '' END")) \
@@ -314,9 +300,6 @@ class BlendedModel:
 
             mdoReportDF = fullReportDF \
                 .select(*mdo_report_columns) 
-            
-            mdoReportDF.printSchema()
-            mdoReportDF.show(2,False)
 
             print("📝 Writing MDO reports...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
@@ -400,11 +383,10 @@ class BlendedModel:
                     col("data_last_generated_on")
                 )
 
-            # Prepare final warehouse data with coalesce and distinct
-            warehouse_data = df_warehouse.coalesce(1).distinct()
+            warehouseDF = df_warehouse.coalesce(1).distinct()
+            warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwBPEnrollmentsTable}")
 
             print("✅ Warehouse DataFrame created")
-            df_warehouse.printSchema()
 
 
         except Exception as e:
