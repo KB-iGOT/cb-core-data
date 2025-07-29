@@ -174,13 +174,19 @@ DEFAULT_CONFIG = {
     # Zip Reports Configuration
     'prefixDirectoryPath': 'standalone-reports',
     'destinationDirectoryPath': 'standalone-reports/merged',
-    'directoriesToSelect': 'blended-program-report-mdo,cbp-report-mdo-summary,course-report,cba-report,cbp-report-mdo-enrolment,user-report,user-enrollment-report',
-    'password': '123456',
     'localReportDir': f'{BASE_DIR}/reports',
     'warehouseReportDir': f'{BASE_DIR}/warehouse',
     'baseCachePath': f'{BASE_DIR}/data-res/pq_files/cache_pq/',
     'bqScriptPath': f'{BASE_DIR}/bq-scripts.sh',
-    
+    'warehouseOutputDir': f'{BASE_DIR}/warehouse/fullReport/',
+    'mdoReportSyncPath': '/mount/data/analytics/standalone-reports/pyspark/',
+    'fullReportSyncPath': '/mount/data/analytics/standalone-reports/pyspark/fullReport/',
+    'directoriesToSelect': 'blended-program-report-mdo,cbp-report-mdo-summary,course-report,cba-report,cbp-report-mdo-enrolment,user-report,user-enrollment-report',
+    'googleServiceAccountFilePath': '/home/analytics/pyspark/jobs/gcp_service_account.json',
+    'gcpBucket': 'igotproddp',
+    'password': '123456',
+
+
     # Job Configuration
     'parallelization': '16',
     'parallelizationSmall': '8',
