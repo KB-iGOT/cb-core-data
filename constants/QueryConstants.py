@@ -58,21 +58,40 @@ class QueryConstants:
                                     GROUP BY userOrgID;"""
 
 
-    ORG_BASED_MDO_LEADER_COUNT = f"""SELECT  
-                                    userOrgID,  
-                                    COUNT(*) as mdo_leader_count  
-                                    FROM read_parquet('{ParquetFileConstants.USER_COMPUTED_PARQUET_FILE}/**.parquet')  
-                                    WHERE role LIKE '%MDO_LEADER%'  
-                                    GROUP BY userOrgID  
-                                    ORDER BY mdo_leader_count DESC"""
+    ORG_BASED_MDO_LEADER_COUNT = f"""WITH exploded_roles AS (
+                                SELECT 
+                                    userID,
+                                    userOrgID,
+                                    TRIM(role_value.unnest) AS role  -- extract string from struct before trimming
+                                FROM read_parquet('{ParquetFileConstants.USER_ORG_COMPUTED_FILE}/**.parquet'),
+                                    UNNEST(STRING_SPLIT(role, ',')) AS role_value
+                                WHERE userStatus = 1 AND userOrgStatus = 1
+                            ),
+                            filtered_roles AS (
+                                SELECT DISTINCT userOrgID
+                                FROM exploded_roles
+                                WHERE role IN ('MDO_ADMIN', 'MDO_LEADER')
+                            )
+                            SELECT COUNT(*) AS org_with_admin_or_leader_count
+                            FROM filtered_roles;"""
 
-    ORG_BASED_MDO_ADMIN_COUNT = f"""SELECT  
-                                    userOrgID,  
-                                    COUNT(*) as mdo_admin_count  
-                                    FROM read_parquet('{ParquetFileConstants.USER_COMPUTED_PARQUET_FILE}/**.parquet')  
-                                    WHERE role LIKE '%MDO_ADMIN%'  
-                                    GROUP BY userOrgID  
-                                    ORDER BY mdo_admin_count DESC"""
+    ORG_BASED_MDO_ADMIN_COUNT = f"""WITH exploded_roles AS (
+                                SELECT 
+                                    userID,
+                                    userOrgID,
+                                    TRIM(unnested_role.unnest) AS role
+                                FROM read_parquet('{ParquetFileConstants.USER_ORG_COMPUTED_FILE}/**.parquet'),
+                                    UNNEST(STRING_SPLIT(role, ',')) AS unnested_role
+                                WHERE userStatus = 1 AND userOrgStatus = 1
+                            ),
+                            filtered_roles AS (
+                                SELECT DISTINCT userOrgID
+                                FROM exploded_roles
+                                WHERE role = 'MDO_ADMIN'
+                            )
+                            SELECT COUNT(*) AS org_with_admin_count
+                            FROM filtered_roles;"""
+
 
     USER_COUNT_BY_ORG = f"""Select  
                             userOrgID,  

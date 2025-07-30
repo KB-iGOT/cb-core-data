@@ -66,6 +66,16 @@ class DashboardSyncModel:
         
         return (orgRegisteredUserCountMap, orgTotalUserCountMap, orgNameMap)
 
+    def dashboardRedisUpdates(self,spark,config):
+        orgWithMdoAdminLeaderCount = self.duckdb_executor.execute_query(spark,"orgWithMdoAdminLeaderCount", QueryConstants.ORG_BASED_MDO_LEADER_COUNT)
+        orgAdminLeaderCount = orgWithMdoAdminLeaderCount.collect()[0]["org_with_admin_or_leader_count"]
+        # Redis.update("dashboard_org_with_mdo_admin_leader_count", str(orgAdminLeaderCount))
+
+        orgWithMdoAdminCount = self.duckdb_executor.execute_query(spark,"orgWithMdoAdminCount", QueryConstants.ORG_BASED_MDO_ADMIN_COUNT)
+        orgAdminCount = orgWithMdoAdminCount.collect()[0]["org_with_admin_count"]
+        # Redis.update("dashboard_org_with_mdo_admin_count", str(orgAdminCount))\
+
+        return
 
     def process_data(self, spark, config):
         try:
@@ -90,6 +100,8 @@ class DashboardSyncModel:
             top10LearnersByMDODF = self.duckdb_executor.execute_query(spark,"top10LearnersByMDODF", QueryConstants.TOP_10_LEARNERS_BY_MDO_QUERY)
             # Redis.dispatchDataFrame("dashboard_top_10_learners_on_kp_by_user_org",top10LearnersByMDODF, "userOrgID", "top_learners",config)
 
+
+            self.dashboardRedisUpdates(spark,config)
             print("✅ Processing completed successfully!")
 
         except Exception as e:
