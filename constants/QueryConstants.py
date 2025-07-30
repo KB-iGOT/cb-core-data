@@ -4,23 +4,59 @@ class QueryConstants:
     
     ORG_BASED_DESIGNATION_LIST = f"""SELECT  
                                     userOrgID,  
-                                    COUNT(DISTINCT COALESCE(designation, professionalDetails.designation)) as designationCount,  
-                                    ARRAY_AGG(DISTINCT COALESCE(designation, professionalDetails.designation)) as designationList  
-                                FROM read_parquet('{ParquetFileConstants.USER_COMPUTED_PARQUET_FILE}/**.parquet')  
+                                    STRING_AGG(DISTINCT COALESCE(designation, professionalDetails.designation)) as org_designations  
+                                FROM read_parquet('{ParquetFileConstants.USER_ORG_COMPUTED_FILE}/**.parquet')  
                                 WHERE COALESCE(designation, professionalDetails.designation) IS NOT NULL  
-                                GROUP BY userOrgID  
-                                ORDER BY designationCount DESC"""
+                                GROUP BY userOrgID"""
 
-    ORG_BASED_REGISTERED_ACTIVE_AND_INACTIVE_USERS = f"""SELECT  
-                                                userOrgID,  
-                                                userOrgName,  
-                                                COUNT(*) as totalUsersCount,  
-                                                COUNT(CASE WHEN userStatus = 1 THEN 1 END) as activeUsersCount,  
-                                                COUNT(CASE WHEN userStatus != 1 OR userStatus IS NULL THEN 1 END) as inactiveUsersCount,  
-                                                ROUND(COUNT(CASE WHEN userStatus = 1 THEN 1 END) * 100.0 / COUNT(*), 2) as activeUserPercentage  
-                                            FROM read_parquet('{ParquetFileConstants.USER_COMPUTED_PARQUET_FILE}/**.parquet')  
-                                            GROUP BY userOrgID,userOrgName  
-                                            ORDER BY activeUsersCount DESC"""
+    ORG_USER_COUNT_DATAFRAME_QUERY = f"""
+                                    SELECT 
+                                    userOrgID AS orgID,
+                                    userOrgName AS orgName,
+                                    COUNT(userID) AS registeredCount,
+                                    10000 AS totalCount
+                                    FROM read_parquet('{ParquetFileConstants.USER_ORG_COMPUTED_FILE}/**.parquet')
+                                    WHERE userOrgID IS NOT NULL 
+                                    AND userStatus = 1      -- Filter for ACTIVE USERS ONLY
+                                    AND userOrgStatus = 1   -- Filter for ACTIVE ORGS ONLY
+                                    GROUP BY userOrgID, userOrgName
+                                    ORDER BY registeredCount DESC"""
+    
+
+    TOP_10_LEARNERS_BY_MDO_QUERY = F"""
+                                    WITH ranked_users AS (
+                                        SELECT
+                                            *,
+                                            RANK() OVER (PARTITION BY userOrgID ORDER BY total_points DESC) AS rank
+                                        FROM read_parquet('{ParquetFileConstants.USER_ORG_COMPUTED_FILE}/**.parquet')
+                                        WHERE total_points IS NOT NULL
+                                    ),
+                                    top10_by_org AS (
+                                        SELECT * FROM ranked_users WHERE rank <= 10
+                                    ),
+                                    json_ready AS (
+                                        SELECT
+                                            userOrgID,
+                                            -- build JSON string manually, escaping strings properly
+                                            FORMAT(
+                                                '{{{{"userID":"{{}}", "fullName":"{{}}", "userOrgName":"{{}}", "designation":"{{}}", "userProfileImgUrl":{{}}, "total_points":{{}}, "rank":{{}}}}}}',
+                                                userID,
+                                                fullName,
+                                                userOrgName,
+                                                COALESCE(designation, ''),
+                                                CASE WHEN userProfileImgUrl IS NULL THEN 'null' ELSE '"' || userProfileImgUrl || '"' END,
+                                                total_points,
+                                                rank
+                                            ) AS json_details_str
+                                        FROM top10_by_org
+                                    )
+                                    SELECT
+                                        userOrgID,
+                                        -- Aggregate as an array of JSON strings and wrap in JSON object
+                                        json_object('top_learners', list(json_details_str)) AS top_learners
+                                    FROM json_ready
+                                    GROUP BY userOrgID;"""
+
 
     ORG_BASED_MDO_LEADER_COUNT = f"""SELECT  
                                     userOrgID,  
@@ -94,7 +130,7 @@ class QueryConstants:
                             FROM read_parquet('{ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE}/**.parquet')"""
 
     # These lists should now work correctly
-    ORG_BASED_LIST = [ORG_BASED_DESIGNATION_LIST, ORG_BASED_REGISTERED_ACTIVE_AND_INACTIVE_USERS,
+    ORG_BASED_LIST = [ORG_BASED_DESIGNATION_LIST, ORG_USER_COUNT_DATAFRAME_QUERY,
                      ORG_BASED_MDO_LEADER_COUNT, ORG_BASED_MDO_ADMIN_COUNT]
     USER_BASED_LIST = [USER_COUNT_BY_ORG]
     COURSE_BASED_LIST = [COURSE_COUNT_BY_STATUS_GROUP_BY_ORG, AVG_COURSE_RATING_BY_COURSE_ORG, 
