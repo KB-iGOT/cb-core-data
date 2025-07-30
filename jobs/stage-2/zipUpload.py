@@ -40,6 +40,37 @@ class ZipUploadModel:
     @staticmethod
     def get_date():
         return datetime.now().strftime("%Y-%m-%d")
+    def upload_parquet_files(self, config):
+        try:
+            print("Starting upload of Parquet files to GCP bucket")
+
+            base_path = "/mount/data/analytics/warehouse_pq/unified/"
+            user_details_file = os.path.join(base_path, "unified_user_details.parquet")
+            enrolments_file = os.path.join(base_path, "unified_enrolments.parquet")
+            org_hierarchy_file = os.path.join(base_path, "org_hierarchy.parquet")
+
+            # Check existence
+            user_details_exists = os.path.isfile(user_details_file)
+            enrolments_exists = os.path.isfile(enrolments_file)
+            org_hierarchy_exists = os.path.isfile(org_hierarchy_file)
+
+            if not user_details_exists:
+                print(f"WARNING: File not found: {user_details_file}")
+            if not enrolments_exists:
+                print(f"WARNING: File not found: {enrolments_file}")
+            if not org_hierarchy_exists:
+                print(f"WARNING: File not found: {org_hierarchy_file}")
+
+            # Proceed only if all exist
+            if user_details_exists and enrolments_exists and org_hierarchy_exists:
+                sync_reports(base_path, "/testSync/airflowData", config)
+                print("Completed uploading Parquet files to GCP bucket.")
+            else:
+                print("Upload skipped: One or more required files are missing.")
+
+        except Exception as e:
+            print(f"Error uploading Parquet files: {str(e)}")
+            raise
 
     def process_data(self, spark, config):
         try:
@@ -152,6 +183,8 @@ class ZipUploadModel:
 
             print(f"Warehouse report zipped at: {warehouse_zip_path}")
             sync_reports(warehouse_zip_path, config.fullReportSyncPath, config)
+
+            self.upload_parquet_files(config)
 
             total_time = time.time() - start_time
             print(f"\n✅ Optimized Zip Upload job generation completed in {total_time:.2f} seconds ({total_time / 60:.1f} minutes)")
