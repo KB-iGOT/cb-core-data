@@ -15,6 +15,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from dfutil.utils.redis import Redis
 from constants.ParquetFileConstants import ParquetFileConstants
 from constants.QueryConstants import QueryConstants
+from dfutil.assessment import assessmentDFUtil
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 
@@ -73,8 +74,94 @@ class DashboardSyncModel:
 
         orgWithMdoAdminCount = self.duckdb_executor.execute_query(spark,"orgWithMdoAdminCount", QueryConstants.ORG_BASED_MDO_ADMIN_COUNT)
         orgAdminCount = orgWithMdoAdminCount.collect()[0]["org_with_admin_count"]
-        # Redis.update("dashboard_org_with_mdo_admin_count", str(orgAdminCount))\
+        # Redis.update("dashboard_org_with_mdo_admin_count", str(orgAdminCount))
 
+        activeUsersByMDODF = self.duckdb_executor.execute_query(spark,"activeUsersByMDODF", QueryConstants.USER_COUNT_BY_ORG)
+        # Redis.dispatchDataFrame("dashboard_user_count_by_user_org",activeUsersByMDODF, "userOrgID", "count",config)
+
+        usersRegisteredYesterdayDF = self.duckdb_executor.execute_query(spark,"usersRegisteredYesterdayDF", QueryConstants.USER_REGISTERED_YESTERDAY)
+        usersRegisteredYesterdayCount = usersRegisteredYesterdayDF.collect()[0]["count"]
+        # Redis.update("dashboard_new_users_registered_yesterday", str(usersRegisteredYesterdayCount))
+
+        allCourseProgramDetailsWithRatingDF = self.duckdb_executor.execute_query(spark,"allCrsPgmDF", QueryConstants.COURSE_COUNT_BY_STATUS_GROUP_BY_ORG)
+        allCourseDF = allCourseProgramDetailsWithRatingDF.filter(F.col("category") == "Course").withColumn("avgRating",F.when(F.isnan("avgRating"), None).otherwise(F.col("avgRating")))
+        allCourseModeratedCourseDF = allCourseProgramDetailsWithRatingDF.filter(F.col("category").isin("Course", "Moderated Course")).withColumn("avgRating",F.when(F.isnan("avgRating"), None).otherwise(F.col("avgRating")))
+        liveContentDF = allCourseProgramDetailsWithRatingDF.filter(F.col("liveCourseCount") > 0).withColumn("avgRating",F.when(F.isnan("avgRating"), None).otherwise(F.col("avgRating")))
+
+        # Live Course Count (only Course)
+        liveCourseCountByCBPDF = allCourseDF.select(
+            "courseOrgID", F.col("liveCourseCount").alias("count")
+        ).filter("count IS NOT NULL")
+        # Redis.dispatchDataFrame("dashboard_live_course_count_by_course_org", liveCourseCountByCBPDF, "courseOrgID", "count",config)
+
+        # Live Course + Moderated Course
+        liveCourseModeratedCourseByCBPDF = allCourseModeratedCourseDF.select(
+            "courseOrgID", F.col("liveCourseCount").alias("count")
+        ).filter("count IS NOT NULL")
+        # Redis.dispatchDataFrame("dashboard_live_course_moderated_course_count_by_course_org", liveCourseModeratedCourseByCBPDF, "courseOrgID", "count",config)
+
+        # Live Content Count (all categories)
+        liveContentCountByCBPDF = liveContentDF.select(
+            "courseOrgID", F.col("liveCourseCount").alias("count")
+        ).filter("count IS NOT NULL")
+        # Redis.dispatchDataFrame("dashboard_live_content_count_by_course_org", liveContentCountByCBPDF, "courseOrgID", "count",config)
+
+        # Draft
+        draftCourseCountByCBPDF = allCourseDF.select(
+            "courseOrgID", F.col("draftCourseCount").alias("count")
+        ).filter("count IS NOT NULL")
+        # Redis.dispatchDataFrame("dashboard_draft_course_count_by_course_org", draftCourseCountByCBPDF, "courseOrgID", "count",config)
+
+        # Review
+        reviewCourseCountByCBPDF = allCourseDF.select(
+            "courseOrgID", F.col("reviewCourseCount").alias("count")
+        ).filter("count IS NOT NULL")
+        # Redis.dispatchDataFrame("dashboard_review_course_count_by_course_org", reviewCourseCountByCBPDF, "courseOrgID", "count",config)
+
+        # Retired
+        retiredCourseCountByCBPDF = allCourseDF.select(
+            "courseOrgID", F.col("retiredCourseCount").alias("count")
+        ).filter("count IS NOT NULL")
+        # Redis.dispatchDataFrame("dashboard_retired_course_count_by_course_org", retiredCourseCountByCBPDF, "courseOrgID", "count",config)
+
+        # Pending Publish
+        pendingPublishCourseCountByCBPDF = allCourseDF.select(
+            "courseOrgID", F.col("pendingPublishCourseCount").alias("count")
+        ).filter("count IS NOT NULL")
+        # Redis.dispatchDataFrame("dashboard_pending_publish_course_count_by_course_org", pendingPublishCourseCountByCBPDF, "courseOrgID", "count",config)
+
+        # --- Additional Metrics ---
+
+        # Count of MDOs with live course
+        orgWithLiveCourseCount = allCourseDF.filter(F.col("liveCourseCount") > 0).select("courseOrgID").distinct().count()
+        # Redis.update("dashboard_cbp_with_live_course_count", str(orgWithLiveCourseCount),config)
+
+        # Overall Avg Rating (Course only)
+        ratedCourseDF = allCourseDF.filter(F.col("avgRating").isNotNull())
+        if ratedCourseDF.count() > 0:
+            avgRatingOverall = ratedCourseDF.agg(F.avg("avgRating")).first()[0]
+            # Redis.update("dashboard_course_average_rating_overall", str(avgRatingOverall),config)
+
+        # Avg Rating by courseOrgID (Course)
+        avgRatingByCBPDF = ratedCourseDF.select(
+            "courseOrgID", F.col("avgRating").alias("ratingAverage")
+        )
+        # Redis.dispatchDataFrame("dashboard_course_average_rating_by_course_org", avgRatingByCBPDF, "courseOrgID", "ratingAverage",config)
+
+        # Avg Rating by courseOrgID (Course + Moderated Course)
+        ratedCourseModeratedDF = allCourseModeratedCourseDF.filter(F.col("avgRating").isNotNull())
+        courseModeratedCourseAvgRatingByCBPDF = ratedCourseModeratedDF.select(
+            "courseOrgID", F.col("avgRating").alias("ratingAverage")
+        )
+        # Redis.dispatchDataFrame("dashboard_course_moderated_course_average_rating_by_course_org", courseModeratedCourseAvgRatingByCBPDF, "courseOrgID", "ratingAverage",config)
+
+        ratedLiveContentDF = liveContentDF.filter(F.col("avgRating").isNotNull())
+        avgContentRatingByCBPDF = ratedLiveContentDF.groupBy("courseOrgID").agg(
+            F.avg("avgRating").alias("ratingAverage")
+        )
+        # Redis.dispatchDataFrame("dashboard_content_average_rating_by_course_org", avgContentRatingByCBPDF, "courseOrgID", "ratingAverage",config)
+
+            
         return
 
     def process_data(self, spark, config):

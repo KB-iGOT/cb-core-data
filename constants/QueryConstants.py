@@ -94,21 +94,47 @@ class QueryConstants:
 
 
     USER_COUNT_BY_ORG = f"""Select  
-                            userOrgID,  
-                            count(*)  
-                            from read_parquet('{ParquetFileConstants.USER_COMPUTED_PARQUET_FILE}/**.parquet')  
-                            GROUP BY userOrgID  
-                            order by count(*) DESC"""
+                                userOrgID,  
+                                count(*)  
+                                from read_parquet('{ParquetFileConstants.USER_COMPUTED_PARQUET_FILE}/**.parquet')
+                                WHERE userStatus = 1   
+                                GROUP BY userOrgID  
+                                order by count(*) DESC"""
+    
+    USER_REGISTERED_YESTERDAY=f"""SELECT  count(*) as count
+                                    FROM read_parquet('{ParquetFileConstants.USER_COMPUTED_PARQUET_FILE}/**.parquet')
+                                    WHERE userStatus = 1   
+                                    AND userCreatedTimestamp >= extract(epoch from date_trunc('day', current_timestamp - interval '1 day')) * 1000
+                                    AND userCreatedTimestamp < extract(epoch from date_trunc('day', current_timestamp)) * 1000;"""
 
     # Fixed: Added missing comma and corrected path
-    COURSE_COUNT_BY_STATUS_GROUP_BY_ORG = f"""Select courseOrgID,  
-                                                    count(*) as totalCourseCount,  
-                                                    count(case when courseStatus = 'Live' THEN 1 END) as liveCourseCount,  
-                                                    count(case when courseStatus = 'draft' OR courseStatus = 'Draft'  THEN 1 END) as draftCourseCount,  
-                                                    count(case when courseStatus = 'Review' THEN 1 END) as reviewCourseCount,  
-                                                    count(case when courseStatus = 'Retired' THEN 1 END) as retiredCourseCount,  
-                                                    count(case when courseReviewStatus = 'SentToPublish' THEN 1 END) as sentForPublishCourseCount  
-                                                    from read_parquet('{ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE}/**.parquet') where category = 'Course' GROUP BY courseOrgID order by count(*) DESC"""
+    COURSE_COUNT_BY_STATUS_GROUP_BY_ORG = f"""SELECT 
+                                            main.courseOrgID,
+                                            main.category,
+                                            COUNT(*) AS totalCourseCount,
+                                            COUNT(CASE WHEN main.courseStatus = 'Live' THEN 1 END) AS liveCourseCount,
+                                            COUNT(CASE WHEN LOWER(main.courseStatus) = 'draft' THEN 1 END) AS draftCourseCount,
+                                            COUNT(CASE WHEN main.courseStatus = 'Review' THEN 1 END) AS reviewCourseCount,
+                                            COUNT(CASE WHEN main.courseStatus = 'Retired' THEN 1 END) AS retiredCourseCount,
+                                            COUNT(CASE WHEN main.courseStatus = 'Review' AND main.courseReviewStatus = 'Reviewed' THEN 1 END) AS pendingPublishCourseCount,
+                                            AVG(ratings.ratingAverage) AS avgRating
+                                        FROM 
+                                            read_parquet('{ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE}/**.parquet') AS main
+                                        LEFT JOIN 
+                                            (
+                                                SELECT 
+                                                    courseID,
+                                                    LOWER(category) AS categoryLower,
+                                                    ratingAverage
+                                                FROM 
+                                                    read_parquet('{ParquetFileConstants.RATING_SUMMARY_COMPUTED_PARQUET_FILE}/**.parquet')
+                                            ) AS ratings
+                                        ON 
+                                            main.courseID = ratings.courseID AND LOWER(main.category) = ratings.categoryLower
+                                        GROUP BY 
+                                            main.courseOrgID, main.category
+                                        ORDER BY 
+                                            totalCourseCount DESC;"""
 
     # Fixed: Moved WHERE clause to correct position and changed == to =
     AVG_COURSE_RATING_BY_COURSE_ORG = f"""SELECT courseOrgID,  
