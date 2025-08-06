@@ -89,7 +89,9 @@ def main():
         ("Org-User Mapping with Hierarchy", userDFUtil.preComputeOrgHierarchyWithUser),
         ("Enrolment Warehouse", enrolmentDFUtil.preComputeUserEnrolmentWarehouseData),
         ("ACBP Enrolment Computation", acbpDFUtil.preComputeACBPData),
-        ("Old Assessment Data", assessmentDFUtil.precomputeOldAssessmentDataframe)
+        ("Old Assessment Data", assessmentDFUtil.precomputeOldAssessmentDataframe),
+        ("Enrolment-Content-UserOrg", enrolmentDFUtil.preComputeUserOrgEnrolmentContent)
+
     ]
     
     try:

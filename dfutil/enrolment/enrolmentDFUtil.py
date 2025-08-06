@@ -138,12 +138,13 @@ def preComputeExternalEnrolment(spark: SparkSession,) -> DataFrame:
     exportDFToParquet(externalEnrolmentDF,ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
     
 
-def preComputeUserOrgEnrolment(
-    enrolmentDF: DataFrame,
-    contentOrgDF: DataFrame,
-    userOrgDF: DataFrame,
+def preComputeUserOrgEnrolmentContent(
     spark: SparkSession,
 ) -> DataFrame:
+    
+    enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+    userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+    contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
     category_list = contentOrgDF.select("category") \
         .distinct() \
         .filter(F.col("category").isNotNull() & (F.col("category") != "")) \
@@ -165,7 +166,8 @@ def preComputeUserOrgEnrolment(
     old_completions_df = withOldCompletionStatusColumn(completion_percentage_df)
     final_df = withUserCourseCompletionStatusColumn(old_completions_df)
     
-    return final_df
+    exportDFToParquet(final_df,ParquetFileConstants.ENROLMENT_CONTENT_USER_COMPUTED_PARQUET_FILE)
+
 
 def withCompletionPercentageColumn(df: DataFrame) -> DataFrame:
     """Calculate completion percentage with boundary checks"""
