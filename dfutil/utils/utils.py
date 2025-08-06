@@ -155,3 +155,35 @@ def has_column(df: DataFrame, column_name: str) -> bool:
     Check if DataFrame has a specific column
     """
     return column_name in df.columns
+
+def read_elasticsearch_data(self, host: str, index: str, query: str, fields: list, array_fields: list) -> "DataFrame":
+        """Read data from Elasticsearch"""
+        dfr = self.spark.read.format("org.elasticsearch.spark.sql") \
+                .option("es.read.metadata", "false") \
+                .option("es.nodes", host) \
+                .option("es.port", self.config.sparkElasticsearchConnectionPort) \
+                .option("es.index.auto.create", "false") \
+                .option("es.nodes.wan.only", "true") \
+                .option("es.nodes.discovery", "false")
+            
+        # Add array field handling if specified
+        if array_fields:
+            dfr = dfr.option("es.read.field.as.array.include", ",".join(array_fields))
+        
+        # Add query and load data
+        df = dfr.option("query", query).load(index)
+        
+        # Select only the specified fields
+        if fields:
+            # Create column expressions for field selection
+            field_cols = [col(f) for f in fields]
+            df = df.select(*field_cols)
+        
+        # Persist with MEMORY_ONLY storage level for performance
+        df = df.persist(StorageLevel.MEMORY_ONLY)
+        
+        # Force evaluation to ensure data is loaded
+        count = df.count()
+        self.logger.info(f"Successfully loaded {count} rows from Elasticsearch index: {index}")
+        
+        return df
