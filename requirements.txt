@@ -3,3 +3,4 @@ pytest
 duckdb
 pandas
 redis
+google-cloud-storage
