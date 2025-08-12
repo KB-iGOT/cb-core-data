@@ -142,7 +142,7 @@ class ZipUploadModel:
                             os.remove(os.path.join(mdoid_path, f))
 
             print(f"All MDOID folders zipped with password at: {merged_dir}")
-            sync_reports(merged_dir, config.mdoReportsSyncPath, config)
+            sync_reports(merged_dir, config.mdoReportSyncPath, config)
 
             # ------------------ Part 2: Convert Parquet to CSV & Zip for full reports------------------ # '''
 
@@ -196,7 +196,7 @@ class ZipUploadModel:
 def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
-        .appName("Zip Upload Model - Cached") \
+        .appName("Zip Upload Model") \
         .config("spark.executor.memory", "42g") \
         .config("spark.driver.memory", "10g") \
         .config("spark.sql.shuffle.partitions", "64") \
@@ -209,14 +209,17 @@ def main():
         .config("spark.shuffle.io.retryWait", "10s") \
         .getOrCreate()
     # Create model instance
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     start_time = datetime.now()
     print(f"[START] ZipUpload processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = ZipUploadModel()
-    model.process_data(spark=spark)
+    model.process_data(spark,config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] ZipUpload completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
+    spark.stop()
 
 
 if __name__ == "__main__":
