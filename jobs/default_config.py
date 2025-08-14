@@ -1,18 +1,18 @@
-# config_defaults.py - Default configuration values
 import os
 from pathlib import Path
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 
 DEFAULT_CONFIG = {
     # Debug and Validation
     'debug': 'true',
     'validation': 'true',
-    
+
     # Redis Configuration
     'redisHost': '192.168.3.249',
     'redisPort': '6379',
     'redisDB': '12',
-    
+
     # Spark Connection Hosts
     'sparkCassandraConnectionHost': '192.168.3.211',
     'sparkDruidRouterHost': '192.168.3.91',
@@ -20,10 +20,10 @@ DEFAULT_CONFIG = {
     'sparkElasticsearchAuditConnectionHost': '10.175.5.10',
     'sparkElasticsearchConnectionPort': '9200',
     'sparkMongoConnectionHost': '192.168.3.178',
-    
+
     # External Service Configuration
     'fracBackendHost': 'frac-dictionary.karmayogi.nic.in',
-    
+
     # ML/Survey Configuration
     'solutionIDs': '',
     'mlMongoDatabase': 'ml-survey',
@@ -35,13 +35,13 @@ DEFAULT_CONFIG = {
     'baseUrlForEvidences': 'www.https://igotkarmayogi.gov.in/',
     'mlReportPath': 'standalone-reports/ml-report',
     'includeExpiredSolutionIDs': 'true',
-    
+
     # Batch Size Configuration
     'SurveyQuestionReportBatchSize': '2000',
     'SurveyStatusReportBatchSize': '20000',
     'ObservationQuestionReportBatchSize': '2000',
     'ObservationStatusReportBatchSize': '15000',
-    
+
     # PostgreSQL Application Database
     'appPostgresHost': '192.168.3.178:5432',
     'appPostgresUsername': 'sunbird',
@@ -50,13 +50,11 @@ DEFAULT_CONFIG = {
     'appOrgHierarchyTable': 'org_hierarchy_v4',
     'postgresCompetencyTable': 'data_node',
     'postgresCompetencyHierarchyTable': 'node_mapping',
-    
+
     # PostgreSQL Data Warehouse
-
-
-    'dwPostgresHost': '10.175.4.17:5432',
+    'dwPostgresHost': '192.168.3.211:5432',
     'dwPostgresUsername': 'postgres',
-    'dwPostgresCredential': 'password123',
+    'dwPostgresCredential': 'Password@12345678',
     'dwPostgresSchema': 'warehouse',
     'dwUserActivityTable': 'user_activity',
     'dwUserTable': 'user_detail',
@@ -75,16 +73,16 @@ DEFAULT_CONFIG = {
     'dwSLWMdoLeaderboardTable': 'slw_mdo_leaderboard',
     'dwSLWMdoTopLearnerTable': 'slw_mdo_top_learners',
     'dwNLWUserLeaderboardTable': 'nlw_user_leaderboard',
-    
+
     # Cassandra Keyspaces
     'cassandraUserKeyspace': 'sunbird',
     'cassandraCourseKeyspace': 'sunbird_courses',
     'cassandraHierarchyStoreKeyspace': 'dev_hierarchy_store',
     'cassandraUserFeedKeyspace': 'sunbird_notifications',
-    
+
     # Cassandra Core Host
     'lpCassandraHost': '192.168.3.211',
-    
+
     # Cassandra Tables
     'cassandraUserTable': 'user',
     'cassandraUserRolesTable': 'user_roles',
@@ -115,11 +113,11 @@ DEFAULT_CONFIG = {
     'cassandraMDOLearnerLeaderboardTable': 'mdo_learner_leaderboard',
     'cassandraSLWMdoLeaderboardTable': 'slw_mdo_leaderboard',
     'cassandraSLWMdoTopLearnerTable': 'slw_mdo_top_learners',
-    
+
     # MongoDB Configuration
     'mongoDatabase': 'nodebb',
     'mongoDBCollection': 'objects',
-    
+
     # Storage Configuration
     'key': 'aws_storage_key',
     'secret': 'aws_storage_secret',
@@ -129,7 +127,7 @@ DEFAULT_CONFIG = {
     'storageKeyConfig': 'storage.key.config',
     'storageSecretConfig': 'storage.secret.config',
     'dpRawTelemetryBackupLocation': 'raw-telemetry-backup',
-    
+
     # Survey and Assessment Configuration
     'platformRatingSurveyId': '1696404440829',
     'cutoffTime': '60.0',
@@ -137,7 +135,7 @@ DEFAULT_CONFIG = {
     'mdoIDs': '',
     'anonymousAssessmentLoggedInUserContentIDs': 'do_1141533540853432321675,do_1141533857591132161321,do_1141525365329264641663,do_1141527106280980481664',
     'anonymousAssessmentNonLoggedInUserAssessmentIDs': 'do_11415336159226265611',
-    
+
     # Report Paths
     'userReportPath': 'standalone-reports/user-report',
     'userEnrolmentReportPath': 'standalone-reports/user-enrollment-report',
@@ -153,7 +151,7 @@ DEFAULT_CONFIG = {
     'kcmReportPath': 'standalone-reports/kcm-report',
     'commsConsoleReportPath': 'standalone-reports/comms-console',
     'validationReportPath': 'standalone-reports/validation-report',
-    
+
     # Communications Console Configuration
     'commsConsolePrarambhEmailSuffix': '.kb@karmayogi.in',
     'commsConsoleNumDaysToConsider': '15',
@@ -161,18 +159,18 @@ DEFAULT_CONFIG = {
     'commsConsolePrarambhTags': 'rojgaar,rozgaar,rozgar',
     'commsConsolePrarambhCbpIds': 'do_113882965067743232154,do_1137468666262241281756,do_1139032976499261441156',
     'commsConsolePrarambhNCount': '2',
-    
+
     # Elasticsearch Configuration
     'esFormDataIds': '1718964921012,1720793361489',
     'esFormDataIndex': 'form_data',
-    
+
     # Learning Week Configuration
     'nationalLearningWeekStart': '2024-10-19 00:00:00',
     'nationalLearningWeekEnd': '2024-10-27 23:59:59',
     'stateLearningWeekStart': '2024-10-19 00:00:00',
     'stateLearningWeekEnd': '2025-03-14 23:59:59',
     'sizeBucketString': '1-100-XS,101-500-S,501-1000-M,1001-10000-L,10001-25000-X,above 25000-XXL',
-    
+
     # Zip Reports Configuration
     'prefixDirectoryPath': 'standalone-reports',
     'destinationDirectoryPath': 'standalone-reports/merged',
@@ -184,11 +182,10 @@ DEFAULT_CONFIG = {
     'mdoReportSyncPath': 'standalone-reports/pyspark/',
     'fullReportSyncPath': 'standalone-reports/pyspark/fullReport/',
     'directoriesToSelect': ["blended-program-report-mdo","cbp-report-mdo-summary","course-report","cba-report","cbp-report-mdo-enrolment","user-report","user-enrollment-report"],
-    'pysparkDirectoriesToSelect' : ["blended-program-report-mdo","cbp-report-mdo-summary","course-report","cba-report","cbp-report-mdo-enrolment","user-report","user-enrollment-report"],
+    'pysparkDirectoriesToSelect': ["blended-program-report-mdo","cbp-report-mdo-summary","course-report","cba-report","cbp-report-mdo-enrolment","user-report","user-enrollment-report"],
     'googleServiceAccountFilePath': '/home/analytics/pyspark/jobs/gcp_service_account.json',
     'gcpBucket': 'igotproddp',
     'password': '123456',
-
 
     # Job Configuration
     'parallelization': '16',
@@ -198,7 +195,7 @@ DEFAULT_CONFIG = {
     'deviceMapping': False,
     'reportSyncEnableSL': 'true',
     'reportZipSyncEnable': 'true',
-    
+
     # Kafka/Messaging Configuration
     'brokerList': '192.168.3.249:9092',
     'topic': 'dev.dashboard.default',
@@ -229,13 +226,14 @@ DEFAULT_SIDE_OUTPUT = {
 # Add sideOutput to DEFAULT_CONFIG
 DEFAULT_CONFIG['sideOutput'] = DEFAULT_SIDE_OUTPUT
 
+
 class SimpleConfig:
     def __init__(self, config_dict, defaults=None):
         # Set defaults first
         if defaults:
             for key, value in defaults.items():
                 setattr(self, key, value)
-        
+
         # Override with actual config values
         for key, value in config_dict.items():
             # SIMPLE FIX: If value has {{ }} and we're local, use default instead
@@ -244,12 +242,13 @@ class SimpleConfig:
                 if hasattr(self, key):
                     # print(f"[LOCAL] Using default for {key}: {getattr(self, key)}")
                     continue  # Keep the default value, don't override
-            
+
             setattr(self, key, value)
-    
+
     def get(self, key, default=None):
         """Backward compatibility with .get() method"""
         return getattr(self, key, default)
+
 
 def create_config(config_dict):
     """Create a SimpleConfig instance with default values"""
