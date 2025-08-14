@@ -248,14 +248,10 @@ def calculateCourseProgress(userCourseProgramCompletionDF):
 
 def preComputeUserEnrolmentWarehouseData(spark):
     primary_categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
-    enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
     userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-    contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(
-        col("category").isin(primary_categories)
-    )
-    allCourseProgramCompletionWithDetailsDFWithRating = preComputeUserOrgEnrolment(
-        enrolmentDF, contentOrgDF, userOrgDF, spark
-    )
+
+    allCourseProgramCompletionWithDetailsDFWithRating = spark.read.parquet(ParquetFileConstants.ENROLMENT_CONTENT_USER_COMPUTED_PARQUET_FILE).filter(col("category").isin(primary_categories))
+
     platform_enrolments_df = (
         allCourseProgramCompletionWithDetailsDFWithRating
         .filter(col("userStatus").cast(IntegerType()) == 1)  # Only active users

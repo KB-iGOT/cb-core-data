@@ -72,7 +72,6 @@ def main():
     # Track overall progress
     total_start_time = time.time()
     completed_stages = 0
-    total_stages = 10
     
     # Define processing stages
     processing_stages = [
@@ -87,12 +86,13 @@ def main():
         ("Enrolment Master Data", enrolmentDFUtil.preComputeEnrolment),
         ("External Enrolment", enrolmentDFUtil.preComputeExternalEnrolment),
         ("Org-User Mapping with Hierarchy", userDFUtil.preComputeOrgHierarchyWithUser),
+        ("Enrolment-Content-UserOrg", enrolmentDFUtil.preComputeUserOrgEnrolmentContent),
         ("Enrolment Warehouse", enrolmentDFUtil.preComputeUserEnrolmentWarehouseData),
         ("ACBP Enrolment Computation", acbpDFUtil.preComputeACBPData),
         ("Old Assessment Data", assessmentDFUtil.precomputeOldAssessmentDataframe),
-        ("Enrolment-Content-UserOrg", enrolmentDFUtil.preComputeUserOrgEnrolmentContent)
 
     ]
+    total_stages = len(processing_stages)
     
     try:
         for stage_name, stage_function in processing_stages:

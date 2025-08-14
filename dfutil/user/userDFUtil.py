@@ -207,6 +207,7 @@ def exportDFToParquet(df: DataFrame, outputFile: str):
     Writes the DataFrame to Parquet file using snappy compression.
     """
     df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
+    df.unpersist(blocking=True)
     
 def timestampStringToLong(df: DataFrame, column_names: list, format: str = "yyyy-MM-dd HH:mm:ss:SSSZ") -> DataFrame:
     result_df = df

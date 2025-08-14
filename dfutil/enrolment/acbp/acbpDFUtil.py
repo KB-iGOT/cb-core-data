@@ -90,6 +90,7 @@ def explodeAcbpData(spark,acbp_df):
 def exportDFToParquet(df,outputFile):
 #    df_cleaned = drop_all_ntz_fields(df)
    df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
+   df.unpersist(blocking=True)
 
 def cast_ntz_to_string_recursively(schema, prefix=""):
     """

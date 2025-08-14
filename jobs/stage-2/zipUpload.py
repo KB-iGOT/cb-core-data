@@ -196,7 +196,6 @@ class ZipUploadModel:
 def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
-        .appName("Zip Upload Model - Cached") \
         .appName("Zip Upload Model") \
         .config("spark.executor.memory", "42g") \
         .config("spark.driver.memory", "10g") \
