@@ -84,7 +84,7 @@ class ZipUploadModel:
 
             # ------------------ Part 1: Merge & Zip MDOID Reports ------------------ #
             base_dir = os.path.join(config.localReportDir, config.prefixDirectoryPath)
-            directories_to_select = config.directoriesToSelect
+            directories_to_select = config.pysparkDirectoriesToSelect
             today_date = datetime.today().strftime('%Y-%m-%d')
             merged_dir = os.path.join(config.localReportDir, config.destinationDirectoryPath)
             kcm_dir = os.path.join(base_dir, "kcm-report", today_date, "ContentCompetencyMapping")
@@ -214,7 +214,7 @@ def main():
     start_time = datetime.now()
     print(f"[START] ZipUpload processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = ZipUploadModel()
-    model.process_data(spark,config)
+    model.process_data(spark, config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] ZipUpload completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
