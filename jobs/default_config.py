@@ -52,9 +52,11 @@ DEFAULT_CONFIG = {
     'postgresCompetencyHierarchyTable': 'node_mapping',
     
     # PostgreSQL Data Warehouse
-    'dwPostgresHost': '192.168.3.211:5432',
+
+
+    'dwPostgresHost': '10.175.4.17:5432',
     'dwPostgresUsername': 'postgres',
-    'dwPostgresCredential': 'Password@12345678',
+    'dwPostgresCredential': 'password123',
     'dwPostgresSchema': 'warehouse',
     'dwUserActivityTable': 'user_activity',
     'dwUserTable': 'user_detail',
@@ -179,9 +181,10 @@ DEFAULT_CONFIG = {
     'baseCachePath': f'{BASE_DIR}/data-res/pq_files/cache_pq/',
     'bqScriptPath': f'{BASE_DIR}/bq-scripts.sh',
     'warehouseOutputDir': f'{BASE_DIR}/warehouse/fullReport/',
-    'mdoReportSyncPath': '/mount/data/analytics/standalone-reports/pyspark/',
-    'fullReportSyncPath': '/mount/data/analytics/standalone-reports/pyspark/fullReport/',
-    'directoriesToSelect': 'blended-program-report-mdo,cbp-report-mdo-summary,course-report,cba-report,cbp-report-mdo-enrolment,user-report,user-enrollment-report',
+    'mdoReportSyncPath': 'standalone-reports/pyspark/',
+    'fullReportSyncPath': 'standalone-reports/pyspark/fullReport/',
+    'directoriesToSelect': ["blended-program-report-mdo","cbp-report-mdo-summary","course-report","cba-report","cbp-report-mdo-enrolment","user-report","user-enrollment-report"],
+    'pysparkDirectoriesToSelect' : ["blended-program-report-mdo","cbp-report-mdo-summary","course-report","cba-report","cbp-report-mdo-enrolment","user-report","user-enrollment-report"],
     'googleServiceAccountFilePath': '/home/analytics/pyspark/jobs/gcp_service_account.json',
     'gcpBucket': 'igotproddp',
     'password': '123456',
