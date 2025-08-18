@@ -19,6 +19,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
+from dfutil.utils import utils
 
 class DataExhaustModel:
     @staticmethod
@@ -62,37 +63,6 @@ class DataExhaustModel:
             .option("driver", "org.postgresql.Driver") \
             .load()
     
-    def read_elasticsearch_data(self, host: str, index: str, query: str, fields: list, array_fields: list) -> "DataFrame":
-        """Read data from Elasticsearch"""
-        dfr = self.spark.read.format("org.elasticsearch.spark.sql") \
-                .option("es.read.metadata", "false") \
-                .option("es.nodes", host) \
-                .option("es.port", self.config.sparkElasticsearchConnectionPort) \
-                .option("es.index.auto.create", "false") \
-                .option("es.nodes.wan.only", "true") \
-                .option("es.nodes.discovery", "false")
-            
-        # Add array field handling if specified
-        if array_fields:
-            dfr = dfr.option("es.read.field.as.array.include", ",".join(array_fields))
-        
-        # Add query and load data
-        df = dfr.option("query", query).load(index)
-        
-        # Select only the specified fields
-        if fields:
-            # Create column expressions for field selection
-            field_cols = [col(f) for f in fields]
-            df = df.select(*field_cols)
-        
-        # Persist with MEMORY_ONLY storage level for performance
-        df = df.persist(StorageLevel.MEMORY_ONLY)
-        
-        # Force evaluation to ensure data is loaded
-        count = df.count()
-        self.logger.info(f"Successfully loaded {count} rows from Elasticsearch index: {index}")
-        
-        return df
     
     def write_parquet(self, df: "DataFrame", path: str, partition_cols: list = None, mode: str = "overwrite"):
         """Write DataFrame to Parquet with optimization"""
@@ -356,7 +326,7 @@ class DataExhaustModel:
             fields_clause = ",".join([f'"{f}"' for f in fields])
             query = f'{{"_source":[{fields_clause}],"query":{{"bool":{{"should":[{should_clause}]}}}}}}'
             
-            es_content_df = self.read_elasticsearch_data(
+            es_content_df = utils.read_elasticsearch_data(
                 self.config.sparkElasticsearchConnectionHost, 
                 "compositesearch", 
                 query, 
@@ -487,7 +457,7 @@ class DataExhaustModel:
             fields_clause_events = ",".join([f'"{f}"' for f in fields_events])
             event_query = f'{{"_source":[{fields_clause_events}],"query":{{"bool":{{"should":[{should_clause_events}]}}}}}}'
             
-            event_data_df = self.read_elasticsearch_data(
+            event_data_df = utils.read_elasticsearch_data(
                 self.config.sparkElasticsearchConnectionHost, 
                 "compositesearch", 
                 event_query, 

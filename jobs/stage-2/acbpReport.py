@@ -244,10 +244,10 @@ class ACBPModel:
 def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
-        .appName("User Enrolment Report Model - Cached") \
+        .appName("ACBP Report") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "20g") \
-        .config("spark.driver.memory", "15g") \
+        .config("spark.executor.memory", "25g") \
+        .config("spark.driver.memory", "20g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \

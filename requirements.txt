@@ -1,2 +1,6 @@
 pyspark>=3.3.0
 pytest
+duckdb
+pandas
+redis
+google-cloud-storage

@@ -40,6 +40,37 @@ class ZipUploadModel:
     @staticmethod
     def get_date():
         return datetime.now().strftime("%Y-%m-%d")
+    def upload_parquet_files(self, config):
+        try:
+            print("Starting upload of Parquet files to GCP bucket")
+
+            base_path = "/mount/data/analytics/warehouse_pq/unified/"
+            user_details_file = os.path.join(base_path, "unified_user_details.parquet")
+            enrolments_file = os.path.join(base_path, "unified_enrolments.parquet")
+            org_hierarchy_file = os.path.join(base_path, "org_hierarchy.parquet")
+
+            # Check existence
+            user_details_exists = os.path.isfile(user_details_file)
+            enrolments_exists = os.path.isfile(enrolments_file)
+            org_hierarchy_exists = os.path.isfile(org_hierarchy_file)
+
+            if not user_details_exists:
+                print(f"WARNING: File not found: {user_details_file}")
+            if not enrolments_exists:
+                print(f"WARNING: File not found: {enrolments_file}")
+            if not org_hierarchy_exists:
+                print(f"WARNING: File not found: {org_hierarchy_file}")
+
+            # Proceed only if all exist
+            if user_details_exists and enrolments_exists and org_hierarchy_exists:
+                sync_reports(base_path, "/testSync/airflowData", config)
+                print("Completed uploading Parquet files to GCP bucket.")
+            else:
+                print("Upload skipped: One or more required files are missing.")
+
+        except Exception as e:
+            print(f"Error uploading Parquet files: {str(e)}")
+            raise
 
     def process_data(self, spark, config):
         try:
@@ -53,7 +84,7 @@ class ZipUploadModel:
 
             # ------------------ Part 1: Merge & Zip MDOID Reports ------------------ #
             base_dir = os.path.join(config.localReportDir, config.prefixDirectoryPath)
-            directories_to_select = config.directoriesToSelect
+            directories_to_select = config.pysparkDirectoriesToSelect
             today_date = datetime.today().strftime('%Y-%m-%d')
             merged_dir = os.path.join(config.localReportDir, config.destinationDirectoryPath)
             kcm_dir = os.path.join(base_dir, "kcm-report", today_date, "ContentCompetencyMapping")
@@ -111,7 +142,7 @@ class ZipUploadModel:
                             os.remove(os.path.join(mdoid_path, f))
 
             print(f"All MDOID folders zipped with password at: {merged_dir}")
-            sync_reports(merged_dir, config.mdoReportsSyncPath, config)
+            sync_reports(merged_dir, config.mdoReportSyncPath, config)
 
             # ------------------ Part 2: Convert Parquet to CSV & Zip for full reports------------------ # '''
 
@@ -153,6 +184,8 @@ class ZipUploadModel:
             print(f"Warehouse report zipped at: {warehouse_zip_path}")
             sync_reports(warehouse_zip_path, config.fullReportSyncPath, config)
 
+            self.upload_parquet_files(config)
+
             total_time = time.time() - start_time
             print(f"\n✅ Optimized Zip Upload job generation completed in {total_time:.2f} seconds ({total_time / 60:.1f} minutes)")
 
@@ -163,7 +196,7 @@ class ZipUploadModel:
 def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
-        .appName("Zip Upload Model - Cached") \
+        .appName("Zip Upload Model") \
         .config("spark.executor.memory", "42g") \
         .config("spark.driver.memory", "10g") \
         .config("spark.sql.shuffle.partitions", "64") \
@@ -176,14 +209,17 @@ def main():
         .config("spark.shuffle.io.retryWait", "10s") \
         .getOrCreate()
     # Create model instance
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     start_time = datetime.now()
     print(f"[START] ZipUpload processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = ZipUploadModel()
-    model.process_data(spark=spark)
+    model.process_data(spark, config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] ZipUpload completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
+    spark.stop()
 
 
 if __name__ == "__main__":

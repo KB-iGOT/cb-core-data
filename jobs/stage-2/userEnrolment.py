@@ -62,15 +62,12 @@ class UserEnrolmentModel:
             primary_categories= ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
             
             # Load and cache base DataFrames that are used multiple times
-            enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
             userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-            contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("category").isin(primary_categories))
 
             print("🔄 Processing platform enrolments...")
             
             # Compute and cache the main platform join result
-            allCourseProgramCompletionWithDetailsDFWithRating = enrolmentDFUtil.preComputeUserOrgEnrolment(
-                enrolmentDF, contentOrgDF, userOrgDF, spark)
+            allCourseProgramCompletionWithDetailsDFWithRating = spark.read.parquet(ParquetFileConstants.ENROLMENT_CONTENT_USER_COMPUTED_PARQUET_FILE).filter(col("category").isin(primary_categories))
             
             # Process platform data and cache the result
             df = (

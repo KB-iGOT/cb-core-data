@@ -506,7 +506,7 @@ def bpBatchDataframe(spark):
 def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
-        .appName("Blended Program Report Model - Cached") \
+        .appName("Blended Program Report") \
         .config("spark.executor.memory", "30g") \
         .config("spark.driver.memory", "30g") \
         .config("spark.sql.shuffle.partitions", "64") \
