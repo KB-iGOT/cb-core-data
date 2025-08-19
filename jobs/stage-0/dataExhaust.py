@@ -327,7 +327,9 @@ class DataExhaustModel:
             query = f'{{"_source":[{fields_clause}],"query":{{"bool":{{"should":[{should_clause}]}}}}}}'
             
             es_content_df = utils.read_elasticsearch_data(
-                self.config.sparkElasticsearchConnectionHost, 
+                self.spark,
+                self.config.sparkElasticsearchConnectionHost,
+                self.config.sparkElasticsearchConnectionPort,
                 "compositesearch", 
                 query, 
                 fields, 
@@ -458,7 +460,9 @@ class DataExhaustModel:
             event_query = f'{{"_source":[{fields_clause_events}],"query":{{"bool":{{"should":[{should_clause_events}]}}}}}}'
             
             event_data_df = utils.read_elasticsearch_data(
-                self.config.sparkElasticsearchConnectionHost, 
+                self.spark,
+                self.config.sparkElasticsearchConnectionHost,
+                self.config.sparkElasticsearchConnectionPort,
                 "compositesearch", 
                 event_query, 
                 fields_events, 
