@@ -86,7 +86,6 @@ def main():
         ("Enrolment Master Data", enrolmentDFUtil.preComputeEnrolment),
         ("External Enrolment", enrolmentDFUtil.preComputeExternalEnrolment),
         ("Org-User Mapping with Hierarchy", userDFUtil.preComputeOrgHierarchyWithUser),
-        ("Enrolment-Content-UserOrg", enrolmentDFUtil.preComputeUserOrgEnrolmentContent),
         ("Enrolment Warehouse", enrolmentDFUtil.preComputeUserEnrolmentWarehouseData),
         ("ACBP Enrolment Computation", acbpDFUtil.preComputeACBPData),
         ("Old Assessment Data", assessmentDFUtil.precomputeOldAssessmentDataframe),

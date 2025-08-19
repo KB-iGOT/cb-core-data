@@ -1,5 +1,7 @@
 from pyspark.sql import SparkSession, DataFrame
 from pyspark import StorageLevel
+from pyspark.sql.functions import (
+    col)
 import requests
 import json
 from typing import Optional
@@ -156,12 +158,12 @@ def has_column(df: DataFrame, column_name: str) -> bool:
     """
     return column_name in df.columns
 
-def read_elasticsearch_data(self, host: str, index: str, query: str, fields: list, array_fields: list) -> "DataFrame":
+def read_elasticsearch_data(spark: SparkSession,host: str, port:str,index: str, query: str, fields: list, array_fields: list) -> "DataFrame":
         """Read data from Elasticsearch"""
-        dfr = self.spark.read.format("org.elasticsearch.spark.sql") \
+        dfr = spark.read.format("org.elasticsearch.spark.sql") \
                 .option("es.read.metadata", "false") \
                 .option("es.nodes", host) \
-                .option("es.port", self.config.sparkElasticsearchConnectionPort) \
+                .option("es.port",port) \
                 .option("es.index.auto.create", "false") \
                 .option("es.nodes.wan.only", "true") \
                 .option("es.nodes.discovery", "false")
@@ -184,6 +186,6 @@ def read_elasticsearch_data(self, host: str, index: str, query: str, fields: lis
         
         # Force evaluation to ensure data is loaded
         count = df.count()
-        self.logger.info(f"Successfully loaded {count} rows from Elasticsearch index: {index}")
+        print(f"Successfully loaded {count} rows from Elasticsearch index: {index}")
         
         return df
