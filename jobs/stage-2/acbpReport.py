@@ -161,18 +161,18 @@ class ACBPModel:
                     col("userOrgID").alias("mdoid"),
                     lit(currentDateTime).alias("Report_Last_Generated_On")
                 ) \
-                .fillna("").cache()
+                .fillna("")
             
 
 
-            print("📝 Writing CSV reports...")
-            dfexportutil.write_single_csv_duckdb(enrolmentReportDF, f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/CBPEnrollmentReport.csv",  f"{config.localReportDir}/temp/cbp-enrolment-report/{today}")
-            dfexportutil.write_csv_per_mdo_id_duckdb(
-                enrolmentReportDF, 
-                f"{config.localReportDir}/{config.acbpMdoEnrolmentReportPath}/{today}", 
-                'mdoid',
-                f"{config.localReportDir}/temp/cbp-enrolment-report/{today}"
-            )
+            print("📝 Writing combined CSV reports for enrollment...")
+            dfexportutil.write_csv_combined(
+                df=enrolmentReportDF,
+                single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/CBPEnrollmentReport.csv",
+                partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoEnrolmentReportPath}/{today}",
+                partition_column='mdoid',
+                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-enrolment-report/{today}")
+
 
             userSummaryReportDF = acbpEnrolmentDF \
                 .filter(
@@ -224,12 +224,13 @@ class ACBPModel:
                     col("userOrgID").alias("mdoid"),
                     lit(currentDateTime).alias("Report_Last_Generated_On"))
 
-            dfexportutil.write_single_csv_duckdb(userSummaryReportDF, f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/CBPUserSummaryReport.csv", f"{config.localReportDir}/temp/cbp-summary-report/{today}")
-            dfexportutil.write_csv_per_mdo_id_duckdb(
-                userSummaryReportDF, 
-                f"{config.localReportDir}/{config.acbpMdoSummaryReportPath}/{today}", 
-                'mdoid',
-                f"{config.localReportDir}/temp/cbp-summary-report/{today}"
+            print("📝 Writing combined CSV reports for user summary...")
+            dfexportutil.write_csv_combined(
+                df=userSummaryReportDF,
+                single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/CBPUserSummaryReport.csv",
+                partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoSummaryReportPath}/{today}",
+                partition_column='mdoid',
+                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-summary-report/{today}"
             )
 
             print("📦 Writing warehouse data...")
@@ -246,8 +247,8 @@ def main():
     spark = SparkSession.builder \
         .appName("ACBP Report") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "25g") \
-        .config("spark.driver.memory", "20g") \
+        .config("spark.executor.memory", "20g") \
+        .config("spark.driver.memory", "15g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \
