@@ -12,7 +12,7 @@ import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pyspark.sql import functions as F
-from pyspark.sql.types import StructType
+from pyspark.sql.types import StructType, MapType
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
@@ -71,14 +71,13 @@ class WeeklyClapsModel:
 
     def safe_to_json(self, df, col_name: str):
         """
-        Converts a column to JSON only if it's a struct, otherwise keeps it unchanged.
-        This mimics the Scala safeToJson(df, colName) logic.
+        Converts a column to JSON only if it's a struct or map, otherwise keeps it unchanged.
         """
         field = df.schema[col_name].dataType
-        if isinstance(field, StructType):
+        if isinstance(field, (StructType, MapType)):
             return F.to_json(F.col(col_name))
         else:
-            return F.col(col_name)
+            return F.col(col_name).cast("string")
 
     def process_data(self, spark, config):
         try:
