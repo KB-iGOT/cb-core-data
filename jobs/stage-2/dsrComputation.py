@@ -1,0 +1,201 @@
+import findspark
+
+findspark.init()
+import sys
+from pathlib import Path
+import pandas as pd
+from pyspark.sql import SparkSession, functions as F
+from pyspark.sql.functions import bround, col, broadcast, concat_ws, coalesce, lit, when, from_unixtime, countDistinct
+from pyspark.sql.functions import col, lit, coalesce, concat_ws, when, broadcast, get_json_object, rtrim
+from pyspark.sql.functions import col, from_json, explode_outer, coalesce, lit, format_string
+from pyspark.sql.types import StructType, ArrayType, StringType, BooleanType, StructField
+from pyspark.sql.types import MapType, StringType, StructType, StructField, FloatType, LongType, DateType, IntegerType
+from pyspark.sql.functions import col, when, size, lit, expr, unix_timestamp, date_format, from_json, current_timestamp, \
+    to_date, round, explode, to_utc_timestamp, from_utc_timestamp, to_timestamp, sum as spark_sum
+
+from datetime import datetime
+import sys
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from dfutil.content import contentDFUtil
+from dfutil.utils.utils import druidDFOption
+from dfutil.enrolment import enrolmentDFUtil
+from dfutil.utils import utils
+from dfutil.utils.redis import Redis
+from dfutil.user import userDFUtil
+from dfutil.dfexport import dfexportutil
+
+from constants.ParquetFileConstants import ParquetFileConstants
+from jobs.default_config import create_config
+from jobs.config import get_environment_config
+
+
+class DSRComputationModel:
+    def __init__(self):
+        self.class_name = "org.ekstep.analytics.dashboard.DSRComputationModel"
+
+    def name(self):
+        return "DSRComputationModel"
+
+    @staticmethod
+    def get_date():
+        return datetime.now().strftime("%Y-%m-%d")
+
+    @staticmethod
+    def current_date_time():
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+    def process_data(self, spark, config):
+        try:
+            output_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
+            orgDF = spark.read.parquet(f"{output_path}/orgHierarchy")
+            userDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwUserTable}")
+            eventsEnrolmentDataDF = spark.read.parquet(f"{config.warehouseReportDir}/eventEnrolmentDetails")
+            contentEnrolmentDataDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
+
+            # --- Active users (status == 1) joined with org
+            userWithOrgDF = userDF.join(orgDF, ["mdo_id"], "inner")
+            activeUsersDF = userWithOrgDF.filter(col("status") == lit(1))
+
+            # --- Content enrolments (active users only)
+            enrichedEnrolmentsDF = contentEnrolmentDataDF.join(activeUsersDF, ["user_id"], "inner")
+            total_enrolments = enrichedEnrolmentsDF.count()
+            #Redis.update("dashboard_enrolment_count", str(total_enrolments), conf=config)
+            Redis.update("dashboard_enrolment_count_pyspark_test", str(total_enrolments), conf=config)
+
+            # Unique users enrolled
+            unique_users_enrolled = enrichedEnrolmentsDF.agg(countDistinct("user_id").alias("c")).first()[0]
+            #Redis.update("dashboard_unique_users_enrolled_count", str(unique_users_enrolled), conf=config)
+            Redis.update("dashboard_unique_users_enrolled_count_pyspark_test", str(unique_users_enrolled), conf=config)
+
+            # Content completions (distinct certificate_id)
+            enrichedCompletedDF = (
+                contentEnrolmentDataDF.filter(col("certificate_id").isNotNull())
+                .join(activeUsersDF, ["user_id"], "inner")
+            )
+            total_content_completions = enrichedCompletedDF.select("certificate_id").distinct().count()
+            #Redis.update("dashboard_completed_count", str(total_content_completions), conf=config)
+            Redis.update("dashboard_completed_count_pyspark_test", str(total_content_completions), conf=config)
+
+            # --- Event metrics ---
+            enrichedEventEnrolmentsDF = eventsEnrolmentDataDF.join(activeUsersDF, ["user_id"], "inner")
+            total_event_enrolments = enrichedEventEnrolmentsDF.count()
+            #Redis.update("dashboard_events_enrolment_count", str(total_event_enrolments), conf=config)
+            Redis.update("dashboard_events_enrolment_count_pyspark_test", str(total_event_enrolments), conf=config)
+
+            enrichedEventCompletionsDF = (
+                eventsEnrolmentDataDF.filter(col("certificate_id").isNotNull())
+                .join(activeUsersDF, ["user_id"], "inner")
+            )
+            total_event_completions = enrichedEventCompletionsDF.select("certificate_id").distinct().count()
+            #Redis.update("dashboard_events_completed_count", str(total_event_completions), conf=config)
+            Redis.update("dashboard_events_completed_count_pyspark_test", str(total_event_completions), conf=config)
+
+            # --- Certificates generated yesterday (content + events) ---
+            prev_start, prev_end = self._prev_day_window_ist()
+
+            content_certs_yday = (
+                enrichedEnrolmentsDF.filter(col("certificate_id").isNotNull())
+                .filter((col("first_certificate_generated_on") >= lit(prev_start)) & (col("first_certificate_generated_on") <= lit(prev_end)))
+                .select("certificate_id").distinct().count()
+            )
+
+            event_certs_yday = (
+                enrichedEventEnrolmentsDF.filter(col("certificate_id").isNotNull())
+                .filter((col("completed_on_datetime") >= lit(prev_start)) & (col("completed_on_datetime") <= lit(prev_end)))
+                .select("certificate_id").distinct().count()
+            )
+
+            total_certs_yday = content_certs_yday + event_certs_yday
+            #Redis.update("lp_completed_yesterday_count", str(total_certs_yday), conf=config)
+            Redis.update("lp_completed_yesterday_count_pyspark_test", str(total_certs_yday), conf=config)
+
+            # --- Registered users (active) & registered yesterday ---
+            total_registered_users = activeUsersDF.count()
+            #Redis.update("mdo_total_registered_officer_count", str(total_registered_users), conf=config)
+            Redis.update("mdo_total_registered_officer_count_pyspark_test", str(total_registered_users), conf=config)
+
+            registered_yday = (
+                activeUsersDF
+                .filter((col("user_registration_date") > lit(prev_start)) & (col("user_registration_date") < lit(prev_end)))
+                .count()
+            )
+            #Redis.update("dashboard_new_users_registered_yesterday", str(registered_yday), conf=config)
+            Redis.update("dashboard_new_users_registered_yesterday_pyspark_test", str(registered_yday), conf=config)
+
+            # --- MAU (last 30 days) via Druid ---
+            loginSchema = StructType([StructField("user_id", StringType(), True)])
+            mau_query = """
+                SELECT DISTINCT(uid) AS user_id
+                FROM "summary-events"
+                WHERE dimensions_type = 'app'
+                  AND __time > CURRENT_TIMESTAMP - INTERVAL '30' DAY
+            """
+            mau_df = druidDFOption(mau_query, config.sparkDruidRouterHost, limit=1000000, spark=spark)
+            if mau_df is None:
+                mau_df = self._empty_df(spark, "user_id")
+            mau_with_mdo_df = mau_df.join(activeUsersDF, ["user_id"], "inner")
+            total_mau = mau_with_mdo_df.select("user_id").distinct().count()
+            #Redis.update("lp_monthly_active_users", str(total_mau), conf= config)
+            Redis.update("lp_monthly_active_users_pyspark_test", str(total_mau), conf= config)
+
+            # --- Users logged in yesterday via Druid ---
+            login_yday_query = (
+                """
+                SELECT DISTINCT(actor_id) AS user_id
+                FROM "telemetry-events-syncts"
+                WHERE eid = 'IMPRESSION'
+                  AND actor_type = 'User'
+                  AND __time >= TIME_FLOOR(CURRENT_TIMESTAMP + INTERVAL '5:30' HOUR TO MINUTE - INTERVAL '24' HOUR, 'P1D')
+                  AND __time <  TIME_FLOOR(CURRENT_TIMESTAMP + INTERVAL '5:30' HOUR TO MINUTE, 'P1D')
+                """
+            )
+            logged_in_df = utils.druidDFOption(login_yday_query, config.sparkDruidRouterHost, limit=1000000, spark=spark)
+            if logged_in_df is None:
+                logged_in_df = self._empty_df(spark, "user_id")
+            logged_in_with_mdo_df = logged_in_df.join(activeUsersDF, ["user_id"], "inner")
+            total_logged_in_yday = logged_in_with_mdo_df.select("user_id").distinct().count()
+            #Redis.update("dashboard_users_logged_in_yday", str(total_logged_in_yday), conf=config)
+            Redis.update("dashboard_users_logged_in_yday_pyspark_test", str(total_logged_in_yday), conf=config)
+
+            print("[SUCCESS] DSRComputationModel unified metrics updated")
+
+        except Exception as e:
+            print(f"❌ Error occurred during DSRComputationModel processing: {str(e)}")
+            raise e
+
+
+def main():
+    # Initialize Spark Session with optimized settings for caching
+    spark = SparkSession.builder \
+        .appName("DSR computation Model - Cached") \
+        .config("spark.sql.shuffle.partitions", "200") \
+        .config("spark.executor.memory", "15g") \
+        .config("spark.driver.memory", "15g") \
+        .config("spark.executor.memoryFraction", "0.7") \
+        .config("spark.storage.memoryFraction", "0.2") \
+        .config("spark.storage.unrollFraction", "0.1") \
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+        .config("spark.sql.adaptive.enabled", "true") \
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
+        .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .getOrCreate()
+    # Create model instance
+
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
+    start_time = datetime.now()
+    print(f"[START] DSR computation processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    model = DSRComputationModel()
+    model.process_data(spark, config)
+    end_time = datetime.now()
+    duration = end_time - start_time
+    print(f"[END] DSR computation processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"[INFO] Total duration: {duration}")
+    spark.stop()
+
+
+# Example usage:
+if __name__ == "__main__":
+    main()
