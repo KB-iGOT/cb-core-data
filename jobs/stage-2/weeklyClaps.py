@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pyspark.sql import functions as F
-from pyspark.sql.types import StructType
+from pyspark.sql.types import StructType, MapType
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
