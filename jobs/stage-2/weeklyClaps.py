@@ -1,10 +1,11 @@
 import findspark
 findspark.init()
+import os
 
 import time
 from pathlib import Path
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType, BooleanType, ArrayType
+from pyspark.sql.types import StructType, MapType, StructField, StringType, IntegerType, FloatType, BooleanType, ArrayType
 from pyspark.sql.window import Window
 from pyspark.sql.functions import (col, row_number, struct, lit, to_json, countDistinct, current_timestamp, current_date, date_format, broadcast, desc, unix_timestamp, when, lit, concat_ws, from_unixtime, format_string, expr)
 from datetime import datetime
@@ -52,7 +53,6 @@ class WeeklyClapsModel:
                    AND uid IS NOT NULL GROUP BY 1"""
         print(query)
         df = utils.druidDFOption(query, config.sparkDruidRouterHost, limit=1000000, spark=spark)
-        print("=======")
         if df is None:
             print("Druid returned empty data, returning empty DataFrame with expected schema.")
             return spark.createDataFrame([], self.get_users_platform_engagement_schema())
@@ -70,15 +70,11 @@ class WeeklyClapsModel:
         return (start_of_week.strftime(datetime_format), end_of_week.strftime(date_format), end_of_week.strftime(datetime_format), data_till_date.strftime(date_format),)
 
     def safe_to_json(self, df, col_name: str):
-        """
-        Converts a column to JSON only if it's a struct, otherwise keeps it unchanged.
-        This mimics the Scala safeToJson(df, colName) logic.
-        """
         field = df.schema[col_name].dataType
-        if isinstance(field, StructType):
+        if isinstance(field, (StructType, MapType)):
             return F.to_json(F.col(col_name))
         else:
-            return F.col(col_name)
+            return F.col(col_name).cast("string") 
 
     def process_data(self, spark, config):
         try:
@@ -173,10 +169,12 @@ class WeeklyClapsModel:
             .option("user", username) \
             .option("password", password) \
             .option("driver", "org.postgresql.Driver") \
-            .mode(mode) \
+            .option("truncate", "true") \
+            .mode("overwrite") \
             .save()
-
 def main():
+    os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
+
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
         .appName("Weekly Claps Model - Cached") \

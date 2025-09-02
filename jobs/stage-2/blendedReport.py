@@ -214,7 +214,7 @@ class BlendedModel:
                 .withColumn("bpBatchEndDate", to_date(col("bpBatchEndDate"), ParquetFileConstants.DATE_FORMAT)) \
                 .withColumn("bpChildBatchStartDate", to_date(col("bpChildBatchStartDate"), ParquetFileConstants.DATE_FORMAT)) \
                 .withColumn("bpChildCompletedTimestamp", to_date(col("bpChildBatchStartDate"), ParquetFileConstants.DATE_FORMAT)) \
-                .withColumn("bpChildCompletedOn", expr("CASE WHEN bpChildMode='Offline' AND bpChildUserStatus='Completed' THEN bpBatchSessionStartDate ELSE bpChildCompletedTimestamp END")) \
+                .withColumn("bpChildCompletedOn", expr("CASE WHEN bpChildMode='Offline' AND bpChildUserStatus=2 THEN bpBatchSessionStartDate ELSE bpChildCompletedTimestamp END")) \
                 .withColumn("bpChildLastContentAccessTimestamp", to_date(col("bpChildLastContentAccessTimestamp"), ParquetFileConstants.DATE_FORMAT)) \
                 .withColumn("bpChildLastAccessedOn", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionStartDate ELSE bpChildLastContentAccessTimestamp END")) \
                 .withColumn("bpChildProgressPercentage", round(col("bpChildProgressPercentage"), 2)) \
@@ -223,7 +223,7 @@ class BlendedModel:
                 .withColumn("bpChildOfflineStartDate", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionStartDate ELSE '' END")) \
                 .withColumn("bpChildOfflineStartTime", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionStartTime ELSE '' END")) \
                 .withColumn("bpChildOfflineEndTime", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionEndTime ELSE '' END")) \
-                .withColumn("bpChildUserStatus", expr("CASE WHEN bpChildUserStatus='Completed' THEN 'Completed' ELSE 'Not Completed' END")) \
+                .withColumn("bpChildUserStatus", expr("CASE WHEN bpChildUserStatus=2 THEN 'Completed' ELSE 'Not Completed' END")) \
                 .cache()
 
             # Apply duration formatting
