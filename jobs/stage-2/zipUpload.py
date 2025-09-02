@@ -118,15 +118,14 @@ class ZipUploadModel:
                                                     os.path.join(dest_dir, f"{subfolder}.csv"))
                             elif item_path.endswith(".csv"):
                                 shutil.copy(item_path, os.path.join(dest_dir, f"{subfolder}.csv"))
-            # Inject KCM file into each mdoid folder
-            if os.path.exists(kcm_file):
-                for mdoid_folder in os.listdir(merged_dir):
-                    mdoid_path = os.path.join(merged_dir, mdoid_folder)
-                    if os.path.isdir(mdoid_path):
-                        shutil.copy(kcm_file, os.path.join(mdoid_path, "ContentCompetencyMapping.csv"))
+            if kcm_file:
+                print(f"Syncing KCM file once: {kcm_file} -> {config.kcmSyncPath}")
+                try:
+                    sync_reports(kcm_file, config.kcmSyncPath, config)
+                except Exception as e:
+                    print(f"WARNING: Failed to sync KCM file: {e}")
             else:
-                print(f"KCM file not found at expected path: {kcm_file}")
-
+                print(f"KCM file not found at expected path: {kcm_dir}")
             # Password-protected ZIP creation per mdoid folder
             for mdoid_folder in os.listdir(merged_dir):
                 mdoid_path = os.path.join(merged_dir, mdoid_folder)

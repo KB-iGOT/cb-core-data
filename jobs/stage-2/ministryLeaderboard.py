@@ -1,7 +1,7 @@
 import findspark
 
 findspark.init()
-
+import os
 import time
 from pathlib import Path
 from pyspark.sql import SparkSession
@@ -224,6 +224,7 @@ class MinistryLeaderBoardModel:
 
 
 def create_spark_session_with_packages(config):
+    os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
     spark = SparkSession.builder \
         .appName("Ministry leaderboard Model - Cached") \
         .config("spark.sql.shuffle.partitions", "200") \
@@ -261,9 +262,6 @@ def main():
     print(f"[INFO] Total duration: {duration}")
     spark.stop()
 
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()

@@ -137,6 +137,7 @@ class BlendedModel:
 
             # Add user and user org info
             bpCompletionWithUserDetailsDF = userOrgHierarchyDataDF.join(bpCompletionDF, ["userID"], "right")
+            bpCompletionDF.unpersist(blocking=True)
 
             hierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
             parsedHierarchyDF = hierarchyDF.withColumn("data", from_json(col("hierarchy"), schemas.get_hierarchy_schema())) \
@@ -146,6 +147,10 @@ class BlendedModel:
             bpCompletionWithChildrenDF = bpCompletionWithUserDetailsDF.join(bpChildDF, ["bpID"], "left") \
                 .withColumn("bpChildMode", expr("CASE WHEN LOWER(bpChildCategory) = 'offline session' THEN 'Offline' ELSE '' END")) \
                 .join(bpBatchSessionDF, ["bpID", "bpBatchID", "bpChildID"], "left")
+
+            userOrgHierarchyDataDF.unpersist(blocking=True)
+            bpWithOrgDF.unpersist(blocking=True)
+
 
             # Add children batch info - create child batch DataFrame
             bpChildBatchDF = bpBatchDF.select(
@@ -189,6 +194,8 @@ class BlendedModel:
                 col("courseCompletedTimestamp").alias("bpChildCompletedTimestamp")
             )
 
+            userEnrolmentDF.unpersist(blocking=True)
+
             # Create BP Children With Progress DataFrame and cache it
             bpChildrenWithProgress = bpCompletionWithChildBatchInfoDF.join(bpChildUserEnrolmentDF, ["userID", "bpChildID"], "left") \
                 .na.fill(0, ["bpChildResourceCount", "bpChildProgress"]) \
@@ -207,7 +214,7 @@ class BlendedModel:
                 .withColumn("bpBatchEndDate", to_date(col("bpBatchEndDate"), ParquetFileConstants.DATE_FORMAT)) \
                 .withColumn("bpChildBatchStartDate", to_date(col("bpChildBatchStartDate"), ParquetFileConstants.DATE_FORMAT)) \
                 .withColumn("bpChildCompletedTimestamp", to_date(col("bpChildBatchStartDate"), ParquetFileConstants.DATE_FORMAT)) \
-                .withColumn("bpChildCompletedOn", expr("CASE WHEN bpChildMode='Offline' AND bpChildUserStatus='Completed' THEN bpBatchSessionStartDate ELSE bpChildCompletedTimestamp END")) \
+                .withColumn("bpChildCompletedOn", expr("CASE WHEN bpChildMode='Offline' AND bpChildUserStatus=2 THEN bpBatchSessionStartDate ELSE bpChildCompletedTimestamp END")) \
                 .withColumn("bpChildLastContentAccessTimestamp", to_date(col("bpChildLastContentAccessTimestamp"), ParquetFileConstants.DATE_FORMAT)) \
                 .withColumn("bpChildLastAccessedOn", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionStartDate ELSE bpChildLastContentAccessTimestamp END")) \
                 .withColumn("bpChildProgressPercentage", round(col("bpChildProgressPercentage"), 2)) \
@@ -216,14 +223,14 @@ class BlendedModel:
                 .withColumn("bpChildOfflineStartDate", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionStartDate ELSE '' END")) \
                 .withColumn("bpChildOfflineStartTime", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionStartTime ELSE '' END")) \
                 .withColumn("bpChildOfflineEndTime", expr("CASE WHEN bpChildMode='Offline' THEN bpBatchSessionEndTime ELSE '' END")) \
-                .withColumn("bpChildUserStatus", expr("CASE WHEN bpChildUserStatus='Completed' THEN 'Completed' ELSE 'Not Completed' END")) \
+                .withColumn("bpChildUserStatus", expr("CASE WHEN bpChildUserStatus=2 THEN 'Completed' ELSE 'Not Completed' END")) \
                 .cache()
 
             # Apply duration formatting
             fullDF = self.duration_format(fullDF, "bpChildDuration").distinct()
-
+            bpChildrenWithProgress.unpersist(blocking=True)
             fullReportDF = fullDF \
-                .filter(col("UserStatus").cast("int") == 1) \
+                .filter(col("userStatus").cast("int") == 1) \
                 .withColumn("MDO_Name", col("userOrgName")) \
                 .withColumn("Ministry", when(col("ministry_name").isNull(), col("userOrgName")).otherwise(col("ministry_name"))) \
                 .withColumn("Department", when((col("Ministry").isNotNull()) & 
@@ -382,6 +389,8 @@ class BlendedModel:
                     col("bpProgramDirectorName").alias("program_coordinator_name"),
                     col("data_last_generated_on")
                 )
+            
+            fullDF.unpersist(blocking=True)
 
             warehouseDF = df_warehouse.coalesce(1).distinct()
             warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwBPEnrollmentsTable}")
@@ -507,8 +516,9 @@ def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
         .appName("Blended Program Report") \
-        .config("spark.executor.memory", "30g") \
-        .config("spark.driver.memory", "30g") \
+        .config("spark.executor.memory", "25g") \
+        .config("spark.driver.memory", "20g") \
+        .config("spark.driver.maxResultSize", "4g") \
         .config("spark.sql.shuffle.partitions", "64") \
         .config("spark.driver.bindAddress", "127.0.0.1") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
