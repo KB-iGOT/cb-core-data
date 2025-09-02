@@ -181,6 +181,7 @@ DEFAULT_CONFIG = {
     'warehouseOutputDir': f'{BASE_DIR}/warehouse/fullReport/',
     'mdoReportSyncPath': 'standalone-reports/pyspark/',
     'fullReportSyncPath': 'standalone-reports/pyspark/fullReport/',
+    'kcmSyncPath': 'standalone-reports/pyspark/kcm/',
     'directoriesToSelect': ["blended-program-report-mdo","cbp-report-mdo-summary","course-report","cba-report","cbp-report-mdo-enrolment","user-report","user-enrollment-report"],
     'pysparkDirectoriesToSelect': ["blended-program-report-mdo","cbp-report-mdo-summary","course-report","cba-report","cbp-report-mdo-enrolment","user-report","user-enrollment-report"],
     'googleServiceAccountFilePath': '/home/analytics/pyspark/jobs/gcp_service_account.json',
