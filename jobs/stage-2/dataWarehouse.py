@@ -11,6 +11,7 @@ from pyspark.sql.functions import (col, lower, when, lit, expr, concat_ws, explo
                                    current_timestamp, date_format, round, coalesce, broadcast, size, map_keys,
                                    map_values)
 from zipfile import ZipFile, ZIP_DEFLATED
+import pyspark.sql.functions as F
 import shutil
 import subprocess
 import sys
@@ -66,16 +67,16 @@ class DataWarehouseModel:
                 .withColumn("total_event_learning_hours", col("total_event_learning_hours").cast("double")) \
                 .withColumn("total_content_learning_hours", col("total_content_learning_hours").cast("double")) \
                 .withColumn("total_learning_hours", col("total_learning_hours").cast("double"))
-            self.write_postgres_table(userDetailsDF, postgres_url, config.dwUserTable, config.postgres_user,
-                                      config.postgres_password)
+            self.write_postgres_table(userDetailsDF, postgres_url, "user_detail_pyspark_test", config.dwPostgresUsername,
+                                      config.dwPostgresCredential)
 
             contentDF = spark.read.parquet(f"{warehouse_path}/{config.dwCourseTable}") \
                 .withColumn("resource_count", col("resource_count").cast("int")) \
                 .withColumn("total_certificates_issued", col("total_certificates_issued").cast("int")) \
                 .withColumn("content_rating", col("content_rating").cast("float")) \
                 .dropDuplicates(["content_id"])
-            self.write_postgres_table(contentDF, postgres_url, config.dwCourseTable, config.postgres_user,
-                                      config.postgres_password)
+            self.write_postgres_table(contentDF, postgres_url, "content_pyspark_test", config.dwPostgresUsername,
+                                      config.dwPostgresCredential)
             assessment = spark.read.parquet(f"{warehouse_path}/{config.dwAssessmentTable}") \
                 .withColumn("score_achieved", col("score_achieved").cast("float")) \
                 .withColumn("overall_score", col("overall_score").cast("float")) \
@@ -84,8 +85,8 @@ class DataWarehouseModel:
                 .withColumn("number_of_incorrect_responses", col("number_of_incorrect_responses").cast("int")) \
                 .withColumn("number_of_retakes", col("number_of_retakes").cast("int")) \
                 .filter(col("content_id").isNotNull())
-            self.write_postgres_table(assessment, postgres_url, config.dwAssessmentTable, config.postgres_user,
-                                      config.postgres_password)
+            self.write_postgres_table(assessment, postgres_url, "assessment_detail_pyspark_test", config.dwPostgresUsername,
+                                      config.dwPostgresCredential)
             bp_enrolments = spark.read.parquet(f"{warehouse_path}/{config.dwBPEnrollmentsTable}") \
                 .withColumn("component_progress_percentage", col("component_progress_percentage").cast("float")) \
                 .withColumn("offline_session_date", to_date(col("offline_session_date"))) \
@@ -96,51 +97,56 @@ class DataWarehouseModel:
                 .filter(col("user_id").isNotNull()) \
                 .filter(col("batch_id").isNotNull())
 
-            self.write_postgres_table(bp_enrolments, postgres_url, config.dwBPEnrollmentsTable, config.postgres_user,
-                                      config.postgres_password)
+            self.write_postgres_table(bp_enrolments, postgres_url, "bp_enrolments_pyspark_test", config.dwPostgresUsername,
+                                      config.dwPostgresCredential)
             content_resource = spark.read.parquet(f"{warehouse_path}/{config.dwContentResourceTable}")
-            self.write_postgres_table(content_resource, postgres_url, config.dwContentResourceTable,
-                                      config.postgres_user, config.postgres_password)
+            self.write_postgres_table(content_resource, postgres_url, "content_resource_pyspark_test",
+                                      config.dwPostgresUsername, config.dwPostgresCredential)
 
             cb_plan = spark.read.parquet(f"{warehouse_path}/{config.dwCBPlanTable}")
-            self.write_postgres_table(cb_plan, postgres_url, config.dwCBPlanTable, config.postgres_user,
-                                      config.postgres_password)
+            self.write_postgres_table(cb_plan, postgres_url, "cb_plan_pyspark_test", config.dwPostgresUsername,
+                                      config.dwPostgresCredential)
             enrolments = spark.read.parquet(f"{warehouse_path}/{config.dwEnrollmentsTable}") \
                 .withColumn("content_progress_percentage", col("content_progress_percentage").cast("float")) \
                 .withColumn("user_rating", col("user_rating").cast("float")) \
                 .withColumn("resource_count_consumed", col("resource_count_consumed").cast("int")) \
                 .withColumn("live_cbp_plan_mandate", col("live_cbp_plan_mandate").cast("boolean")) \
                 .filter(col("content_id").isNotNull())
-            self.write_postgres_table(enrolments, postgres_url, config.dwEnrollmentsTable, config.postgres_user,
-                                      config.postgres_password)
+            self.write_postgres_table(enrolments, postgres_url, "user_enrolments_pyspark_test", config.dwPostgresUsername,
+                                      config.dwPostgresCredential)
             org_hierarchy = spark.read.parquet(f"{output_path}/orgHierarchy") \
                 .withColumn("mdo_created_on", to_date(col("mdo_created_on")).cast("string"))
             org_hierarchy.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
                 f"{config.warehouseReportDir}/{config.dwOrgTable}")
-            self.write_postgres_table(org_hierarchy, postgres_url, config.dwOrgTable, config.postgres_user,
-                                      config.postgres_password)
+            self.write_postgres_table(org_hierarchy, postgres_url, "org_hierarchy_pyspark_test", config.dwPostgresUsername,
+                                      config.dwPostgresCredential)
             kcm_content = spark.read.parquet(f"{warehouse_path}/{config.dwKcmContentTable}") \
                 .select("course_id", "competency_area_id", "competency_theme_id", "competency_sub_theme_id",
                         "data_last_generated_on")
-            self.write_postgres_table(kcm_content, postgres_url, config.dwKcmContentTable, config.postgres_user,
-                                      config.postgres_password)
+            self.write_postgres_table(kcm_content, postgres_url, "kcm_content_mapping_pyspark_test", config.dwPostgresUsername,
+                                      config.dwPostgresCredential)
             kcm_dict = spark.read.parquet(f"{warehouse_path}/{config.dwKcmDictionaryTable}")
-            self.write_postgres_table(kcm_dict, postgres_url, config.dwKcmDictionaryTable, config.postgres_user,
-                                      config.postgres_password)
-            events = spark.read.parquet(f"{warehouse_path}/eventDetails") \
+            self.write_postgres_table(kcm_dict, postgres_url, "kcm_dictionary_pyspark_test", config.dwPostgresUsername,
+                                      config.dwPostgresCredential)
+            events = spark.read.parquet(f"{output_path}/eventDetails") \
                 .select("event_id", "event_name", "event_provider_mdo_id", "event_start_datetime",
                         "duration", "event_status", "event_type", "presenters", "video_link", "recording_link",
                         "event_tag")
-            self.write_postgres_table(events, postgres_url, config.dwEventsTable, config.postgres_user,
-                                      config.postgres_password)
-            eventEnrolmentsDF = spark.read.parquet(f"{warehouse_path}/eventEnrolmentDetails")
-            karmaPointsData = spark.read.parquet(f"{warehouse_path}/userKarmaPoints") \
-                .select(col("userid").alias("user_id"), col("context_id").alias("event_id"), col("points")) \
-                .groupBy("user_id", "event_id").agg(sum("points").alias("karma_points"))
+            self.write_postgres_table(events, postgres_url, "events_pyspark_test", config.dwPostgresUsername,
+                                      config.dwPostgresCredential)
+            eventEnrolmentsDF = spark.read.parquet(f"{output_path}/eventEnrolmentDetails")
+            karmaPointsData = spark.read.parquet(f"{output_path}/userKarmaPoints")\
+              .select(F.col("userid").alias("user_id"),\
+               F.col("context_id").alias("event_id"),\
+               F.col("points"))\
+              .withColumn("points",\
+               F.when(F.col("points").cast("int").isNotNull(), F.col("points").cast("int")).otherwise(F.lit(0)))\
+              .groupBy("user_id", "event_id")\
+              .agg(F.sum("points").alias("karma_points"))
             eventsEnrolmentDataDFWithKarmaPoints = eventEnrolmentsDF.join(karmaPointsData, ["user_id", "event_id"],
                                                                           "left")
-            self.write_postgres_table(eventsEnrolmentDataDFWithKarmaPoints, postgres_url, config.dwEventsEnrolmentTable,
-                                      config.postgres_user, config.postgres_password)
+            self.write_postgres_table(eventsEnrolmentDataDFWithKarmaPoints, postgres_url, "events_enrolment_pyspark_test",
+                                      config.dwPostgresUsername, config.dwPostgresCredential)
             print("✅ Processing completed successfully!")
 
 
@@ -205,7 +211,7 @@ def main():
     start_time = datetime.now()
     print(f"[START] DataWarehouse processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = DataWarehouseModel()
-    model.process_data(spark=spark)
+    model.process_data(spark, config)
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"[END] DataWarehouse completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")

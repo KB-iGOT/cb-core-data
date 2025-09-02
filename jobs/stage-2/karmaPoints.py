@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-
+import os
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
@@ -225,6 +225,8 @@ class KarmaPointsModel:
 
 
 def create_spark_session_with_packages(config):
+    os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
+
     spark = (SparkSession.builder
         .appName("Karma points Model - Cached")
         .config("spark.sql.shuffle.partitions", "200")
