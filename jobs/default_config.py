@@ -152,6 +152,16 @@ DEFAULT_CONFIG = {
     'commsConsoleReportPath': 'standalone-reports/comms-console',
     'validationReportPath': 'standalone-reports/validation-report',
 
+    'blendedProgramReport' : 'BlendedProgramReport.csv',
+    'cbaReport' : 'UserAssessmentReport.csv',
+    'cbpEnrolmentReport' : 'CBPEnrollmentReport.csv',
+    'cbpSummaryReport' : 'CBPUserSummaryReport.csv',
+    'courseReport' : 'ContentReport.csv',
+    'kcmReport' : 'ContentCompetencyMapping.csv',
+    'userAssessmentReport' : 'StandaloneAssessmentReport.csv',
+    'userEnrollmentReport' : 'ConsumptionReport.csv',
+    'userReport' : 'UserReport.csv',
+
     # Communications Console Configuration
     'commsConsolePrarambhEmailSuffix': '.kb@karmayogi.in',
     'commsConsoleNumDaysToConsider': '15',

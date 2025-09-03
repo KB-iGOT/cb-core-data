@@ -251,6 +251,7 @@ class CourseBasedAssessmentModel:
                 f"{config.localReportDir}/{config.cbaReportPath}/{today}",
                 'mdoid',
                 f"{config.localReportDir}/temp/cba-report/{today}",
+                csv_filename=config.cbaReport
                )
 
             (warehouseDF.coalesce(1)

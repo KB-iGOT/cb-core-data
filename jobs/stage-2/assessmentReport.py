@@ -159,7 +159,7 @@ class UserAssessmentModel:
             # Stage 10: Generate Final Report
             print("Stage 10: Generating final report...")
             # Export report
-            dfexportutil.write_csv_per_mdo_id(original_df, f"{config.localReportDir}/{config.standaloneAssessmentReportPath}/{today}", 'mdoid')
+            dfexportutil.write_csv_per_mdo_id(original_df, f"{config.localReportDir}/{config.standaloneAssessmentReportPath}/{today}", 'mdoid', csv_filename=config.userAssessmentReport)
             print("Stage 10: Complete")
 
             # Performance Summary
