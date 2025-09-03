@@ -20,7 +20,7 @@ from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
 
 
-def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, threshold=100000):
+def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, threshold=100000, csv_filename="report.csv"):
     """
     Optimized hybrid write strategy: 
     - Small/medium groups: Direct CSV write via Spark partitionBy
@@ -32,6 +32,7 @@ def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, t
         groupByAttr (str): Column to group by
         isIndividualWrite (bool): If True, write as parquet instead of CSV
         threshold (int): Max row count per group to consider for fast write
+        csv_filename (str): Name of the CSV file to create inside each partition folder
     """
     
     if isIndividualWrite == False:
@@ -59,19 +60,20 @@ def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, t
                 .mode("overwrite") \
                 .partitionBy(groupByAttr) \
                 .option("header", True) \
-                .csv(output_dir)
+                .csv(output_dir + "_spark_temp")
+            
+            # Convert Spark partitioned output to folder structure
+            convert_spark_partitions_to_folders(output_dir + "_spark_temp", output_dir, groupByAttr, csv_filename)
             
             print(f"✅ Completed writing {len(small_ids)} small groups")
 
         # Step 4: DuckDB write for large groups - FILTER FIRST, then write to parquet
         if large_ids:
             print("🦆 Processing large groups via DuckDB...")
-            # df.cache().count()  # Ensure the DataFrame is cached for performance
-            # OPTIMIZATION: Filter large IDs first, then write only filtered data to parquet
             large_df = df.filter(col(groupByAttr).isin(large_ids))
             
             parquet_tmp_path = output_dir + '_tmp_large_groups'
-            write_csv_per_mdo_id_duckdb(large_df, output_dir, groupByAttr, parquet_tmp_path, large_ids)
+            write_csv_per_mdo_id_duckdb(large_df, output_dir, groupByAttr, parquet_tmp_path, large_ids, csv_filename=csv_filename)
             
             print(f"✅ Completed writing {len(large_ids)} large groups")
         
@@ -89,18 +91,82 @@ def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, t
             .option("compression", "snappy") \
             .parquet(output_dir)
 
-def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet_tmp_path: str = None, large_ids=None, max_workers: int = 4, keep_parquets: bool = False):
+def convert_spark_partitions_to_folders(spark_output_dir: str, final_output_dir: str, partition_column: str, csv_filename: str):
+    """
+    Convert Spark's partitioned CSV output to the desired folder structure.
+    
+    Args:
+        spark_output_dir (str): Directory with Spark's partitioned CSV files
+        final_output_dir (str): Target directory for folder structure
+        partition_column (str): Partition column name
+        csv_filename (str): Name for the CSV file inside each folder
+    """
+    import shutil
+    
+    spark_path = Path(spark_output_dir)
+    final_path = Path(final_output_dir)
+    final_path.mkdir(parents=True, exist_ok=True)
+    
+    # Find all partition directories
+    partition_dirs = [d for d in spark_path.iterdir() 
+                     if d.is_dir() and d.name.startswith(f"{partition_column}=")]
+    
+    for partition_dir in partition_dirs:
+        # Extract partition value
+        partition_value = partition_dir.name.split("=", 1)[1]
+        safe_partition_value = str(partition_value).replace("/", "_")
+        
+        # Create target folder structure
+        target_folder = final_path / f"{partition_column}={safe_partition_value}"
+        target_folder.mkdir(parents=True, exist_ok=True)
+        
+        # Find CSV files in the partition directory
+        csv_files = list(partition_dir.glob("*.csv"))
+        
+        if csv_files:
+            # If multiple CSV files, merge them into one
+            if len(csv_files) == 1:
+                # Single file, just copy and rename
+                shutil.copy2(csv_files[0], target_folder / csv_filename)
+            else:
+                # Multiple files, merge them
+                merge_csv_files(csv_files, target_folder / csv_filename)
+    
+    # Cleanup temporary Spark output
+    try:
+        shutil.rmtree(spark_output_dir)
+        print(f"✅ Cleaned up temporary Spark output: {spark_output_dir}")
+    except Exception as e:
+        print(f"⚠️ Could not clean up {spark_output_dir}: {e}")
+
+def merge_csv_files(csv_files: list, output_file: Path):
+    """Merge multiple CSV files into one, keeping only one header."""
+    with open(output_file, 'w', newline='', encoding='utf-8') as outfile:
+        first_file = True
+        for csv_file in csv_files:
+            with open(csv_file, 'r', encoding='utf-8') as infile:
+                lines = infile.readlines()
+                if first_file:
+                    outfile.writelines(lines)  # Include header
+                    first_file = False
+                else:
+                    outfile.writelines(lines[1:])  # Skip header for subsequent files
+
+def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet_tmp_path: str = None, 
+                               large_ids=None, max_workers: int = 4, keep_parquets: bool = False, csv_filename: str = "report.csv"):
     """
     Writes CSVs per group_by_attr using partitioned parquet files and parallel conversion.
+    Creates folder structure: group_by_attr=value/csv_filename
 
     Args:
         df (DataFrame): Spark DataFrame containing the groups to process
-        output_dir (str): Output directory to write CSVs
+        output_dir (str): Output directory to write CSV folders
         group_by_attr (str): Column to group by (e.g., "mdo_id")
         parquet_tmp_path (str, optional): Temporary Parquet output path
         large_ids (list, optional): List of group IDs (for filtering, legacy compatibility)
         max_workers (int): Number of parallel workers for CSV conversion
         keep_parquets (bool): Whether to keep intermediate parquet files
+        csv_filename (str): Name of the CSV file to create inside each partition folder
     """
     # Setup temporary parquet path if not provided
     if parquet_tmp_path is None:
@@ -134,7 +200,8 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
         partition_column=group_by_attr,
         max_workers=max_workers,
         process_subset=large_ids,  # Only process the large_ids if specified
-        keep_parquets=keep_parquets
+        keep_parquets=keep_parquets,
+        csv_filename=csv_filename
     )
     
     print("🎉 Done writing all group CSV files using partitioned parquet approach.")
@@ -273,7 +340,7 @@ def write_single_csv_duckdb(df, output_path: str, parquet_tmp_path: str = None, 
 def write_csv_combined(df, single_csv_path: str, partitioned_output_dir: str, 
                       partition_column: str, parquet_tmp_path: str = None, 
                       filter_condition: str = None, max_workers: int = 4, 
-                      keep_parquets: bool = False):
+                      keep_parquets: bool = False,csv_filename: str = "report.csv"):
     """
     Combined method using partitioned parquet approach for both outputs.
     More memory efficient and supports parallel processing for partitioned CSVs.
@@ -390,7 +457,8 @@ def write_csv_combined(df, single_csv_path: str, partitioned_output_dir: str,
         csv_output_dir=partitioned_output_dir,
         partition_column=partition_column,
         max_workers=max_workers,
-        keep_parquets=keep_parquets  # This method handles cleanup
+        keep_parquets=keep_parquets,
+        csv_filename=csv_filename  # This method handles cleanup
     )
     
     # Update summary with partition results
@@ -414,26 +482,28 @@ def write_csv_combined(df, single_csv_path: str, partitioned_output_dir: str,
 
 def convert_partitioned_parquets_to_csv(parquet_input_dir: str, csv_output_dir: str, 
                                       partition_column: str, max_workers: int = 4,
-                                      process_subset: list = None, keep_parquets: bool = False):
+                                      process_subset: list = None, keep_parquets: bool = False,csv_filename: str = "report.csv"):
     """
-    NEW METHOD: Convert partitioned parquet files to individual CSV files.
-    This method can be used standalone or by other methods.
+    Convert partitioned parquet files to individual CSV files inside folders.
+    Creates structure: csv_output_dir/partition_column=value/csv_filename
     
     Args:
         parquet_input_dir (str): Directory containing partitioned parquet files
-        csv_output_dir (str): Output directory for CSV files  
+        csv_output_dir (str): Output directory for CSV folders
         partition_column (str): The partition column name
         max_workers (int): Maximum number of parallel workers for conversion
         process_subset (list, optional): List of specific partition values to process
         keep_parquets (bool): Whether to keep the input parquet files after conversion
+        csv_filename (str): Name of the CSV file to create inside each partition folder
     
     Returns:
         dict: Summary of conversion results
     """
-    print(f"🦆 Converting partitioned parquets to CSV...")
+    print(f"🦆 Converting partitioned parquets to CSV folders...")
     print(f"    - Source: {parquet_input_dir}")
     print(f"    - Target: {csv_output_dir}")
     print(f"    - Max workers: {max_workers}")
+    print(f"    - CSV filename: {csv_filename}")
     
     # Discover partition directories
     parquet_path = Path(parquet_input_dir)
@@ -465,7 +535,7 @@ def convert_partitioned_parquets_to_csv(parquet_input_dir: str, csv_output_dir: 
         return {'success': False, 'error': 'No partitions found'}
     
     # Helper function to convert single partition
-    def convert_single_partition(partition_dir, csv_output_dir, partition_column, partition_value=None):
+    def convert_single_partition_to_folder(partition_dir, csv_output_dir, partition_column, csv_filename, partition_value=None):
         try:
             # Extract partition value from directory name if not provided
             if partition_value is None:
@@ -475,67 +545,71 @@ def convert_partitioned_parquets_to_csv(parquet_input_dir: str, csv_output_dir: 
                 else:
                     partition_value = "unknown"
             
-            # Sanitize partition value for filename
+            # Sanitize partition value for folder name
             safe_partition_value = str(partition_value).replace("/", "_") if partition_value else "null"
             
-            # Setup paths
-            csv_filename = f"{partition_column}={safe_partition_value}.csv"
-            csv_output_path = Path(csv_output_dir) / csv_filename
+            # Setup paths - Create folder structure
+            partition_folder = Path(csv_output_dir) / f"{partition_column}={safe_partition_value}"
+            partition_folder.mkdir(parents=True, exist_ok=True)
             
-            # Ensure CSV output directory exists
-            csv_output_path.parent.mkdir(parents=True, exist_ok=True)
+            csv_output_path = partition_folder / csv_filename
             
             # Connect to DuckDB
             con = duckdb.connect()
             
-            # DuckDB optimizations for single partition processing
-            con.execute("PRAGMA memory_limit='20GB';")  # Lower memory for parallel processing
-            con.execute("PRAGMA threads=4;")  # Lower threads for parallel processing
-            con.execute("PRAGMA temp_directory='/tmp/duckdb_spill';")
-            con.execute("INSTALL parquet; LOAD parquet;")
-            
-            # Load the specific partition parquet files
-            parquet_pattern = f"{partition_dir}/*.parquet"
-            con.execute(f"CREATE TABLE partition_df AS SELECT * FROM parquet_scan('{parquet_pattern}');")
-            
-            # Get row count
-            row_count = con.execute("SELECT COUNT(*) FROM partition_df").fetchone()[0]
-            
-            # Write to CSV
-            con.execute(f"""
-                COPY (
-                    SELECT * FROM partition_df
-                ) TO '{csv_output_path}' (FORMAT CSV, HEADER, DELIMITER ',');
-            """)
-            
-            con.close()
-            
-            # Verify output file
-            if csv_output_path.exists():
-                file_size_mb = csv_output_path.stat().st_size / (1024 * 1024)
-                return {
-                    'success': True,
-                    'partition_value': partition_value,
-                    'csv_path': str(csv_output_path),
-                    'rows_written': row_count,
-                    'file_size_mb': round(file_size_mb, 2),
-                    'error': None
-                }
-            else:
-                return {
-                    'success': False,
-                    'partition_value': partition_value,
-                    'csv_path': str(csv_output_path),
-                    'rows_written': 0,
-                    'file_size_mb': 0,
-                    'error': 'CSV file was not created'
-                }
+            try:
+                # DuckDB optimizations for single partition processing
+                con.execute("PRAGMA memory_limit='20GB';")  # Lower memory for parallel processing
+                con.execute("PRAGMA threads=4;")  # Lower threads for parallel processing
+                con.execute("PRAGMA temp_directory='/tmp/duckdb_spill';")
+                con.execute("INSTALL parquet; LOAD parquet;")
+                
+                # Load the specific partition parquet files
+                parquet_pattern = f"{partition_dir}/*.parquet"
+                con.execute(f"CREATE TABLE partition_df AS SELECT * FROM parquet_scan('{parquet_pattern}');")
+                
+                # Get row count
+                row_count = con.execute("SELECT COUNT(*) FROM partition_df").fetchone()[0]
+                
+                # Write to CSV
+                con.execute(f"""
+                    COPY (
+                        SELECT * FROM partition_df
+                    ) TO '{csv_output_path}' (FORMAT CSV, HEADER, DELIMITER ',');
+                """)
+                
+                # Verify output file
+                if csv_output_path.exists():
+                    file_size_mb = csv_output_path.stat().st_size / (1024 * 1024)
+                    return {
+                        'success': True,
+                        'partition_value': partition_value,
+                        'csv_path': str(csv_output_path),
+                        'folder_path': str(partition_folder),
+                        'rows_written': row_count,
+                        'file_size_mb': round(file_size_mb, 2),
+                        'error': None
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'partition_value': partition_value,
+                        'csv_path': str(csv_output_path),
+                        'folder_path': str(partition_folder),
+                        'rows_written': 0,
+                        'file_size_mb': 0,
+                        'error': 'CSV file was not created'
+                    }
+                    
+            finally:
+                con.close()
                 
         except Exception as e:
             return {
                 'success': False,
                 'partition_value': partition_value if 'partition_value' in locals() else 'unknown',
                 'csv_path': str(csv_output_path) if 'csv_output_path' in locals() else 'unknown',
+                'folder_path': str(partition_folder) if 'partition_folder' in locals() else 'unknown',
                 'rows_written': 0,
                 'file_size_mb': 0,
                 'error': str(e)
@@ -555,14 +629,14 @@ def convert_partitioned_parquets_to_csv(parquet_input_dir: str, csv_output_dir: 
         for i, partition_dir in enumerate(partition_dirs, 1):
             partition_value = partition_dir.name.split("=", 1)[1] if "=" in partition_dir.name else "unknown"
             
-            result = convert_single_partition(str(partition_dir), csv_output_dir, partition_column, partition_value)
+            result = convert_single_partition_to_folder(str(partition_dir), csv_output_dir, partition_column, csv_filename, partition_value)
             results.append(result)
             
             if result['success']:
                 successful_conversions += 1
                 total_rows += result['rows_written']
                 total_size_mb += result['file_size_mb']
-                print(f"✅ {i}/{total_partitions}: {partition_value} ({result['rows_written']:,} rows)")
+                print(f"✅ {i}/{total_partitions}: {partition_value} ({result['rows_written']:,} rows) → {result['folder_path']}")
             else:
                 failed_conversions += 1
                 print(f"❌ {i}/{total_partitions}: {partition_value} - {result['error']}")
@@ -578,8 +652,8 @@ def convert_partitioned_parquets_to_csv(parquet_input_dir: str, csv_output_dir: 
                 partition_value = partition_dir.name.split("=", 1)[1] if "=" in partition_dir.name else "unknown"
                 
                 future = executor.submit(
-                    convert_single_partition,
-                    str(partition_dir), csv_output_dir, partition_column, partition_value
+                    convert_single_partition_to_folder,
+                    str(partition_dir), csv_output_dir, partition_column, csv_filename, partition_value
                 )
                 future_to_partition[future] = partition_value
             
@@ -597,7 +671,7 @@ def convert_partitioned_parquets_to_csv(parquet_input_dir: str, csv_output_dir: 
                         successful_conversions += 1
                         total_rows += result['rows_written']
                         total_size_mb += result['file_size_mb']
-                        print(f"✅ {completed}/{total_partitions}: {partition_value} ({result['rows_written']:,} rows)")
+                        print(f"✅ {completed}/{total_partitions}: {partition_value} ({result['rows_written']:,} rows) → {Path(result['folder_path']).name}/")
                     else:
                         failed_conversions += 1
                         print(f"❌ {completed}/{total_partitions}: {partition_value} - {result['error']}")
@@ -619,7 +693,7 @@ def convert_partitioned_parquets_to_csv(parquet_input_dir: str, csv_output_dir: 
             shutil.rmtree(parquet_input_dir)
             print(f"✅ Cleaned up: {parquet_input_dir}")
         except Exception as e:
-            print(f"⚠️  Could not clean up {parquet_input_dir}: {e}")
+            print(f"⚠️ Could not clean up {parquet_input_dir}: {e}")
     else:
         print(f"\n💾 Keeping partitioned parquet files at: {parquet_input_dir}")
     
@@ -633,7 +707,7 @@ def convert_partitioned_parquets_to_csv(parquet_input_dir: str, csv_output_dir: 
     print(f"   🎯 Success rate: {success_rate:.1f}%")
     print(f"   📄 Total rows: {total_rows:,}")
     print(f"   💾 Total size: {total_size_mb:.2f} MB")
-    print(f"   📂 CSV output: {csv_output_dir}")
+    print(f"   📂 CSV output structure: {csv_output_dir}/partition=value/{csv_filename}")
     
     return {
         'success': successful_conversions > 0,

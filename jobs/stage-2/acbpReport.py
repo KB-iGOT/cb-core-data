@@ -171,7 +171,8 @@ class ACBPModel:
                 single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/CBPEnrollmentReport.csv",
                 partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoEnrolmentReportPath}/{today}",
                 partition_column='mdoid',
-                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-enrolment-report/{today}")
+                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-enrolment-report/{today}",
+                csv_filename="CBPEnrollmentReport.csv")
 
 
             userSummaryReportDF = acbpEnrolmentDF \
@@ -230,7 +231,8 @@ class ACBPModel:
                 single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/CBPUserSummaryReport.csv",
                 partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoSummaryReportPath}/{today}",
                 partition_column='mdoid',
-                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-summary-report/{today}"
+                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-summary-report/{today}",
+                csv_filename="CBPUserSummaryReport.csv"
             )
 
             print("📦 Writing warehouse data...")

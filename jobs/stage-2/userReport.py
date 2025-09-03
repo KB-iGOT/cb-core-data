@@ -161,7 +161,7 @@ def processUserReport(config):
                 col("userOrgID").alias("mdoid")
             )
         
-        dfexportutil.write_csv_per_mdo_id(mdoWiseReportDF, f"{config.localReportDir}/{config.userReportPath}/{today}", 'mdoid')
+        dfexportutil.write_csv_per_mdo_id(mdoWiseReportDF, f"{config.localReportDir}/{config.userReportPath}/{today}", 'mdoid',csv_filename="UserReport.csv")
 
         warehouseDF = user_complete_data \
             .withColumn("marked_as_not_my_user", when(col("userProfileStatus") == "NOT-MY-USER", lit(True)).otherwise(lit(False))) \
