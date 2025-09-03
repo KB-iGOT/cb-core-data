@@ -12,8 +12,7 @@ from pyspark.sql.types import StructType, ArrayType, StringType, BooleanType, St
 from pyspark.sql.types import MapType, StringType, StructType, StructField, FloatType, LongType, DateType, IntegerType
 from pyspark.sql.functions import col, when, size, lit, expr, unix_timestamp, date_format, from_json, current_timestamp, \
     to_date, round, explode, to_utc_timestamp, from_utc_timestamp, to_timestamp, sum as spark_sum
-
-from datetime import datetime
+from datetime import datetime, timedelta, time, timezone
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -51,7 +50,7 @@ class DSRComputationModel:
             output_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
             orgDF = spark.read.parquet(f"{output_path}/orgHierarchy")
             userDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwUserTable}")
-            eventsEnrolmentDataDF = spark.read.parquet(f"{config.warehouseReportDir}/eventEnrolmentDetails")
+            eventsEnrolmentDataDF = spark.read.parquet(f"{output_path}/eventEnrolmentDetails")
             contentEnrolmentDataDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
 
             # --- Active users (status == 1) joined with org
@@ -93,7 +92,19 @@ class DSRComputationModel:
             Redis.update("dashboard_events_completed_count_pyspark_test", str(total_event_completions), conf=config)
 
             # --- Certificates generated yesterday (content + events) ---
-            prev_start, prev_end = self._prev_day_window_ist()
+            ist_offset = timezone(timedelta(hours=5, minutes=30))
+
+            current_date = datetime.now(ist_offset).date()
+
+            previous_day_start = datetime.combine(current_date - timedelta(days=1), time.min, tzinfo=ist_offset)
+
+            previous_day_end = datetime.combine(current_date, time.min, tzinfo=ist_offset) - timedelta(seconds=1)
+
+            prev_start = previous_day_start.strftime("%Y-%m-%d %H:%M:%S")
+            prev_end = previous_day_end.strftime("%Y-%m-%d %H:%M:%S")
+
+            print("previous day start :", prev_start)
+            print("previous day end   :", prev_end)
 
             content_certs_yday = (
                 enrichedEnrolmentsDF.filter(col("certificate_id").isNotNull())
