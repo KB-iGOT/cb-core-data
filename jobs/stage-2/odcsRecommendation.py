@@ -99,8 +99,8 @@ class ODCSRecommendationModel:
             )
 
             final_df.show(10, truncate=False)
-           # Redis.dispatchDataFrame("odcs_course_recomendation", final_df, "mdo_id", "top_15_content_ids", conf=config)
-            Redis.dispatchDataFrame("odcs_course_recomendation_pyspark_test", final_df, "mdo_id", "top_15_content_ids", conf=config)
+            Redis.dispatchDataFrame("odcs_course_recomendation", final_df, "mdo_id", "top_15_content_ids", conf=config)
+           # Redis.dispatchDataFrame("odcs_course_recomendation_pyspark_test", final_df, "mdo_id", "top_15_content_ids", conf=config)
         except Exception as e:
             print(f"Error occurred during ODCS Recommendation processing: {str(e)}")
             raise
@@ -143,9 +143,6 @@ def main():
     print(f"[INFO] Total duration: {duration}")
     spark.stop()
 
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
