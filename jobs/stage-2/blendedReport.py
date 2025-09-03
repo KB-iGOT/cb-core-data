@@ -314,7 +314,7 @@ class BlendedModel:
                 f"{config.localReportDir}/{config.blendedReportPath}-mdo/{today}", 
                 'mdoid',
                 f"{config.localReportDir}/temp/blended_mdo_report/{today}",
-                csv_filename="BlendedProgramReport.csv"
+                csv_filename=config.blendedProgramReport
             )
 
             # Create CBP Report DataFrame
@@ -363,7 +363,7 @@ class BlendedModel:
                 f"{config.localReportDir}/{config.blendedReportPath}-cbp/{today}", 
                 'mdoid',
                 f"{config.localReportDir}/temp/blended_cbp_report/{today}",
-                csv_filename="BlendedProgramReport.csv"
+                csv_filename=config.blendedProgramReport
             )
 
             # Create warehouse DataFrame with snake_case column names

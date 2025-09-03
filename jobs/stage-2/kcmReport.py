@@ -47,7 +47,7 @@ class KCMModel:
         try:
             today = self.get_date()
             report_path_content_competency_mapping = f"{config.localReportDir}/{config.kcmReportPath}/{today}/ContentCompetencyMapping"
-            file_name = "ContentCompetencyMapping.csv"
+            file_name = config.kcmReport
 
             # Content - Competency Mapping data
             categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Standalone Assessment", "Curated Program"]

@@ -362,7 +362,7 @@ class UserEnrolmentModel:
                 f"{config.localReportDir}/{config.userEnrolmentReportPath}/{today}", 
                 'mdoid',
                 f"{config.localReportDir}/temp/user_enrolment_report/{today}",
-                csv_filename="ConsumptionReport.csv"
+                csv_filename=config.userEnrollmentReport
             )
             
             print("📦 Writing warehouse data...")

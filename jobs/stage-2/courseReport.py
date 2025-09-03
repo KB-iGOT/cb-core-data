@@ -310,7 +310,7 @@ class CourseReportModel:
                 'mdoid',
                 f"{config.localReportDir}/temp/course_report/{today}",
                 orgid_list,
-                csv_filename="ContentReport.csv"
+                csv_filename=config.courseReport
             )
             contentHierarchyExploded = contentHierarchyDF.withColumn("hierarchy", from_json(col("hierarchy"), schemas.hierarchySchema))
 
