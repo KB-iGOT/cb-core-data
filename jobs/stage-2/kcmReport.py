@@ -46,8 +46,8 @@ class KCMModel:
         """
         try:
             today = self.get_date()
-            report_path_content_competency_mapping = f"{config.localReportDir}/{config.kcmReportPath}/{today}"
-            file_name = "ContentCompetencyMapping"
+            report_path_content_competency_mapping = f"{config.localReportDir}/{config.kcmReportPath}/{today}/ContentCompetencyMapping"
+            file_name = "ContentCompetencyMapping.csv"
 
             # Content - Competency Mapping data
             categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Standalone Assessment", "Curated Program"]
@@ -256,10 +256,34 @@ class KCMModel:
                 .orderBy("content_id") \
                 .distinct()
             
-            competency_reporting.write \
+            temp_dir = f"{report_path_content_competency_mapping}/{file_name}_temp"
+            competency_reporting.coalesce(1).write \
                 .mode("overwrite") \
                 .option("header", "true") \
-                .csv(f"{report_path_content_competency_mapping}/{file_name}")
+                .csv(temp_dir)
+            
+            # Move the part file to the desired filename
+            import os
+            import glob
+            import shutil
+            
+            # Find the part file
+            part_files = glob.glob(f"{temp_dir}/part-*.csv")
+            if part_files:
+                part_file = part_files[0]
+                final_path = f"{report_path_content_competency_mapping}/{file_name}"
+                
+                # Create the directory if it doesn't exist
+                os.makedirs(report_path_content_competency_mapping, exist_ok=True)
+                
+                # Copy the part file to the final location with desired name
+                shutil.copy2(part_file, final_path)
+                
+                # Clean up the temporary directory
+                shutil.rmtree(temp_dir)
+                print(f"CSV file created successfully: {final_path}")
+            else:
+                print("Warning: No part files found in the temporary directory")
         except Exception as e:
             print(f"Error occurred during KCMModel processing: {str(e)}")
             sys.exit(1)
