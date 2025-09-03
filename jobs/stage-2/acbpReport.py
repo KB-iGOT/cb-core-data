@@ -168,10 +168,11 @@ class ACBPModel:
             print("📝 Writing combined CSV reports for enrollment...")
             dfexportutil.write_csv_combined(
                 df=enrolmentReportDF,
-                single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/CBPEnrollmentReport.csv",
+                single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/{config.cbpEnrolmentReport}",
                 partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoEnrolmentReportPath}/{today}",
                 partition_column='mdoid',
-                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-enrolment-report/{today}")
+                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-enrolment-report/{today}",
+                csv_filename=config.cbpEnrolmentReport)
 
 
             userSummaryReportDF = acbpEnrolmentDF \
@@ -227,10 +228,11 @@ class ACBPModel:
             print("📝 Writing combined CSV reports for user summary...")
             dfexportutil.write_csv_combined(
                 df=userSummaryReportDF,
-                single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/CBPUserSummaryReport.csv",
+                single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/{config.cbpSummaryReport}",
                 partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoSummaryReportPath}/{today}",
                 partition_column='mdoid',
-                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-summary-report/{today}"
+                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-summary-report/{today}",
+                csv_filename=config.cbpSummaryReport
             )
 
             print("📦 Writing warehouse data...")
