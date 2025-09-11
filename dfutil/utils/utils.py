@@ -119,15 +119,22 @@ def sync_reports(local_path, remote_path, config):
     client = storage.Client()
     bucket = client.bucket(config.gcpBucket)
 
-    for root, _, files in os.walk(local_path):
-        for file in files:
-            local_file_path = os.path.join(root, file)
-            relative_path = os.path.relpath(local_file_path, local_path)
-            gcs_blob_path = os.path.join(remote_path, relative_path).replace("\\", "/")
+    if os.path.isfile(local_path):   # single file case
+        filename = os.path.basename(local_path)   # keep whatever CSV name was generated
+        gcs_blob_path = os.path.join(remote_path, filename).replace("\\", "/")
+        blob = bucket.blob(gcs_blob_path)
+        blob.upload_from_filename(local_path)
+        print(f"✅ Synced: {local_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
 
-            blob = bucket.blob(gcs_blob_path)
-            blob.upload_from_filename(local_file_path)
-            print(f"✅ Synced: {local_file_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
+    else:   # directory case (unchanged)
+        for root, _, files in os.walk(local_path):
+            for file in files:
+                local_file_path = os.path.join(root, file)
+                relative_path = os.path.relpath(local_file_path, local_path)
+                gcs_blob_path = os.path.join(remote_path, relative_path).replace("\\", "/")
+                blob = bucket.blob(gcs_blob_path)
+                blob.upload_from_filename(local_file_path)
+                print(f"✅ Synced: {local_file_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
 
     print(f"REPORT: Finished syncing reports from {local_path} to gs://{config.gcpBucket}/{remote_path}")
 

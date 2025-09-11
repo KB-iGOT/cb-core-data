@@ -355,7 +355,7 @@ class DataExhaustModel:
                 self.config.appPostgresUsername,  
                 self.config.appPostgresCredential
             )
-            
+
             # Transform organization data
             org_cassandra_df = org_df.withColumn(
                 "createddate", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ")
@@ -403,7 +403,15 @@ class DataExhaustModel:
             
             org_df.unpersist()
             org_postgres_df.unpersist()
-            
+
+            # process claps data
+            weekly_claps_df = self.read_postgres_table(
+                appPostgresUrl,
+                self.config.dwLearnerStatsTable,
+                self.config.appPostgresUsername,
+                self.config.appPostgresCredential
+            )
+            self.write_parquet(weekly_claps_df, f"{output_base_path}/weeklyClaps")
             # Process marketplace content
             self.logger.info("Processing marketplace content...")
             marketplace_content_df = self.read_postgres_table(
