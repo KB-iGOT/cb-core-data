@@ -415,7 +415,18 @@ class DataExhaustModel:
             
             self.write_parquet(marketplace_content_df, f"{output_base_path}/externalContent")
             marketplace_content_df.unpersist()
+
+            self.logger.info("Processing Weekly Claps data...")
+            weekly_claps_df = self.read_postgres_table(
+                appPostgresUrl, 
+                self.config.dwLearnerStatsTable, 
+                self.config.appPostgresUsername,
+                self.config.appPostgresCredential 
+            )
             
+            self.write_parquet(weekly_claps_df, f"{output_base_path}/weeklyClaps")
+            weekly_claps_df.unpersist()
+
             # Process marketplace enrolments
             self.logger.info("Processing marketplace enrolments...")
             marketplace_enrolments_df = self.read_cassandra_table(
@@ -440,8 +451,8 @@ class DataExhaustModel:
                 ("learnerLeaderBoard", self.config.cassandraUserKeyspace, self.config.cassandraLearnerLeaderBoardTable),
                 ("userKarmaPoints", self.config.cassandraUserKeyspace, self.config.cassandraKarmaPointsTable),
                 ("userKarmaPointsSummary", self.config.cassandraUserKeyspace, self.config.cassandraKarmaPointsSummaryTable),
-                ("weeklyClaps", self.config.cassandraUserKeyspace, self.config.cassandraLearnerStatsTable)
             ]
+
             
             for table_name, keyspace, table in tables_to_process:
                 self.logger.info(f"Processing {table_name}...")
