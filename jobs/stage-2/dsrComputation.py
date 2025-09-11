@@ -10,9 +10,8 @@ from pyspark.sql.functions import col, lit, coalesce, concat_ws, when, broadcast
 from pyspark.sql.functions import col, from_json, explode_outer, coalesce, lit, format_string
 from pyspark.sql.types import StructType, ArrayType, StringType, BooleanType, StructField
 from pyspark.sql.types import MapType, StringType, StructType, StructField, FloatType, LongType, DateType, IntegerType
-from pyspark.sql.functions import col, count, when, size, lit, expr, unix_timestamp, date_format, from_json, \
-    current_timestamp, \
-    to_date, round, explode, to_utc_timestamp, from_utc_timestamp, to_timestamp, sum as spark_sum
+from pyspark.sql.functions import col, count, when, size, lit, expr, unix_timestamp, date_format, from_json, current_timestamp, \
+    to_date, round, explode, to_utc_timestamp, from_utc_timestamp, to_timestamp, regexp_replace, sum as spark_sum
 from datetime import datetime, timedelta, time, timezone
 import sys
 
@@ -45,52 +44,52 @@ class DSRComputationModel:
     def current_date_time():
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+
     def process_data(self, spark, config):
         try:
             output_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
-            userDF = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE).withColumnRenamed("userID",
-                                                                                                           "user_id")
+            userDF = spark.read.option("recursiveFileLookup", "true").parquet(ParquetFileConstants.USER_PARQUET_FILE) \
+		.withColumnRenamed("id", "user_id") \
+                .withColumnRenamed("rootorgid", "mdo_id") \
+                .withColumn("user_registration_ts_utc", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ")) \
+                .withColumn("user_registration_ts_ist", from_utc_timestamp(col("user_registration_ts_utc"), "Asia/Kolkata"))
             eventsEnrolmentDataDF = spark.read.parquet(f"{output_path}/eventEnrolmentDetails")
             contentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE)
-            externalContentEnrolmentDataDF = spark.read.parquet(
-                ParquetFileConstants.EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE)
-            contentDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
+            externalContentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE)
+            contentDF = spark.read.parquet(ParquetFileConstants.ESCONTENT_PARQUET_FILE) \
+		        .withColumnRenamed("identifier", "content_id") \
+                .withColumnRenamed("primaryCategory", "content_type") \
+                .withColumnRenamed("status", "content_status")
+            externalContentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_PARQUET_FILE)
+
             # --- Active users (status == 1) joined with org
-            userWithOrgDF = userDF.filter(col("userOrgID").isNotNull())
-            activeUsersDF = userDF.filter(col("userStatus") == 1)
+            userWithOrgDF = userDF.filter(col("mdo_id").isNotNull())
+            activeUsersDF = userDF.filter(col("status") == 1)
 
             # --- Content enrolments (active users only)
             enrichedContentEnrolmentsDF = contentEnrolmentDataDF.alias("e").join(
-                contentDF.select("content_id", "content_type", "content_status").alias("c"),
-                col("e.courseID") == col("c.content_id"), "left") \
-                .join(activeUsersDF.select("user_id").alias("u"), col("e.userID") == col("u.user_id"), "inner") \
+                contentDF.select("content_id", "content_type", "content_status").alias("c"), col("e.courseID") == col("c.content_id"), "left")\
+                .join(activeUsersDF.select("user_id").alias("u"), col("e.userID") == col("u.user_id"), "inner")\
                 .select(col("e.*"), col("c.content_type"), col("c.content_status"))
             total_enrolments = enrichedContentEnrolmentsDF.filter((col("content_type").isin("Course", "Program", "Blended Program", "CuratedCollections", "Curated Program")) &
             (col("content_status").isin("Live", "Retired"))).count() + externalContentEnrolmentDataDF.count()
-            print(enrichedContentEnrolmentsDF.count())
-            print(enrichedContentEnrolmentsDF.filter((col("content_type").isin("Course", "Program", "Blended Program", "CuratedCollections", "Curated Program")) &
-            (col("content_status").isin("Live", "Retired"))).count())
-            print(externalContentEnrolmentDataDF.count())
             #Redis.update("dashboard_enrolment_count", str(total_enrolments), conf=config)
             Redis.update("dashboard_enrolment_count_pyspark_test", str(total_enrolments), conf=config)
 
             # Unique users enrolled
             enrichedCourseEnrolmentsDF = contentEnrolmentDataDF.alias("e").join(
-                contentDF.select("content_id", "content_type", "content_status").alias("c"),
-                col("e.courseID") == col("c.content_id"), "left") \
-                .join(userWithOrgDF.select("user_id").alias("u"), col("e.userID") == col("u.user_id"), "inner") \
-                .select(col("e.*"), col("c.content_type"), col("c.content_status"))
-            unique_users_enrolled = enrichedCourseEnrolmentsDF.filter(
-                (col("content_type").isin("Course")) & (col("content_status").isin("Live", "Retired"))) \
-                .agg(countDistinct("e.userID").alias("c")).first()[0]
-            # Redis.update("dashboard_unique_users_enrolled_count", str(unique_users_enrolled), conf=config)
+            contentDF.select("content_id", "content_type", "content_status").alias("c"), col("e.courseID") == col("c.content_id"), "left")\
+            .join(userWithOrgDF.select("user_id").alias("u"), col("e.userID") == col("u.user_id"), "inner")\
+            .select(col("e.*"), col("c.content_type"), col("c.content_status"))
+            unique_users_enrolled = enrichedCourseEnrolmentsDF.filter((col("content_type").isin("Course")) & (col("content_status").isin("Live", "Retired")))\
+            .agg(countDistinct("e.userID").alias("c")).first()[0]
+            #Redis.update("dashboard_unique_users_enrolled_count", str(unique_users_enrolled), conf=config)
             Redis.update("dashboard_unique_users_enrolled_count_pyspark_test", str(unique_users_enrolled), conf=config)
 
             # Content completions (distinct certificate_id)
             enrichedContentCompletedDF = contentEnrolmentDataDF.alias("e").join(
-                contentDF.select("content_id", "content_type", "content_status").alias("c"),
-                col("e.courseID") == col("c.content_id"), "left") \
-                .join(activeUsersDF.select("user_id").alias("u"), col("e.userID") == col("u.user_id"), "inner") \
+                 contentDF.select("content_id", "content_type", "content_status").alias("c"), col("e.courseID") == col("c.content_id"), "left")\
+                .join(activeUsersDF.select("user_id").alias("u"), col("e.userID") == col("u.user_id"), "inner")\
                 .select(col("e.*"), col("c.content_type"), col("c.content_status"))
             total_content_completions = enrichedContentCompletedDF.filter((col("content_type").isin("Course", "Program", "Blended Program", "CuratedCollections", "Curated Program")) &
             (col("content_status").isin("Live", "Retired"))).filter(col("dbCompletionStatus") == 2).count() + externalContentEnrolmentDataDF.filter(col("status") == 2).count()
@@ -127,42 +126,37 @@ class DSRComputationModel:
 
             # Parse strings -> timestamp Columns
             prev_start_ts = to_timestamp(lit(prev_start), "yyyy-MM-dd HH:mm:ss")
-            prev_end_ts = to_timestamp(lit(prev_end), "yyyy-MM-dd HH:mm:ss")
+            prev_end_ts   = to_timestamp(lit(prev_end),   "yyyy-MM-dd HH:mm:ss")
 
-            content_certs_yday = (enrichedContentCompletedDF.withColumn("firstCompletedOn_ts",
-                                                                        to_timestamp(col("firstCompletedOn"),
-                                                                                     "yyyy-MM-dd'T'HH:mm:ss.SSSZ")) \
-                                  .filter((col("content_type").isin("Course", "Program", "Blended Program",
-                                                                    "CuratedCollections", "Curated Program")) & (
-                                              col("content_status").isin("Live", "Retired")) & \
-                                          (col("dbCompletionStatus") == 2) & \
-                                          (col("firstCompletedOn_ts") >= prev_start_ts) & \
-                                          (col("firstCompletedOn_ts") <= prev_end_ts)).count())
+            content_certs_yday = (enrichedContentCompletedDF.withColumn("firstCompletedOn_ts", to_timestamp(col("firstCompletedOn"), "yyyy-MM-dd'T'HH:mm:ss.SSSZ"))\
+            .filter((col("content_type").isin("Course", "Program", "Blended Program", "CuratedCollections", "Curated Program")) & (col("content_status").isin("Live", "Retired")) &\
+            (col("dbCompletionStatus") == 2) & \
+            (col("firstCompletedOn_ts") >= prev_start_ts) & \
+            (col("firstCompletedOn_ts") <= prev_end_ts)).count())
 
-            event_certs_yday = eventsEnrolmentDataDF.filter(col("certificate_id").isNotNull()) \
-                .filter(col("status") == "completed") \
-                .filter(
-                (col("enrolled_on_datetime") >= lit(prev_start)) & (col("enrolled_on_datetime") <= lit(prev_end))) \
+            event_certs_yday = eventsEnrolmentDataDF.filter(col("certificate_id").isNotNull())\
+                .filter(col("status") == "completed")\
+                .filter((col("enrolled_on_datetime") >= lit(prev_start)) & (col("enrolled_on_datetime") <= lit(prev_end)))\
                 .select("certificate_id").distinct().count()
-            external_certs_yday = externalContentEnrolmentDataDF.withColumn("firstCompletedOn", to_timestamp \
-                (when((col("issued_certificates").isNotNull()) & (size(col("issued_certificates")) > 0), \
-                      col("issued_certificates")[0]["lastIssuedOn"]).otherwise(lit(None)))) \
-                .filter((col("firstCompletedOn") >= prev_start_ts) & (col("firstCompletedOn") <= prev_end_ts)).count()
+            external_certs_yday = externalContentEnrolmentDataDF.withColumn("firstCompletedOn", to_timestamp\
+            (when((col("issued_certificates").isNotNull()) & (size(col("issued_certificates")) > 0),\
+            col("issued_certificates")[0]["lastIssuedOn"]).otherwise(lit(None))))\
+           .filter((col("firstCompletedOn") >= prev_start_ts) & (col("firstCompletedOn") <= prev_end_ts)).count()
             print("content count : " + str(content_certs_yday))
             print("event count : " + str(event_certs_yday))
-            print("external count : " + str(external_certs_yday))
+            print("external count : "  + str(external_certs_yday))
             total_certs_yday = content_certs_yday + event_certs_yday
-            # Redis.update("lp_completed_yesterday_count", str(total_certs_yday), conf=config)
+            #Redis.update("lp_completed_yesterday_count", str(total_certs_yday), conf=config)
             Redis.update("lp_completed_yesterday_count_pyspark_test", str(total_certs_yday), conf=config)
 
             # --- Registered users (active) & registered yesterday ---
             total_registered_users = activeUsersDF.count()
-            # Redis.update("mdo_total_registered_officer_count", str(total_registered_users), conf=config)
+            #Redis.update("mdo_total_registered_officer_count", str(total_registered_users), conf=config)
             Redis.update("mdo_total_registered_officer_count_pyspark_test", str(total_registered_users), conf=config)
 
             registered_yday = (
                 activeUsersDF
-                .filter((col("user_registration_date") > lit(prev_start)) & (col("user_registration_date") < lit(prev_end)))
+                .filter((col("user_registration_ts_ist") >= prev_start_ts) & (col("user_registration_ts_ist") <= prev_end_ts))
                 .count()
             )
             #Redis.update("dashboard_new_users_registered_yesterday", str(registered_yday), conf=config)
@@ -181,8 +175,8 @@ class DSRComputationModel:
                 mau_df = self._empty_df(spark, "activeCount")
 
             total_mau = mau_df.select("activeCount").first()[0]
-            # Redis.update("lp_monthly_active_users", str(total_mau), conf= config)
-            Redis.update("lp_monthly_active_users_pyspark_test", str(total_mau), conf=config)
+            #Redis.update("lp_monthly_active_users", str(total_mau), conf= config)
+            Redis.update("lp_monthly_active_users_pyspark_test", str(total_mau), conf= config)
 
             # --- Users logged in yesterday via Druid ---
             login_yday_query = (
@@ -202,7 +196,6 @@ class DSRComputationModel:
             total_logged_in_yday = logged_in_with_mdo_df.select("user_id").distinct().count()
             #Redis.update("dashboard_users_logged_in_yday", str(total_logged_in_yday), conf=config)
             Redis.update("dashboard_users_logged_in_yday_pyspark_test", str(total_logged_in_yday), conf=config)
-
             print("[SUCCESS] DSRComputationModel unified metrics updated")
 
         except Exception as e:
@@ -243,4 +236,3 @@ def main():
 # Example usage:
 if __name__ == "__main__":
     main()
-
