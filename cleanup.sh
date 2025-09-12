@@ -30,10 +30,20 @@ source_dir="/home/analytics/pyspark/reports/standalone-reports"     # Where repo
 # ===== 4. CLEANUP OLD DATA FROM SOURCE =====
 echo "Removing $source_dir old data"
 cd $source_dir
-for i in $(ls -A .)
-do
-    echo "Removing the content from $source_dir/$i"
-    find $source_dir/$i/* -mtime +1 -exec rm -rvf {} \;  # Remove files older than 1 day
+
+# Calculate yesterday's date
+yesterday=$(date -d "yesterday" "+%Y-%m-%d")
+
+echo "Today: $today, Yesterday: $yesterday"
+
+for dir in "${data_reports[@]}"; do
+    yesterday_folder="$source_dir/$dir/$yesterday"
+    if [ -d "$yesterday_folder" ]; then
+        echo "Removing: $yesterday_folder"
+        rm -rf "$yesterday_folder"
+    else
+        echo "Not found: $yesterday_folder"
+    fi
 done
 # 🎯 PURPOSE: Clean up old report files from production directory (keep only 1 day)
 
