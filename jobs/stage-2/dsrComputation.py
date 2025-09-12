@@ -4,14 +4,11 @@ findspark.init()
 import sys
 from pathlib import Path
 import pandas as pd
-from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.functions import bround, col, broadcast, concat_ws, coalesce, lit, when, from_unixtime, countDistinct
-from pyspark.sql.functions import col, lit, coalesce, concat_ws, when, broadcast, get_json_object, rtrim
-from pyspark.sql.functions import col, from_json, explode_outer, coalesce, lit, format_string
-from pyspark.sql.types import StructType, ArrayType, StringType, BooleanType, StructField
-from pyspark.sql.types import MapType, StringType, StructType, StructField, FloatType, LongType, DateType, IntegerType
-from pyspark.sql.functions import col, count, when, size, lit, expr, unix_timestamp, date_format, from_json, current_timestamp, \
-    to_date, round, explode, to_utc_timestamp, from_utc_timestamp, to_timestamp, regexp_replace, sum as spark_sum
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col, lit, when, expr, countDistinct, size,current_timestamp, date_trunc, date_sub,to_timestamp
+)
+from pyspark.sql.types import (StructType, StructField,StringType)
 from datetime import datetime, timedelta, time, timezone
 import sys
 
@@ -51,8 +48,7 @@ class DSRComputationModel:
             userDF = spark.read.option("recursiveFileLookup", "true").parquet(ParquetFileConstants.USER_PARQUET_FILE) \
 		.withColumnRenamed("id", "user_id") \
                 .withColumnRenamed("rootorgid", "mdo_id") \
-                .withColumn("user_registration_ts_utc", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ")) \
-                .withColumn("user_registration_ts_ist", from_utc_timestamp(col("user_registration_ts_utc"), "Asia/Kolkata"))
+                .withColumn("userCreatedTimestamp", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ").cast("long"))
             eventsEnrolmentDataDF = spark.read.parquet(f"{output_path}/eventEnrolmentDetails")
             contentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE)
             externalContentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE)
@@ -154,13 +150,13 @@ class DSRComputationModel:
             #Redis.update("mdo_total_registered_officer_count", str(total_registered_users), conf=config)
             Redis.update("mdo_total_registered_officer_count_pyspark_test", str(total_registered_users), conf=config)
 
-            registered_yday = (
-                activeUsersDF
-                .filter((col("user_registration_ts_ist") >= prev_start_ts) & (col("user_registration_ts_ist") <= prev_end_ts))
-                .count()
-            )
-            #Redis.update("dashboard_new_users_registered_yesterday", str(registered_yday), conf=config)
-            Redis.update("dashboard_new_users_registered_yesterday_pyspark_test", str(registered_yday), conf=config)
+            usersRegisteredYesterdayCount = activeUsersDF \
+            .withColumn("yesterdayStartTimestamp", date_trunc("day", date_sub(current_timestamp(), 1)).cast("long")) \
+            .withColumn("todayStartTimestamp", date_trunc("day", current_timestamp()).cast("long")) \
+            .filter(expr("userCreatedTimestamp >= yesterdayStartTimestamp AND userCreatedTimestamp < todayStartTimestamp")) \
+            .count()
+            #Redis.update("dashboard_new_users_registered_yesterday", str(usersRegisteredYesterdayCount), conf=config)
+            Redis.update("dashboard_new_users_registered_yesterday_pyspark_test", str(usersRegisteredYesterdayCount), conf=config)
 
             # --- MAU (last 30 days) via Druid ---
             loginSchema = StructType([StructField("user_id", StringType(), True)])
