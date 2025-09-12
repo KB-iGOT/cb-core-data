@@ -405,6 +405,7 @@ class DataExhaustModel:
             org_postgres_df.unpersist()
 
             # process claps data
+            self.logger.info("Processing weeklyclaps data...")
             weekly_claps_df = self.read_postgres_table(
                 appPostgresUrl,
                 self.config.dwLearnerStatsTable,
@@ -423,17 +424,6 @@ class DataExhaustModel:
             
             self.write_parquet(marketplace_content_df, f"{output_base_path}/externalContent")
             marketplace_content_df.unpersist()
-
-            self.logger.info("Processing Weekly Claps data...")
-            weekly_claps_df = self.read_postgres_table(
-                appPostgresUrl, 
-                self.config.dwLearnerStatsTable, 
-                self.config.appPostgresUsername,
-                self.config.appPostgresCredential 
-            )
-            
-            self.write_parquet(weekly_claps_df, f"{output_base_path}/weeklyClaps")
-            weekly_claps_df.unpersist()
 
             # Process marketplace enrolments
             self.logger.info("Processing marketplace enrolments...")
