@@ -69,8 +69,7 @@ class DSRComputationModel:
                 .select(col("e.*"), col("c.content_type"), col("c.content_status"))
             total_enrolments = enrichedContentEnrolmentsDF.filter((col("content_type").isin("Course", "Program", "Blended Program", "CuratedCollections", "Curated Program")) &
             (col("content_status").isin("Live", "Retired"))).count() + externalContentEnrolmentDataDF.count()
-            #Redis.update("dashboard_enrolment_count", str(total_enrolments), conf=config)
-            Redis.update("dashboard_enrolment_count_pyspark_test", str(total_enrolments), conf=config)
+            Redis.update("dashboard_enrolment_count", str(total_enrolments), conf=config)
 
             # Unique users enrolled
             enrichedCourseEnrolmentsDF = contentEnrolmentDataDF.alias("e").join(
@@ -79,8 +78,7 @@ class DSRComputationModel:
             .select(col("e.*"), col("c.content_type"), col("c.content_status"))
             unique_users_enrolled = enrichedCourseEnrolmentsDF.filter((col("content_type").isin("Course")) & (col("content_status").isin("Live", "Retired")))\
             .agg(countDistinct("e.userID").alias("c")).first()[0]
-            #Redis.update("dashboard_unique_users_enrolled_count", str(unique_users_enrolled), conf=config)
-            Redis.update("dashboard_unique_users_enrolled_count_pyspark_test", str(unique_users_enrolled), conf=config)
+            Redis.update("dashboard_unique_users_enrolled_count", str(unique_users_enrolled), conf=config)
 
             # Content completions (distinct certificate_id)
             enrichedContentCompletedDF = contentEnrolmentDataDF.alias("e").join(
@@ -89,21 +87,18 @@ class DSRComputationModel:
                 .select(col("e.*"), col("c.content_type"), col("c.content_status"))
             total_content_completions = enrichedContentCompletedDF.filter((col("content_type").isin("Course", "Program", "Blended Program", "CuratedCollections", "Curated Program")) &
             (col("content_status").isin("Live", "Retired"))).filter(col("dbCompletionStatus") == 2).count() + externalContentEnrolmentDataDF.filter(col("status") == 2).count()
-            #Redis.update("dashboard_completed_count", str(total_content_completions), conf=config)
-            Redis.update("dashboard_completed_count_pyspark_test", str(total_content_completions), conf=config)
+            Redis.update("dashboard_completed_count", str(total_content_completions), conf=config)
 
             # --- Event metrics ---
             total_event_enrolments = eventsEnrolmentDataDF.select("event_id").count()
-            #Redis.update("dashboard_events_enrolment_count", str(total_event_enrolments), conf=config)
-            Redis.update("dashboard_events_enrolment_count_pyspark_test", str(total_event_enrolments), conf=config)
+            Redis.update("dashboard_events_enrolment_count", str(total_event_enrolments), conf=config)
 
             enrichedEventCompletionsDF = eventsEnrolmentDataDF\
                .filter(col("certificate_id").isNotNull())\
                .filter(col("status") == "completed")\
                .filter(col("enrolled_on_datetime") >= config.nationalLearningWeekStart)
             total_event_completions = enrichedEventCompletionsDF.select("certificate_id").distinct().count()
-            #Redis.update("dashboard_events_completed_count", str(total_event_completions), conf=config)
-            Redis.update("dashboard_events_completed_count_pyspark_test", str(total_event_completions), conf=config)
+            Redis.update("dashboard_events_completed_count", str(total_event_completions), conf=config)
 
             # --- Certificates generated yesterday (content + events) ---
             ist_offset = timezone(timedelta(hours=5, minutes=30))
@@ -142,21 +137,18 @@ class DSRComputationModel:
             print("event count : " + str(event_certs_yday))
             print("external count : "  + str(external_certs_yday))
             total_certs_yday = content_certs_yday + event_certs_yday
-            #Redis.update("lp_completed_yesterday_count", str(total_certs_yday), conf=config)
-            Redis.update("lp_completed_yesterday_count_pyspark_test", str(total_certs_yday), conf=config)
+            Redis.update("lp_completed_yesterday_count", str(total_certs_yday), conf=config)
 
             # --- Registered users (active) & registered yesterday ---
             total_registered_users = activeUsersDF.count()
-            #Redis.update("mdo_total_registered_officer_count", str(total_registered_users), conf=config)
-            Redis.update("mdo_total_registered_officer_count_pyspark_test", str(total_registered_users), conf=config)
+            Redis.update("mdo_total_registered_officer_count", str(total_registered_users), conf=config)
 
             usersRegisteredYesterdayCount = activeUsersDF \
             .withColumn("yesterdayStartTimestamp", date_trunc("day", date_sub(current_timestamp(), 1)).cast("long")) \
             .withColumn("todayStartTimestamp", date_trunc("day", current_timestamp()).cast("long")) \
             .filter(expr("userCreatedTimestamp >= yesterdayStartTimestamp AND userCreatedTimestamp < todayStartTimestamp")) \
             .count()
-            #Redis.update("dashboard_new_users_registered_yesterday", str(usersRegisteredYesterdayCount), conf=config)
-            Redis.update("dashboard_new_users_registered_yesterday_pyspark_test", str(usersRegisteredYesterdayCount), conf=config)
+            Redis.update("dashboard_new_users_registered_yesterday", str(usersRegisteredYesterdayCount), conf=config)
 
             # --- MAU (last 30 days) via Druid ---
             loginSchema = StructType([StructField("user_id", StringType(), True)])
@@ -171,8 +163,7 @@ class DSRComputationModel:
                 mau_df = self._empty_df(spark, "activeCount")
 
             total_mau = mau_df.select("activeCount").first()[0]
-            #Redis.update("lp_monthly_active_users", str(total_mau), conf= config)
-            Redis.update("lp_monthly_active_users_pyspark_test", str(total_mau), conf= config)
+            Redis.update("lp_monthly_active_users", str(total_mau), conf= config)
 
             # --- Users logged in yesterday via Druid ---
             login_yday_query = (
@@ -190,8 +181,7 @@ class DSRComputationModel:
                 logged_in_df = self._empty_df(spark, "user_id")
             logged_in_with_mdo_df = logged_in_df.join(activeUsersDF, ["user_id"], "inner")
             total_logged_in_yday = logged_in_with_mdo_df.select("user_id").distinct().count()
-            #Redis.update("dashboard_users_logged_in_yday", str(total_logged_in_yday), conf=config)
-            Redis.update("dashboard_users_logged_in_yday_pyspark_test", str(total_logged_in_yday), conf=config)
+            Redis.update("dashboard_users_logged_in_yday", str(total_logged_in_yday), conf=config)
             print("[SUCCESS] DSRComputationModel unified metrics updated")
 
         except Exception as e:
@@ -202,7 +192,7 @@ class DSRComputationModel:
 def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
-        .appName("DSR computation Model - Cached") \
+        .appName("DSR computation Model") \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "15g") \
         .config("spark.driver.memory", "15g") \
