@@ -156,7 +156,8 @@ class DSRComputationModel:
                 SELECT COUNT(DISTINCT(uid)) AS activeCount
                 FROM "summary-events"
                 WHERE dimensions_type = 'app'
-                  AND __time > CURRENT_TIMESTAMP - INTERVAL '30' DAY
+                AND __time >= TIME_FLOOR(CURRENT_TIMESTAMP, 'P1D') - INTERVAL '30' DAY 
+                AND __time < TIME_FLOOR(CURRENT_TIMESTAMP, 'P1D')
             """
             mau_df = druidDFOption(mau_query, config.sparkDruidRouterHost, limit=10000000, spark=spark)
             if mau_df is None:
