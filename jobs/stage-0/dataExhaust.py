@@ -216,7 +216,8 @@ class DataExhaustModel:
                 col("userid").alias("userID"),
                 col("assessmentreadresponse"),
                 col("submitassessmentresponse"),
-                col("submitassessmentrequest")
+                col("submitassessmentrequest"),
+                col("language").alias("assessLanguage")
             ).fillna("{}", subset=["submitassessmentresponse", "submitassessmentrequest"])
             
             # Parse JSON columns
@@ -237,6 +238,7 @@ class DataExhaustModel:
                 col("assessChildID"),
                 col("assessUserStatus"),
                 col("userID"),
+                col("assessLanguage"),
                 col("readResponse.totalQuestions").alias("assessTotalQuestions"),
                 col("readResponse.maxQuestions").alias("assessMaxQuestions"),
                 col("readResponse.expectedDuration").alias("assessExpectedDuration"),
