@@ -10,7 +10,7 @@ from pyspark.sql.functions import (
     expr, date_format, to_utc_timestamp, current_timestamp, coalesce,
     to_timestamp, isnan, isnull, format_string
 )
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, ArrayType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType,BooleanType,FloatType
 from pyspark import StorageLevel
 import logging
 
@@ -89,36 +89,41 @@ class DataExhaustModel:
     def get_assessment_schemas(self):
         """Define JSON schemas for assessment data"""
         assessment_read_response_schema = StructType([
+            StructField("name", StringType(), True),
+            StructField("objectType", StringType(), True),
+            StructField("version", IntegerType(), True),
+            StructField("status", StringType(), True),
             StructField("totalQuestions", IntegerType(), True),
             StructField("maxQuestions", IntegerType(), True),
-            StructField("expectedDuration", DoubleType(), True),
-            StructField("version", StringType(), True),
-            StructField("maxAssessmentRetakeAttempts", IntegerType(), True),
-            StructField("status", StringType(), True),
-            StructField("primaryCategory", StringType(), True)
+            StructField("expectedDuration", IntegerType(), True),
+            StructField("primaryCategory", StringType(), True),
+            StructField("maxAssessmentRetakeAttempts", IntegerType(), True)
         ])
-        
+
         submit_assessment_request_schema = StructType([
-            StructField("batchId", StringType(), True),
-            StructField("courseId", StringType(), True),
-            StructField("isAssessment", StringType(), True),
-            StructField("timeLimit", DoubleType(), True)
+            StructField("courseId", StringType(), False),
+            StructField("batchId", StringType(), False),
+            StructField("primaryCategory", StringType(), False),
+            StructField("isAssessment", BooleanType(), False),
+            StructField("timeLimit", IntegerType(), False)
         ])
-        
+
         submit_assessment_response_schema = StructType([
-            StructField("result", StringType(), True),
-            StructField("total", IntegerType(), True),
-            StructField("blank", IntegerType(), True),
-            StructField("correct", IntegerType(), True),
-            StructField("incorrect", IntegerType(), True),
-            StructField("pass", StringType(), True),
-            StructField("overallResult", StringType(), True),
-            StructField("passPercentage", DoubleType(), True)
+            StructField("result", FloatType(), False),
+            StructField("total", IntegerType(), False),
+            StructField("blank", IntegerType(), False),
+            StructField("correct", IntegerType(), False),
+            StructField("incorrect", IntegerType(), False),
+            StructField("pass", BooleanType(), False),
+            StructField("overallResult", FloatType(), False),
+            StructField("passPercentage", FloatType(), False)
         ])
         
         event_progress_detail_schema = StructType([
-            StructField("max_size", DoubleType(), True),
-            StructField("duration", DoubleType(), True)
+            StructField("max_size", StringType(), False),
+            StructField("mimeType", StringType(), False),
+            StructField("duration", IntegerType(), True),
+            StructField("stateMetaData", IntegerType(), True)
         ])
         
         return {
