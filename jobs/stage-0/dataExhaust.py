@@ -20,6 +20,7 @@ from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
 from dfutil.utils import utils
+from util import schemas
 
 class DataExhaustModel:
     @staticmethod
@@ -86,52 +87,6 @@ class DataExhaustModel:
                        (col(duration_col) % 60).cast("int").cast("string")
                    )).otherwise(lit("00:00:00"))
     
-    def get_assessment_schemas(self):
-        """Define JSON schemas for assessment data"""
-        assessment_read_response_schema = StructType([
-            StructField("name", StringType(), True),
-            StructField("objectType", StringType(), True),
-            StructField("version", IntegerType(), True),
-            StructField("status", StringType(), True),
-            StructField("totalQuestions", IntegerType(), True),
-            StructField("maxQuestions", IntegerType(), True),
-            StructField("expectedDuration", IntegerType(), True),
-            StructField("primaryCategory", StringType(), True),
-            StructField("maxAssessmentRetakeAttempts", IntegerType(), True)
-        ])
-
-        submit_assessment_request_schema = StructType([
-            StructField("courseId", StringType(), False),
-            StructField("batchId", StringType(), False),
-            StructField("primaryCategory", StringType(), False),
-            StructField("isAssessment", BooleanType(), False),
-            StructField("timeLimit", IntegerType(), False)
-        ])
-
-        submit_assessment_response_schema = StructType([
-            StructField("result", FloatType(), False),
-            StructField("total", IntegerType(), False),
-            StructField("blank", IntegerType(), False),
-            StructField("correct", IntegerType(), False),
-            StructField("incorrect", IntegerType(), False),
-            StructField("pass", BooleanType(), False),
-            StructField("overallResult", FloatType(), False),
-            StructField("passPercentage", FloatType(), False)
-        ])
-        
-        event_progress_detail_schema = StructType([
-            StructField("max_size", StringType(), False),
-            StructField("mimeType", StringType(), False),
-            StructField("duration", IntegerType(), True),
-            StructField("stateMetaData", IntegerType(), True)
-        ])
-        
-        return {
-            "assessment_read_response": assessment_read_response_schema,
-            "submit_assessment_request": submit_assessment_request_schema,
-            "submit_assessment_response": submit_assessment_response_schema,
-            "event_progress_detail": event_progress_detail_schema
-        }
     
     def read_cassandra_safe_columns(self, keyspace: str, table: str) -> "DataFrame":
         """Read only safe columns that don't cause timestamp overflow"""
@@ -175,9 +130,7 @@ class DataExhaustModel:
         """
         Main processing method - optimized for performance
         """
-        try:
-            schemas = self.get_assessment_schemas()
-            
+        try:            
             # Process enrolment data
             self.logger.info("Processing enrolment data...")
             enrolment_df = self.read_cassandra_table(
@@ -227,11 +180,11 @@ class DataExhaustModel:
             
             # Parse JSON columns
             user_assessment_with_json = user_assessment_df.withColumn(
-                "readResponse", from_json(col("assessmentreadresponse"), schemas["assessment_read_response"])
+                "readResponse", from_json(col("assessmentreadresponse"), schemas.assessment_read_response_schema)
             ).withColumn(
-                "submitRequest", from_json(col("submitassessmentrequest"), schemas["submit_assessment_request"])
+                "submitRequest", from_json(col("submitassessmentrequest"), schemas.submit_assessment_request_schema)
             ).withColumn(
-                "submitResponse", from_json(col("submitassessmentresponse"), schemas["submit_assessment_response"])
+                "submitResponse", from_json(col("submitassessmentresponse"), schemas.submit_assessment_response_schema)
             ).withColumn(
                 "assessStartTimestamp", col("assessStartTime")
             ).withColumn(
@@ -543,7 +496,7 @@ class DataExhaustModel:
                 "status", expr(case_expression)
             ).withColumn(
                 "progress_details", 
-                from_json(col("lrc_progressdetails"), schemas["event_progress_detail"])
+                from_json(col("lrc_progressdetails"), schemas.event_progress_detail_schema)
             ).select(
                 col("userid").alias("user_id"),
                 col("contentid").alias("event_id"),
