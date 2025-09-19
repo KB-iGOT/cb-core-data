@@ -3,7 +3,7 @@ from pathlib import Path
 from pyspark.sql.types import *
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
-    sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace,bround,countDistinct,to_timestamp,from_unixtime
+    sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace,bround,countDistinct,to_timestamp,from_unixtime,date_format,current_timestamp
 )
 from pyspark.sql.types import LongType
 
@@ -221,3 +221,72 @@ def timestampStringToLong(df: DataFrame, column_names: list, format: str = "yyyy
             (unix_timestamp(col(col_name)) * 1000).cast("long")
         )
     return result_df
+
+def preComputeUserWarehouseData(spark):
+    """Generate user warehouse data independently for use in other reports"""
+    try:
+        currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
+        
+        print("Loading and processing user warehouse data...")
+        
+        user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+        user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+        content_duration_df = (
+            spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+            .filter(col("category") == "Course")
+            .select(col("courseID").alias("content_id"), col("courseDuration").cast("double"), col("category"))
+        )
+        
+        # Process data pipeline
+        user_complete_data = (
+            appendContentDurationCompletionForEachUser(spark, user_master_df, user_enrolment_df, content_duration_df)
+            .transform(lambda df: appendEventDurationCompletionForEachUser(spark, df))
+            .withColumn("Tag", concat_ws(", ", col("additionalProperties.tag")))
+            .withColumn("Total_Learning_Hours", 
+                       coalesce(col("total_event_learning_hours_with_certificates"), lit(0)) + 
+                       coalesce(col("total_content_duration"), lit(0)))
+            .withColumn("weekly_claps_day_before_yesterday",
+                       when(col("weekly_claps_day_before_yesterday").isNull() | 
+                           (col("weekly_claps_day_before_yesterday") == ""), lit(0))
+                       .otherwise(col("weekly_claps_day_before_yesterday")))
+        )
+        
+        # Generate warehouse dataframe with column mapping
+        warehouseDF = user_complete_data.select(
+            col("userID").alias("user_id"),
+            col("userOrgID").alias("mdo_id"),
+            col("userStatus").alias("status"),
+            coalesce(col("total_points"), lit(0)).alias("no_of_karma_points"),
+            col("fullName").alias("full_name"),
+            col("professionalDetails.designation").alias("designation"),
+            col("personalDetails.primaryEmail").alias("email"),
+            col("personalDetails.mobile").alias("phone_number"),
+            col("personalDetails.pincode").alias("pincode"),
+            col("professionalDetails.group").alias("groups"),
+            col("Tag").alias("tag"),
+            col("userProfileStatus").alias("profile_status"),
+            date_format(from_unixtime(col("userCreatedTimestamp")/1000), ParquetFileConstants.DATE_TIME_FORMAT).alias("user_registration_date"),
+            col("role").alias("roles"),
+            col("personalDetails.gender").alias("gender"),
+            col("personalDetails.category").alias("category"),
+            when(col("userProfileStatus") == "NOT-MY-USER", lit(True)).otherwise(lit(False)).alias("marked_as_not_my_user"),
+            when(col("userProfileStatus") == "VERIFIED", lit(True)).otherwise(lit(False)).alias("is_verified_karmayogi"),
+            col("userCreatedBy").alias("created_by_id"),
+            col("additionalProperties.externalSystem").alias("external_system"),
+            col("additionalProperties.externalSystemId").alias("external_system_id"),
+            col("weekly_claps_day_before_yesterday"),
+            coalesce(col("total_event_learning_hours_with_certificates"), lit(0)).alias("total_event_learning_hours"),
+            coalesce(col("total_content_duration"), lit(0)).alias("total_content_learning_hours"),
+            coalesce(col("Total_Learning_Hours"), lit(0)).alias("total_learning_hours"),
+            col("employmentDetails.employeeCode").alias("employee_id"),
+            currentDateTime.alias("data_last_generated_on")
+        )
+        
+        # Write warehouse data
+        exportDFToParquet(warehouseDF.coalesce(1), ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
+        print(f"User warehouse data generation completed")
+        return warehouseDF
+        
+    except Exception as e:
+        print(f"Error in warehouse data generation: {str(e)}")
+        raise
