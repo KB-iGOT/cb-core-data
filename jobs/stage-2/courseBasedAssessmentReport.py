@@ -40,7 +40,7 @@ class CourseBasedAssessmentModel:
             currentDateTime = current_timestamp()
 
             print("Stage 1: Loading assessment data...")
-            assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE).filter(col("assessCategory").isin("Standalone Assessment"))
+            assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE).filter(col("assessCategory").isin("Course", "Standalone Assessment", "Blended Program"))
             hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
             organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
 
@@ -58,7 +58,7 @@ class CourseBasedAssessmentModel:
             competencies=True,
             l2_children=True )
             print("Stage 2: Complete")
-
+            #orgDF is not passed
             print("Stage 3: Transforming assessment data...")
             assessWithHierarchyDF = assessmentDFUtil.transform_assessment_data(assWithHierarchyData, organizationDF)
             assessWithDetailsDF = assessWithHierarchyDF.drop("children")
@@ -72,8 +72,7 @@ class CourseBasedAssessmentModel:
             .withColumn("assessStartTime", col("assessStartTimestamp").cast("long"))\
             .withColumn("assessEndTime", col("assessEndTimestamp").cast("long"))
             userAssessChildrenDF = assessmentDFUtil.user_assessment_children_dataframe(userAssessmentDF, assessChildrenDF)
-            categories = ["Course", "Program", "Blended Program", "Curated Program", "Moderated Course",
-                      "Standalone Assessment", "CuratedCollections"]
+            categories = ["Course", "Program", "Blended Program", "Standalone Assessment", "Curated Program"]
             allCourseProgramDetailsWithCompDF = assessmentDFUtil.all_course_program_details_with_competencies_json_dataframe(spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)\
                 .filter(col("category").isin(categories)), hierarchyDF, organizationDF, spark)
             print("All Course Program Details with Competencies JSON DataFrame Schema:")
@@ -191,7 +190,7 @@ class CourseBasedAssessmentModel:
                     col("assessEndTime"),
                     col("userOrgID").alias("mdoid"),
                     col("Report_Last_Generated_On"))
-            fullReportDF = fullReportNewDF.union(fullReportOldDF)
+            fullReportDF = fullReportNewDF.union(fullReportOldDF).dropDuplicates(["userID", "assessment_id", "course_id"])
             mdoReportDF = fullReportDF.filter(col("status") == 1).select(
                 col("userID").alias("User ID"),
                 col("fullName").alias("Full Name"),
