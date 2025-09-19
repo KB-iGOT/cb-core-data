@@ -6,9 +6,11 @@ from pyspark.sql.functions import col, explode_outer,from_json, lit,when, format
 from pyspark.sql import functions as F
 from pyspark.sql.types import FloatType
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.functions import (col, lit, when, expr, format_string, date_format, current_timestamp, to_date, from_json, explode_outer, greatest, size,min as F_min, max as F_max, count as F_count, sum as F_sum,broadcast)
+from pyspark.sql.types import ( DateType)
 from constants.ParquetFileConstants import ParquetFileConstants
-from typing import List
 from util import schemas
+from dfutil.enrolment import enrolmentDFUtil
 
 def esContentDataFrame(
     spark: SparkSession
@@ -211,3 +213,174 @@ def addCourseOrgDetails(
     df = courseDF.join(joinOrgDF, ["courseOrgID"], "left")
     
     return df
+
+def preComputeContentWarehouseData(spark):
+    """
+    Generate ONLY content warehouse data 
+    Removes dependency on full course report job
+    """
+    try:
+        currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
+        primary_categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
+        
+        print("Starting Content Warehouse Data Generation...")
+        
+        # Load required data
+        print("Loading platform data...")
+        allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("category").isin(primary_categories))
+        contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
+        enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+        courseBatchDF = spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE)
+        
+        print("Loading marketplace data...")
+        marketPlaceEnrolmentsDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
+        marketPlaceContentsDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+        
+        # Process Platform Content Data
+        print("Processing platform course progress and enrollments...")
+        courseResCountDF = allCourseProgramDetailsDF.select("courseID", "courseResourceCount")
+        userEnrolmentDF = enrolmentDF.join(courseResCountDF, on=["courseID"], how="left")
+        allCBPCompletionWithDetailsDF = enrolmentDFUtil.calculateCourseProgress(userEnrolmentDF)
+
+        # Aggregate course completion details
+        aggregatedDF = allCBPCompletionWithDetailsDF.groupBy("courseID") \
+            .agg(
+                F_min("courseCompletedTimestamp").alias("earliestCourseCompleted"),
+                F_max("courseCompletedTimestamp").alias("latestCourseCompleted"),
+                F_count(lit(1)).alias("enrolledUserCount"),
+                F_sum(when(col("userCourseCompletionStatus") == "in-progress", 1).otherwise(0)).alias("inProgressCount"),
+                F_sum(when(col("userCourseCompletionStatus") == "not-started", 1).otherwise(0)).alias("notStartedCount"),
+                F_sum(when(col("userCourseCompletionStatus") == "completed", 1).otherwise(0)).alias("completedCount"),
+                F_sum("issuedCertificateCountPerContent").alias("totalCertificatesIssued")
+            ) \
+            .withColumn("firstCompletedOn", to_date(col("earliestCourseCompleted"), ParquetFileConstants.DATE_FORMAT)) \
+            .withColumn("lastCompletedOn", to_date(col("latestCourseCompleted"), ParquetFileConstants.DATE_FORMAT))
+
+        allCBPAndAggDF = allCourseProgramDetailsDF.join(aggregatedDF, ["courseID"], "left")
+
+        # Add batch information
+        curatedCourseDataDFWithBatchInfo = allCBPAndAggDF \
+            .join(
+                broadcast(
+                    allCourseProgramDetailsDF
+                    .filter(col("category") == "Blended Program")
+                    .select("courseID")
+                    .join(courseBatchDF, ["courseID"], "inner")
+                    .select("courseID", "batchID", "courseBatchName", "courseBatchStartDate", "courseBatchEndDate")
+                ), 
+                ["courseID"], 
+                "left"
+            )
+
+        # Format and filter platform data
+        fullDF = contentDFUtil.duration_format(curatedCourseDataDFWithBatchInfo, "courseDuration") \
+            .filter(col("courseStatus").isin(["Live", "Draft", "Retired", "Review"])) \
+            .withColumn("courseLastPublishedOn", to_date(col("courseLastPublishedOn"), ParquetFileConstants.DATE_FORMAT)) \
+            .withColumn("courseBatchStartDate", to_date(col("courseBatchStartDate"), ParquetFileConstants.DATE_FORMAT)) \
+            .withColumn("courseBatchEndDate", to_date(col("courseBatchEndDate"), ParquetFileConstants.DATE_FORMAT)) \
+            .withColumn("lastStatusChangedOn", to_date(col("lastStatusChangedOn"), ParquetFileConstants.DATE_FORMAT)) \
+            .withColumn("ArchivedOn", when(col("courseStatus") == "Retired", to_date(col("lastStatusChangedOn"), ParquetFileConstants.DATE_FORMAT)))
+
+        # Process Marketplace Content Data
+        print("Processing marketplace course data...")
+        marketPlaceEnrolmentsAggDF = marketPlaceEnrolmentsDF \
+            .withColumn("issuedCertificateCountPerContent", 
+                        when(size(col("issued_certificates")) > 0, lit(1)).otherwise(lit(0))) \
+            .groupBy("content_id") \
+            .agg(
+                F_count(lit(1)).alias("enrolledUserCount"),
+                F_sum(when(col("status") == 1, 1).otherwise(0)).alias("inProgressCount"),
+                F_sum(when(col("status") == 0, 1).otherwise(0)).alias("notStartedCount"),
+                F_sum(when(col("status") == 2, 1).otherwise(0)).alias("completedCount"),
+                F_sum(col("issuedCertificateCountPerContent")).alias("totalCertificatesIssued"),
+                F_min("completedon").alias("earliestCompletedOn"),
+                F_max("completedon").alias("latestCompletedOn")
+            )
+
+        marketPlaceContentWithEnrolmentsDF = contentDFUtil.duration_format(marketPlaceContentsDF, "courseDuration") \
+            .join(marketPlaceEnrolmentsAggDF, ["content_id"], "outer") \
+            .withColumn("firstCompletedOn", to_date(col("earliestCompletedOn"), ParquetFileConstants.DATE_FORMAT)) \
+            .withColumn("lastCompletedOn", to_date(col("latestCompletedOn"), ParquetFileConstants.DATE_FORMAT)) \
+            .withColumn("data_last_generated_on", currentDateTime)
+
+        # Generate SCORM Detection for Platform Content
+        print("Detecting SCORM content...")
+        contentHierarchyExploded = contentHierarchyDF.withColumn("hierarchy", from_json(col("hierarchy"), schemas.hierarchySchema))
+
+        scorm_detection_df = contentHierarchyExploded \
+            .withColumn("level1_child", explode_outer(col("hierarchy.children"))) \
+            .withColumn("level2_child", explode_outer(col("level1_child.children"))) \
+            .withColumn("lvl1_scorm", when(col("level1_child.mimeType").endswith("html-archive"), 1).otherwise(0)) \
+            .withColumn("lvl2_scorm", when(col("level2_child.mimeType").endswith("html-archive"), 1).otherwise(0)) \
+            .groupBy("courseID") \
+            .agg(
+                F_max("lvl1_scorm").alias("lvl1_flag"),
+                F_max("lvl2_scorm").alias("lvl2_flag")
+            ) \
+            .withColumn("scorm_flag", greatest(col("lvl1_flag"), col("lvl2_flag"))) \
+            .select("courseID", "scorm_flag")
+
+        # Generate Platform Content Warehouse Data
+        print("Generating platform content warehouse data...")
+        platformContentWarehouseDF = fullDF \
+            .join(scorm_detection_df, ["courseID"], "left") \
+            .na.fill(0, ["scorm_flag"]) \
+            .withColumn("data_last_generated_on", currentDateTime) \
+            .select(
+                col("courseID").alias("content_id"),
+                col("courseOrgID").alias("content_provider_id"),
+                col("courseOrgName").alias("content_provider_name"),
+                col("courseName").alias("content_name"),
+                col("category").alias("content_type"),
+                col("batchID").alias("batch_id"),
+                col("courseBatchName").alias("batch_name"),
+                col("courseBatchStartDate").alias("batch_start_date"),
+                col("courseBatchEndDate").alias("batch_end_date"),
+                col("courseDuration").alias("content_duration"),
+                col("rating").alias("content_rating"),
+                date_format(col("courseLastPublishedOn"), ParquetFileConstants.DATE_FORMAT).alias("last_published_on"),
+                col("ArchivedOn").alias("content_retired_on"),
+                col("courseStatus").alias("content_status"),
+                col("courseResourceCount").alias("resource_count"),
+                col("totalCertificatesIssued").alias("total_certificates_issued"),
+                col("courseReviewStatus").alias("content_substatus"),
+                col("contentLanguage").alias("language"),
+                col("courseCategory").alias("content_sub_type"),
+                col("scorm_flag"),
+                col("data_last_generated_on")
+            )
+
+        # Generate Marketplace Content Warehouse Data
+        print("Generating marketplace content warehouse data...")
+        marketPlaceContentWarehouseDF = marketPlaceContentWithEnrolmentsDF.select(
+            col("content_id"),
+            col("courseOrgID").alias("content_provider_id"),
+            col("courseOrgName").alias("content_provider_name"),
+            col("courseName").alias("content_name"),
+            col("category").alias("content_type"),
+            lit("Not Available").alias("batch_id"),
+            lit("Not Available").alias("batch_name"),
+            lit(None).cast(DateType()).alias("batch_start_date"),
+            lit(None).cast(DateType()).alias("batch_end_date"),
+            col("courseDuration").alias("content_duration"),
+            lit("Not Available").alias("content_rating"),
+            to_date(col("courseLastPublishedOn"), ParquetFileConstants.DATE_FORMAT).alias("last_published_on"),
+            lit(None).cast(DateType()).alias("content_retired_on"),
+            col("courseStatus").alias("content_status"),
+            lit("Not Available").alias("resource_count"),
+            col("totalCertificatesIssued").alias("total_certificates_issued"),
+            lit("Not Available").alias("content_substatus"),
+            lit("Not Available").alias("language"),
+            lit("External Content").alias("content_sub_type"),
+            lit("0").alias("scorm_flag"),
+            col("data_last_generated_on")
+        )
+
+        # Combine Platform and Marketplace Data & Write to Warehouse
+        print("Writing content warehouse data...")
+        df_warehouse = platformContentWarehouseDF.union(marketPlaceContentWarehouseDF)
+        exportDFToParquet(df_warehouse.coalesce(1), ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+
+    except Exception as e:
+        print(f"Content warehouse data generation error: {str(e)}")
+        raise
