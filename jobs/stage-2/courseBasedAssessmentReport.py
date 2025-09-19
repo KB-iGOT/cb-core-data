@@ -37,7 +37,7 @@ class CourseBasedAssessmentModel:
         try:
             start_time = time.time()
             today = self.get_date()
-            currentDateTime = current_timestamp()
+            currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
 
             print("Stage 1: Loading assessment data...")
             assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE).filter(col("assessCategory").isin("Course", "Standalone Assessment", "Blended Program"))
@@ -132,11 +132,11 @@ class CourseBasedAssessmentModel:
                 col("assessChildName").alias("assessment_name"),
                 col("assessment_type"),
                 col("assessOrgName").alias("assessment_content_provider"),
-                from_unixtime(col("assessLastPublishedOn").cast("long"), "yyyy-MM-dd").alias("assessment_publish_date"),
+                date_format(from_unixtime(col("assessLastPublishedOn")), ParquetFileConstants.DATE_FORMAT).alias("assessment_publish_date"),
                 col("assessment_course_name").alias("course_name"),
                 col("course_id"),
                 col("totalAssessmentDuration").alias("assessment_duration"),
-                from_unixtime(col("assessEndTime")).alias("last_attempted_date"),
+                date_format(from_unixtime(col("assessEndTime")), ParquetFileConstants.DATE_FORMAT).alias("last_attempted_date"),
                 col("assessOverallResult").alias("latest_percentage_achieved"),
                 col("assessPercentage"),
                 col("Pass"),
@@ -154,7 +154,7 @@ class CourseBasedAssessmentModel:
                 .withColumn("Department", when((col("Ministry").isNotNull()) & (col("Ministry") != col("userOrgName")) & (col("dept_name").isNull() | (col("dept_name") == "")),
                     col("userOrgName")).otherwise(col("dept_name"))) \
                 .withColumn("Organisation", when((col("Ministry") != col("userOrgName")) & (col("Department") != col("userOrgName")), col("userOrgName")).otherwise(lit(""))) \
-                .withColumn("Report_Last_Generated_On", current_timestamp()) \
+                .withColumn("Report_Last_Generated_On", currentDateTime) \
                 .select(
                     col("userID"),
                     col("source_id").alias("assessment_id"),
@@ -200,7 +200,6 @@ class CourseBasedAssessmentModel:
                 col("MDO_Name"),
                 col("Group"),
                 col("Tags"),
-                col("status"),
                 col("Ministry"),
                 col("Department"),
                 col("Organisation"),
@@ -315,7 +314,7 @@ class CourseBasedAssessmentModel:
             StructField("duration", StringType(), True),
             StructField("primaryCategory", StringType(), True),
             StructField("leafNodesCount", IntegerType(), True),
-            StructField("contentTyCourseBasedAssessmentModelpe", StringType(), True),
+            StructField("contentType", StringType(), True),
             StructField("objectType", StringType(), True),
             StructField("showTimer", StringType(), True),
             StructField("allowSkip", StringType(), True),
@@ -354,6 +353,7 @@ def main():
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "18g") \
         .config("spark.driver.memory", "18g") \
+        .config("spark.driver.maxResultSize", "3g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \
