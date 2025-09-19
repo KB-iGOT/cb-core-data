@@ -63,7 +63,8 @@ class ParquetFileConstants:
     OLD_ASSESSMENT_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "old-assessment/")
     ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "enrolment-warehouse-computed/")
     ENROLMENT_CONTENT_USER_COMPUTED_PARQUET_FILE=str(OUTPUT_COMPUTED_DIR / "enrolment-content-user-computed/")
-
+    USER_WAREHOUSE_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user-warehouse-computed/")
+    CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content-warehouse-computed/")
     ###
     ###  Output CSV File
     ###

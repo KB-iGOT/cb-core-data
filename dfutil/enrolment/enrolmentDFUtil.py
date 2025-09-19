@@ -5,7 +5,7 @@ from typing import List
 from dfutil.user.userDFUtil import exportDFToParquet
 from pyspark.sql import SparkSession, DataFrame,functions as F
 from pyspark.sql.functions import (
-    col, lit, element_at, size, when, coalesce,expr,sum
+    col, lit, element_at, size, when, coalesce,expr,sum,date_format
 )
 from pyspark.sql.types import IntegerType
 
@@ -258,15 +258,17 @@ def preComputeUserEnrolmentWarehouseData(spark):
 
     platform_enrolments_df = (
         allCourseProgramCompletionWithDetailsDFWithRating
-        .filter(col("userStatus").cast(IntegerType()) == 1)  # Only active users
+        .withColumn("enrolled_on", date_format(col("courseEnrolledTimestamp"),  ParquetFileConstants.DATE_TIME_FORMAT))
         .select(
             col("userID"),
             col("courseID").alias("content_id"),
+            col("firstCompletedOn").alias("first_completed_on"),
             col("userCourseCompletionStatus").alias("user_consumption_status"),
             col("certificateID"),
-            col("batchID")
+            col("batchID"),
+            col("enrolled_on")
         )
-        .dropDuplicates(["userID", "content_id", "batchID"]).drop("batchID")
+        .dropDuplicates(["userID", "content_id", "batchID"])
     )
     
     externalEnrolmentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
@@ -276,7 +278,6 @@ def preComputeUserEnrolmentWarehouseData(spark):
         externalContentOrgDF
         .join(externalEnrolmentDF, "content_id", "inner")
         .join(userOrgDF, ["userID"], "left")
-        .filter(col("userStatus").cast(IntegerType()) == 1)  # Only active users
         .withColumn("certificateID", 
                     when(col("issued_certificates").isNull(), "")
                     .otherwise(col("issued_certificates")[size(col("issued_certificates")) - 1]["identifier"]))
@@ -285,13 +286,26 @@ def preComputeUserEnrolmentWarehouseData(spark):
                     .when(col("status") == 0, "not-started")
                     .when(col("status") == 1, "in-progress")
                     .otherwise("completed"))
+        .withColumn("firstCompletedOn", 
+            when(col("issued_certificates").isNull(), lit(""))
+            .otherwise(
+                when(size(col("issued_certificates")) > 0, 
+                    col("issued_certificates")[0]["lastIssuedOn"])
+                .otherwise(lit(""))
+            )
+        )
+        .withColumn("courseEnrolledTimestamp", date_format(col("enrolled_date"), ParquetFileConstants.DATE_TIME_FORMAT))
+        .withColumn("batchID", lit("Not Available"))
         .select(
             col("userID"),
             col("content_id"),
+            col("firstCompletedOn").alias("first_completed_on"),
             col("user_consumption_status"),
-            col("certificateID")
+            col("certificateID"),
+            col("courseEnrolledTimestamp").alias("enrolled_on"),
+            col("batchID")
         )
-        .dropDuplicates(["userID", "content_id"])
+        .dropDuplicates(["userID", "content_id", "batchID"])
     )
     
     combined_enrolments_df = platform_enrolments_df.union(marketplace_enrolments_df)
