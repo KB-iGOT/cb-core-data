@@ -5,10 +5,10 @@ from pyspark.sql.types import *
 from pyspark.sql.types import StructType, TimestampNTZType
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
-    explode,sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace
+    explode, sum, collect_list, col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,
+    coalesce, regexp_replace
 )
 from pyspark.sql.types import LongType
-
 
 sys.path.append(str(Path(__file__).resolve().parents[3]))
 from util import schemas
@@ -26,17 +26,18 @@ def preComputeACBPData(spark):
         col("draftdata"),
         col("status").alias("acbpStatus"),
         col("createdby").alias("acbpCreatedBy"),
+        col("isapar"),
         col("name").alias("cbPlanName"),
         col("assignmenttype").alias("assignmentType"),
         col("assignmenttypeinfo").alias("assignmentTypeInfo"),
         col("enddate").alias("completionDueDate"),
         col("publishedat").alias("allocatedOn"),
         col("contentlist").alias("acbpCourseIDList")
-        ) \
+    ) \
         .na.fill({"cbPlanName": ""})
     # Draft data
     draft_cbp_data = acbp_select_df.filter((col("acbpStatus") == "DRAFT") & col("draftdata").isNotNull()) \
-        .select("acbpID", "userOrgID", "draftdata", "acbpStatus", "acbpCreatedBy") \
+        .select("acbpID", "userOrgID", "draftdata", "acbpStatus", "acbpCreatedBy", "isapar") \
         .withColumn("draftData", from_json(col("draftdata"), schemas.cbplan_draft_data_schema)) \
         .withColumn("cbPlanName", col("draftData.name")) \
         .withColumn("assignmentType", col("draftData.assignmentType")) \
@@ -50,13 +51,16 @@ def preComputeACBPData(spark):
     draft_cbp_data = draft_cbp_data.withColumn("draftdata", lit(None).cast("string"))
     # Union the two
     final_df = non_draft_cbp_data.unionByName(draft_cbp_data)
-   
-    exportDFToParquet(final_df,ParquetFileConstants.ACBP_SELECT_FILE)
+
+    exportDFToParquet(final_df, ParquetFileConstants.ACBP_SELECT_FILE)
     explodeAcbpData(spark, final_df)
 
-def explodeAcbpData(spark,acbp_df):
-    selectColumns = ["userID", "fullName", "userPrimaryEmail", "userMobile", "designation", "group", "userOrgID", "ministry_name", "dept_name", "userOrgName", "userStatus", "acbpID",
-      "assignmentType", "completionDueDate", "allocatedOn", "acbpCourseIDList","acbpStatus", "acbpCreatedBy","cbPlanName"]
+
+def explodeAcbpData(spark, acbp_df):
+    selectColumns = ["userID", "fullName", "userPrimaryEmail", "userMobile", "designation", "group", "userOrgID",
+                     "ministry_name", "dept_name", "userOrgName", "userStatus", "isapar", "acbpID",
+                     "assignmentType", "completionDueDate", "allocatedOn", "acbpCourseIDList", "acbpStatus",
+                     "acbpCreatedBy", "cbPlanName"]
     user_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
     acbp_custom_user_df = acbp_df \
         .filter(col("assignmentType") == "CustomUser") \
@@ -82,15 +86,14 @@ def explodeAcbpData(spark,acbp_df):
 
     print(f"acbp_allotment_df data: {acbp_allotment_df.count():,} rows")
 
-
-    
-    exportDFToParquet(acbp_allotment_df,ParquetFileConstants.ACBP_COMPUTED_FILE)
+    exportDFToParquet(acbp_allotment_df, ParquetFileConstants.ACBP_COMPUTED_FILE)
 
 
-def exportDFToParquet(df,outputFile):
-#    df_cleaned = drop_all_ntz_fields(df)
-   df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
-   df.unpersist(blocking=True)
+def exportDFToParquet(df, outputFile):
+    #    df_cleaned = drop_all_ntz_fields(df)
+    df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
+    df.unpersist(blocking=True)
+
 
 def cast_ntz_to_string_recursively(schema, prefix=""):
     """
@@ -129,10 +132,12 @@ def drop_all_ntz_fields(df: DataFrame) -> DataFrame:
     df = df.drop("completionDueDate", "allocatedOn")
     return df
 
+
 # Main function
 def cast_ntz_to_string(df):
     new_cols = cast_ntz_to_string_recursively(df.schema)
     return df.select(*new_cols)
+
 
 def print_nested_schema(df, prefix=""):
     for field in df.schema.fields:
@@ -142,4 +147,3 @@ def print_nested_schema(df, prefix=""):
             print_nested_schema(df.select(f"{name}.*"), prefix=name + ".")
         else:
             print(f"{name}: {dt}")
-
