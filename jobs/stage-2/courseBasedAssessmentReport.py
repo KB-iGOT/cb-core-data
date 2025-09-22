@@ -8,6 +8,7 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType, 
 from pyspark.sql.window import Window
 from pyspark.sql.functions import (col, row_number, countDistinct, current_timestamp, date_format, broadcast, unix_timestamp, when, lit, concat_ws, from_unixtime, format_string, expr)
 from datetime import datetime
+from pyspark.sql import functions as F
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -90,8 +91,8 @@ class CourseBasedAssessmentModel:
             # Step 2: Get latest entry per (assessChildID, userID) using row_number()
             windowSpec = Window.partitionBy("assessChildID", "userID").orderBy(col("assessEndTimestamp").desc())
 
-            userAssessChildDataLatestDF = userAssessChildrenDetailsDF.withColumn("rowNum", row_number().over(windowSpec)).filter(col("rowNum") == 1).drop("rowNum")\
-              .join(broadcast(retakesDF), ["assessChildID", "userID"], "left")
+            userAssessChildDataLatestDF = userAssessChildrenDetailsDF.withColumn("rowNum", row_number().over(windowSpec)).filter(F.col("rowNum") == 1).drop("rowNum")\
+            .join(retakesDF.select("assessChildID","userID","retakes"),["assessChildID","userID"], "left")
 
             finalDF = userAssessChildDataLatestDF.withColumn("userAssessmentDuration", unix_timestamp("assessEndTimestamp") - unix_timestamp("assessStartTimestamp")) \
                 .withColumn("Pass", when(col("assessPass") == 1, "Yes").otherwise("No")) \
