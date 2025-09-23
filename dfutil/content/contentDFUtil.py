@@ -6,7 +6,7 @@ from pyspark.sql.functions import col, explode_outer,from_json, lit,when, format
 from pyspark.sql import functions as F
 from pyspark.sql.types import FloatType
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import (col, lit, when, expr, format_string, date_format, current_timestamp, to_date, from_json, explode_outer, greatest, size,min as F_min, max as F_max, count as F_count, sum as F_sum,broadcast)
+from pyspark.sql.functions import (col, lit, when, expr, format_string, date_format, current_timestamp, to_date, from_json, explode_outer, greatest, size,min as F_min, max as F_max, count as F_count, sum as F_sum,broadcast, trim)
 from pyspark.sql.types import ( DateType)
 from constants.ParquetFileConstants import ParquetFileConstants
 from util import schemas
@@ -22,6 +22,7 @@ def preComputeAllCourseProgramESDataFrame(spark: SparkSession) -> DataFrame:
     contentDF = esContentDataFrame(spark) \
         .withColumn("courseOrgID", explode_outer(col("createdFor"))) \
         .withColumn("contentLanguage", explode_outer(col("language"))) \
+        .withColumn("contentCreator", explode_outer(col("organisation"))) \
         .withColumn("competencyAreaRefId", 
                    F.when(F.col("competencies_v6").isNotNull(), 
                          F.col("competencies_v6")["competencyAreaRefId"])
@@ -51,7 +52,8 @@ def preComputeAllCourseProgramESDataFrame(spark: SparkSession) -> DataFrame:
             F.col("competencyThemeRefId"),
             F.col("competencySubThemeRefId"),
             col("contentLanguage"),
-            col("courseCategory")
+            col("courseCategory"),
+            col("contentCreator")
         ) \
         .dropDuplicates(["courseID", "category"]) \
         .fillna(0.0, subset=["courseDuration"]) \
@@ -329,7 +331,7 @@ def preComputeContentWarehouseData(spark):
             .select(
                 col("courseID").alias("content_id"),
                 col("courseOrgID").alias("content_provider_id"),
-                col("courseOrgName").alias("content_provider_name"),
+                when(col("courseOrgName").isNotNull & trim(col("courseOrgName")) != "", col("courseOrgName")).otherwise(col("contentCreator")).alias("content_provider_name"),
                 col("courseName").alias("content_name"),
                 col("category").alias("content_type"),
                 col("batchID").alias("batch_id"),
