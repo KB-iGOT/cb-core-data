@@ -41,6 +41,17 @@ profile_schema = StructType([
     StructField("personaldetails", personal_details_schema)
 ])
 
+cadre_details_schema = StructType([
+    StructField("cadreName", StringType(), True),
+    StructField("civilServiceId", StringType(), True),
+    StructField("cadreId", StringType(), True),
+    StructField("civilServiceTypeId", StringType(), True),
+    StructField("civilServiceType", StringType(), True),
+    StructField("cadreControllingAuthorityName", StringType(), True),
+    StructField("civilServiceName", StringType(), True),
+    StructField("cadreBatch", StringType(), True),
+])
+
 hierarchySchema = StructType([
     StructField("children", ArrayType(StructType([
         StructField("identifier", StringType(), True),
@@ -64,7 +75,8 @@ hierarchySchema = StructType([
 def makeProfileDetailsSchema(
     competencies=False,
     additionalProperties=False,
-    professionalDetails=False
+    professionalDetails=False,
+    cadreDetails= False
 ) -> StructType:
     fields = [
         StructField("verifiedKarmayogi", BooleanType(), True),
@@ -80,10 +92,13 @@ def makeProfileDetailsSchema(
 
     if additionalProperties:
         fields.append(StructField("additionalProperties", additionalPropertiesSchema, True))
-        fields.append(StructField("additionalPropertis", additionalPropertiesSchema, True))  
+        fields.append(StructField("additionalPropertis", additionalPropertiesSchema, True))
 
     if additionalProperties:
         fields.append(StructField("professionalDetails", ArrayType(professionalDetailsSchema), True))
+
+    if cadreDetails:
+        fields.append(StructField("cadreDetails", cadre_details_schema, True))
 
     return StructType(fields)
 
@@ -454,4 +469,3 @@ def get_hierarchy_schema():
             StructField("children", ArrayType(level1), True),
             StructField("competencies_v3", StringType(), True)
         ])
-

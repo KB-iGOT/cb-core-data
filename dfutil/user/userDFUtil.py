@@ -3,17 +3,18 @@ from pathlib import Path
 from pyspark.sql.types import *
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
-    sum,collect_list,col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp,coalesce,regexp_replace,bround,countDistinct,to_timestamp,from_unixtime,date_format,current_timestamp
+    sum, collect_list, col, from_json, explode_outer, when, expr, concat_ws, rtrim, lit, unix_timestamp, coalesce,
+    regexp_replace, bround, countDistinct, to_timestamp, from_unixtime, date_format, current_timestamp
 )
 from pyspark.sql.types import LongType
-
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from util import schemas
 from constants.ParquetFileConstants import ParquetFileConstants
 
+
 def preComputeUser(spark: SparkSession) -> DataFrame:
-    profileDetailsSchema = schemas.makeProfileDetailsSchema(False,True,True)
+    profileDetailsSchema = schemas.makeProfileDetailsSchema(False, True, True, True)
     userRawDF = spark.read.parquet(ParquetFileConstants.USER_PARQUET_FILE)
 
     # Select and rename base fields
@@ -54,7 +55,13 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         .withColumn("designation", coalesce(col("professionalDetails.designation"), lit(""))) \
         .withColumn("group", coalesce(col("professionalDetails.group"), lit(""))) \
         .withColumn("userPrimaryEmail", col("personalDetails.primaryEmail")) \
-        .withColumn("userMobile", col("personalDetails.mobile"))
+        .withColumn("userMobile", col("personalDetails.mobile")) \
+        .withColumn("cadreDetails", col("profileDetails.cadreDetails")) \
+        .withColumn("cadreName", col("cadreDetails.cadreName")) \
+        .withColumn("civilServiceType", col("cadreDetails.civilServiceType")) \
+        .withColumn("civilServiceName", col("cadreDetails.civilServiceName")) \
+        .withColumn("cadreBatch", col("cadreDetails.cadreBatch")) \
+        .withColumn("organised_service", when(col("cadreDetails").isNotNull(), lit("Yes")).otherwise(lit("No")))
 
     # Handle `additionalProperties` fallback
     userDF = userDF.withColumn(
@@ -62,15 +69,15 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         when(col("profileDetails.additionalProperties").isNotNull(), col("profileDetails.additionalProperties"))
         .otherwise(col("profileDetails.additionalPropertis"))
     ) \
-    .withColumn("Tag", concat_ws(", ", col("additionalProperties.tag")))
+        .withColumn("Tag", concat_ws(", ", col("additionalProperties.tag")))
 
     # Drop now-unnecessary JSON fields
     userDF = userDF.drop("profileDetails", "userProfileDetails")
 
     # Convert timestamp fields (assuming this function exists)
-    userDF = timestampStringToLong(userDF, ["userCreatedTimestamp", "userUpdatedTimestamp"])    
-    exportDFToParquet(userDF,ParquetFileConstants.USER_SELECT_PARQUET_FILE)
-    
+    userDF = timestampStringToLong(userDF, ["userCreatedTimestamp", "userUpdatedTimestamp"])
+    exportDFToParquet(userDF, ParquetFileConstants.USER_SELECT_PARQUET_FILE)
+
     roleRawDF = spark.read.parquet(ParquetFileConstants.ROLE_PARQUET_FILE)
     roleRawDF = roleRawDF \
         .withColumnRenamed("userID", "rowUserID") \
@@ -78,9 +85,8 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         .agg(concat_ws(", ", collect_list("role")).alias("role"))
 
     userDF = userDF.join(roleRawDF, userDF["userID"] == roleRawDF["rowUserID"], how="left").drop("rowUserID")
-    #print(f"User Role DF Count: {userDF.count()}")
+    # print(f"User Role DF Count: {userDF.count()}")
     userDF = userDF.drop("rowUserID")
-
 
     karma_df = spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE)
     karma_df = karma_df.groupBy(col("userid").alias("karmaUserID")) \
@@ -95,84 +101,85 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
 
     userDF = userDF.join(weekly_claps_df, on="userID", how="left")
     userDF = userDF.drop("weeklyClaspUserID")
-    #print(f"User Clap DF Count: {userDF.count()}")
-
-
+    # print(f"User Clap DF Count: {userDF.count()}")
 
     exportDFToParquet(userDF, ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
     return userDF
-    
 
 
 def preComputeOrgWithHierarchy(spark: SparkSession):
-     orgRawDF = spark.read.parquet(ParquetFileConstants.ORG_PARQUET_FILE)
-     
-     org_df = orgRawDF \
+    orgRawDF = spark.read.parquet(ParquetFileConstants.ORG_PARQUET_FILE)
+
+    org_df = orgRawDF \
         .select(
-            col("id").alias("orgID"),
-            col("orgname").alias("orgName"),
-            col("status").alias("orgStatus"),
-            col("createddate").alias("orgCreatedDate"),
-            col("organisationtype").alias("orgType"),
-            col("organisationsubtype").alias("orgSubType")
-        ) \
+        col("id").alias("orgID"),
+        col("orgname").alias("orgName"),
+        col("status").alias("orgStatus"),
+        col("createddate").alias("orgCreatedDate"),
+        col("organisationtype").alias("orgType"),
+        col("organisationsubtype").alias("orgSubType")
+    ) \
         .na.fill({"orgName": ""})
 
-     org_computed_df = timestampStringToLong(org_df, ["orgCreatedDate"])
-     org_hierarch_raw_df = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE)
-     org_hierarch_computed_df = org_hierarch_raw_df \
+    org_computed_df = timestampStringToLong(org_df, ["orgCreatedDate"])
+    org_hierarch_raw_df = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE)
+    org_hierarch_computed_df = org_hierarch_raw_df \
         .select(
-            col("mdo_id").alias("userOrgID"),
-            col("department").alias("dept_name"),
-            col("ministry").alias("ministry_name")
-        )
-     exportDFToParquet(org_computed_df, ParquetFileConstants.ORG_SELECT_PARQUET_FILE)
-     exportDFToParquet(org_hierarch_computed_df, ParquetFileConstants.ORG_HIERARCHY_SELECT_PARQUET_FILE)
+        col("mdo_id").alias("userOrgID"),
+        col("department").alias("dept_name"),
+        col("ministry").alias("ministry_name")
+    )
+    exportDFToParquet(org_computed_df, ParquetFileConstants.ORG_SELECT_PARQUET_FILE)
+    exportDFToParquet(org_hierarch_computed_df, ParquetFileConstants.ORG_HIERARCHY_SELECT_PARQUET_FILE)
 
-     org_merged_df = org_computed_df.join(
+    org_merged_df = org_computed_df.join(
         org_hierarch_computed_df,
         org_computed_df["orgID"] == org_hierarch_computed_df["userOrgID"],
         "left"
-     ).drop("userOrgID")
-     exportDFToParquet(org_merged_df, ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
+    ).drop("userOrgID")
+    exportDFToParquet(org_merged_df, ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
+
 
 def preComputeOrgHierarchyWithUser(spark: SparkSession):
-    org_merged_df = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE+f"/**.parquet")
+    org_merged_df = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE + f"/**.parquet")
     org_merged_df = org_merged_df.select(col("orgID").alias("usermergedOrgID"),
-      col("orgName").alias("userOrgName"),
-      col("orgStatus").alias("userOrgStatus"),
-      col("orgCreatedDate").alias("userOrgCreatedDate"),
-      col("orgType").alias("userOrgType"),
-      col("orgSubType").alias("userOrgSubType"),
-      col("dept_name"),
-      col("ministry_name"))
-    user_merged_df = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE+f"/**.parquet")
+                                         col("orgName").alias("userOrgName"),
+                                         col("orgStatus").alias("userOrgStatus"),
+                                         col("orgCreatedDate").alias("userOrgCreatedDate"),
+                                         col("orgType").alias("userOrgType"),
+                                         col("orgSubType").alias("userOrgSubType"),
+                                         col("dept_name"),
+                                         col("ministry_name"))
+    user_merged_df = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE + f"/**.parquet")
     user_org_merged_df = user_merged_df.join(
         org_merged_df,
         user_merged_df["userOrgID"] == org_merged_df["usermergedOrgID"]
     ).drop("usermergedOrgID")
-    exportDFToParquet(user_org_merged_df,ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+    exportDFToParquet(user_org_merged_df, ParquetFileConstants.USER_ORG_COMPUTED_FILE)
 
-def appendContentDurationCompletionForEachUser(spark: SparkSession, user_master_df: DataFrame, user_enrolment_df: DataFrame, content_duration_df: DataFrame) -> DataFrame:
+
+def appendContentDurationCompletionForEachUser(spark: SparkSession, user_master_df: DataFrame,
+                                               user_enrolment_df: DataFrame,
+                                               content_duration_df: DataFrame) -> DataFrame:
     userdf_with_enrolment_counts = user_enrolment_df \
         .join(content_duration_df, on="content_id", how="left") \
         .groupBy("userID") \
         .agg(
-            countDistinct(
-                when(col("user_consumption_status").isin("not-started", "in-progress", "completed"), col("content_id"))
-            ).alias("total_content_enrolments"),
-            countDistinct(
-                when((col("user_consumption_status") == "completed") & col("certificateID").isNotNull(), col("content_id"))
-            ).alias("total_content_completions"),
-            sum(
-                when(
-                    (col("user_consumption_status") == "completed") &
-                    col("certificateID").isNotNull() &
-                    (col("category") == "Course"),
-                    coalesce(col("courseDuration"), lit(0.0))
-                )
-            ).alias("total_content_duration")
-        ) \
+        countDistinct(
+            when(col("user_consumption_status").isin("not-started", "in-progress", "completed"), col("content_id"))
+        ).alias("total_content_enrolments"),
+        countDistinct(
+            when((col("user_consumption_status") == "completed") & col("certificateID").isNotNull(), col("content_id"))
+        ).alias("total_content_completions"),
+        sum(
+            when(
+                (col("user_consumption_status") == "completed") &
+                col("certificateID").isNotNull() &
+                (col("category") == "Course"),
+                coalesce(col("courseDuration"), lit(0.0))
+            )
+        ).alias("total_content_duration")
+    ) \
         .withColumn("total_content_duration", bround(col("total_content_duration") / 3600.0, 2))
 
     user_enrolment_master_df = user_master_df.join(userdf_with_enrolment_counts, on="userID", how="left")
@@ -187,16 +194,17 @@ def appendEventDurationCompletionForEachUser(spark: SparkSession, user_enrolment
         .withColumnRenamed("user_id", "userID") \
         .groupBy("userID") \
         .agg(
-            countDistinct(
-                when(col("status").isin("not-started", "in-progress", "completed"), col("event_id"))
-            ).alias("total_event_enrolments"),
-            countDistinct(
-                when(col("status") == "completed", col("event_id"))
-            ).alias("total_event_completions"),
-            sum(
-                when((col("status") == "completed") & col("certificate_id").isNotNull(), col("event_duration_seconds"))
-            ).alias("total_event_learning_hours_with_certificates")
-        ).withColumn("total_event_learning_hours_with_certificates", bround(col("total_event_learning_hours_with_certificates") / 3600.0, 2))
+        countDistinct(
+            when(col("status").isin("not-started", "in-progress", "completed"), col("event_id"))
+        ).alias("total_event_enrolments"),
+        countDistinct(
+            when(col("status") == "completed", col("event_id"))
+        ).alias("total_event_completions"),
+        sum(
+            when((col("status") == "completed") & col("certificate_id").isNotNull(), col("event_duration_seconds"))
+        ).alias("total_event_learning_hours_with_certificates")
+    ).withColumn("total_event_learning_hours_with_certificates",
+                 bround(col("total_event_learning_hours_with_certificates") / 3600.0, 2))
 
     user_enrolment_df = user_enrolment_df.join(user_event_details_df, on="userID", how="left")
     return user_enrolment_df
@@ -208,12 +216,13 @@ def exportDFToParquet(df: DataFrame, outputFile: str):
     """
     df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
     df.unpersist(blocking=True)
-    
+
+
 def timestampStringToLong(df: DataFrame, column_names: list, format: str = "yyyy-MM-dd HH:mm:ss:SSSZ") -> DataFrame:
     result_df = df
     for col_name in column_names:
         result_df = result_df.withColumn(
-            col_name, 
+            col_name,
             to_timestamp(col(col_name), format)
         )
         result_df = result_df.withColumn(
@@ -222,13 +231,14 @@ def timestampStringToLong(df: DataFrame, column_names: list, format: str = "yyyy
         )
     return result_df
 
+
 def preComputeUserWarehouseData(spark):
     """Generate user warehouse data independently for use in other reports"""
     try:
         currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
-        
+
         print("Loading and processing user warehouse data...")
-        
+
         user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
         user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
         content_duration_df = (
@@ -236,21 +246,21 @@ def preComputeUserWarehouseData(spark):
             .filter(col("category") == "Course")
             .select(col("courseID").alias("content_id"), col("courseDuration").cast("double"), col("category"))
         )
-        
+
         # Process data pipeline
         user_complete_data = (
             appendContentDurationCompletionForEachUser(spark, user_master_df, user_enrolment_df, content_duration_df)
             .transform(lambda df: appendEventDurationCompletionForEachUser(spark, df))
             .withColumn("Tag", concat_ws(", ", col("additionalProperties.tag")))
-            .withColumn("Total_Learning_Hours", 
-                       coalesce(col("total_event_learning_hours_with_certificates"), lit(0)) + 
-                       coalesce(col("total_content_duration"), lit(0)))
+            .withColumn("Total_Learning_Hours",
+                        coalesce(col("total_event_learning_hours_with_certificates"), lit(0)) +
+                        coalesce(col("total_content_duration"), lit(0)))
             .withColumn("weekly_claps_day_before_yesterday",
-                       when(col("weekly_claps_day_before_yesterday").isNull() | 
-                           (col("weekly_claps_day_before_yesterday") == ""), lit(0))
-                       .otherwise(col("weekly_claps_day_before_yesterday")))
+                        when(col("weekly_claps_day_before_yesterday").isNull() |
+                             (col("weekly_claps_day_before_yesterday") == ""), lit(0))
+                        .otherwise(col("weekly_claps_day_before_yesterday")))
         )
-        
+
         # Generate warehouse dataframe with column mapping
         warehouseDF = user_complete_data.select(
             col("userID").alias("user_id"),
@@ -265,12 +275,15 @@ def preComputeUserWarehouseData(spark):
             col("professionalDetails.group").alias("groups"),
             col("Tag").alias("tag"),
             col("userProfileStatus").alias("profile_status"),
-            date_format(from_unixtime(col("userCreatedTimestamp")/1000), ParquetFileConstants.DATE_TIME_FORMAT).alias("user_registration_date"),
+            date_format(from_unixtime(col("userCreatedTimestamp") / 1000), ParquetFileConstants.DATE_TIME_FORMAT).alias(
+                "user_registration_date"),
             col("role").alias("roles"),
             col("personalDetails.gender").alias("gender"),
             col("personalDetails.category").alias("category"),
-            when(col("userProfileStatus") == "NOT-MY-USER", lit(True)).otherwise(lit(False)).alias("marked_as_not_my_user"),
-            when(col("userProfileStatus") == "VERIFIED", lit(True)).otherwise(lit(False)).alias("is_verified_karmayogi"),
+            when(col("userProfileStatus") == "NOT-MY-USER", lit(True)).otherwise(lit(False)).alias(
+                "marked_as_not_my_user"),
+            when(col("userProfileStatus") == "VERIFIED", lit(True)).otherwise(lit(False)).alias(
+                "is_verified_karmayogi"),
             col("userCreatedBy").alias("created_by_id"),
             col("additionalProperties.externalSystem").alias("external_system"),
             col("additionalProperties.externalSystemId").alias("external_system_id"),
@@ -281,12 +294,12 @@ def preComputeUserWarehouseData(spark):
             col("employmentDetails.employeeCode").alias("employee_id"),
             currentDateTime.alias("data_last_generated_on")
         )
-        
+
         # Write warehouse data
         exportDFToParquet(warehouseDF.coalesce(1), ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
         print(f"User warehouse data generation completed")
         return warehouseDF
-        
+
     except Exception as e:
         print(f"Error in warehouse data generation: {str(e)}")
         raise
