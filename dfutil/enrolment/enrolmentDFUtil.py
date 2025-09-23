@@ -27,7 +27,7 @@ def preComputeEnrolment(
         "dbCompletionStatus", "courseCompletedTimestamp",
         "courseEnrolledTimestamp", "lastContentAccessTimestamp", 
         "issuedCertificateCount", "issuedCertificateCountPerContent", 
-        "firstCompletedOn", "certificateGeneratedOn", "certificateID"
+        "firstCompletedOn", "certificateGeneratedOn", "certificateID", "langCourseContentStatus"
     ]
     
     select_cols = base_cols + extra_cols
@@ -69,6 +69,7 @@ def preComputeEnrolment(
         .withColumnRenamed("progress", "courseProgress") \
         .withColumnRenamed("status", "dbCompletionStatus") \
         .withColumnRenamed("contentstatus", "courseContentStatus") \
+        .withColumnRenamed("lang_contentstatus", "langCourseContentStatus") \
         .fillna(
             {
                 "courseProgress": 0,

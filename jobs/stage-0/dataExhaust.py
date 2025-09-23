@@ -281,8 +281,8 @@ class DataExhaustModel:
             should_clause = ",".join([f'{{"match":{{"primaryCategory.raw":"{pc}"}}}}' for pc in primary_categories])
             fields = ["identifier", "name", "primaryCategory", "status", "reviewStatus", "channel", 
                      "duration", "leafNodesCount", "lastPublishedOn", "lastStatusChangedOn", 
-                     "createdFor", "competencies_v6", "programDirectorName", "language", "courseCategory"]
-            array_fields = ["createdFor", "language"]
+                     "createdFor", "competencies_v6", "programDirectorName", "language", "courseCategory","organisation"]
+            array_fields = ["createdFor", "language","organisation"]
             fields_clause = ",".join([f'"{f}"' for f in fields])
             query = f'{{"_source":[{fields_clause}],"query":{{"bool":{{"should":[{should_clause}]}}}}}}'
             
@@ -323,6 +323,7 @@ class DataExhaustModel:
                 col("id").alias("sborgid"),
                 col("organisationtype").alias("orgType"),
                 col("orgname").alias("cassOrgName"),
+                col("iscca").alias("isCCA"),
                 col("createddate").alias("orgCreatedDate")
             )
             
@@ -353,6 +354,7 @@ class DataExhaustModel:
                 col("ministry_id_sborgid").alias("ministry_id"),
                 col("l2orgname").alias("department"),
                 col("department_id_sborgid").alias("department_id"),
+                col("isCCA").alias("is_cca"),
                 col("orgCreatedDate").alias("mdo_created_on")
             ).withColumn(
                 "data_last_generated_on", current_timestamp()

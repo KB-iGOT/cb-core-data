@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.functions import (col, lit, coalesce, when, expr, format_string, date_format, current_timestamp, to_date, from_json, explode_outer, greatest, size,min as F_min, max as F_max, count as F_count, sum as F_sum,broadcast)
+from pyspark.sql.functions import (col, lit, coalesce, when, expr, format_string, date_format, current_timestamp, to_date, from_json, explode_outer, greatest, size,min as F_min, max as F_max, count as F_count, sum as F_sum,broadcast, trim)
 from pyspark.sql.types import ( LongType, DoubleType, DateType)
 from datetime import datetime
 import sys
@@ -272,7 +272,7 @@ class CourseReportModel:
             platformContentMdoReportDF = fullDF \
                 .select(
                     col("courseStatus").alias("Content_Status"),
-                    col("courseOrgName").alias("Content_Provider"),
+                    when(col("courseOrgName").isNotNull & trim(col("courseOrgName")) != "", col("courseOrgName")).otherwise(col("contentCreator")).alias("Content_Provider"),
                     col("courseName").alias("Content_Name"),
                     col("category").alias("Content_Type"),
                     col("batchID").alias("Batch_Id"),
@@ -334,7 +334,7 @@ class CourseReportModel:
                 .select(
                     col("courseID").alias("content_id"),
                     col("courseOrgID").alias("content_provider_id"),
-                    col("courseOrgName").alias("content_provider_name"),
+                    when(col("courseOrgName").isNotNull & trim(col("courseOrgName")) != "", col("courseOrgName")).otherwise(col("contentCreator")).alias("content_provider_name"),
                     col("courseName").alias("content_name"),
                     col("category").alias("content_type"),
                     col("batchID").alias("batch_id"),
