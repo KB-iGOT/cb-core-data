@@ -18,10 +18,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 # Reusable imports from userReport structure
 from constants.ParquetFileConstants import ParquetFileConstants
-from dfutil.assessment import assessmentDFUtil
-from dfutil.content import contentDFUtil
-from dfutil.dfexport import dfexportutil
-from dfutil.utils.utils import druidDFOption
+from dfutil.utils import utils
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 
@@ -205,23 +202,12 @@ class MinistryLeaderBoardModel:
             )
 
             # --- Write to Cassandra ---
-           # self.writeToCassandra(user_leaderboard_df, config.cassandraUserKeyspace,
-            #                      config.cassandraMDOLearnerLeaderboardTable,)
-            self.writeToCassandra(user_leaderboard_df, config.cassandraUserKeyspace, "mdo_learner_leaderboard_pyspark_test")
+            utils.writeToCassandra(user_leaderboard_df, config.cassandraUserKeyspace,config.cassandraMDOLearnerLeaderboardTable)
             print("[SUCCESS] MinistryLearnerLeaderboardModel completed")
 
         except Exception as e:
             print(f"Error occurred during MinistryLearnerLeaderboard processing: {str(e)}")
             raise
-
-    def writeToCassandra(self, df, keyspace: str, table: str, mode: str = "append"):
-        df.write \
-            .format("org.apache.spark.sql.cassandra") \
-            .option("keyspace", keyspace) \
-            .option("table", table) \
-            .mode(mode) \
-            .save()
-
 
 def create_spark_session_with_packages(config):
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'

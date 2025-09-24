@@ -12,6 +12,7 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from constants.ParquetFileConstants import ParquetFileConstants
+from dfutil.utils import utils
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
 
@@ -82,15 +83,7 @@ class InAppReviewModel:
                 .withColumn("updatedon", lit(None).cast("date")) \
                 .withColumn("version", lit("v1"))
             
-            
-            result_df.write \
-                .format("org.apache.spark.sql.cassandra") \
-                .options({
-                    "keyspace": conf.cassandraUserFeedKeyspace,
-                    "table": conf.cassandraUserFeedTable
-                }) \
-                .mode("append") \
-                .save()
+            utils.writeToCassandra(result_df,conf.cassandraUserFeedKeyspace,conf.cassandraUserFeedTable)
                 
         except Exception as e:
             print(f"Error occurred during InAppReviewModel processing: {str(e)}")
@@ -99,6 +92,8 @@ class InAppReviewModel:
 
 def main():
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
         .appName("In App Review Report Model") \
@@ -120,12 +115,9 @@ def main():
         .config("spark.cassandra.read.timeoutMS", '30000') \
         .getOrCreate()
     
-
     # Create model instance
     start_time = datetime.now()
     print(f"[START] InAppReviewModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    config_dict = get_environment_config()
-    config = create_config(config_dict)
     model = InAppReviewModel()
     model.process_data(spark,config)
     end_time = datetime.now()
