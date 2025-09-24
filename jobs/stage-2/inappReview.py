@@ -2,12 +2,11 @@ import findspark
 findspark.init()
 import sys
 from pathlib import Path
-import pandas as pd
-from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.functions import col, lit
-from pyspark.sql.functions import col, lit, expr, date_format, current_timestamp
+import os
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lit, expr, current_date
 
-from datetime import datetime,timedelta
+from datetime import datetime, timedelta
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -34,7 +33,6 @@ class InAppReviewModel:
     def process_data(self, spark,conf):
         try:
             today = self.get_date()
-            currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             
             weeklyClapsDF = spark.read.parquet(ParquetFileConstants.CLAPS_PARQUET_FILE)
             
@@ -48,7 +46,7 @@ class InAppReviewModel:
             
             def endOfDay(date):
                 """Get the end of the current day"""
-                # Get the start of the next day and subtract 1 second
+                # Get the start of the next day and subtract 1 nanosecond (using microseconds as closest)
                 start_of_next_day = datetime.combine(date + timedelta(days=1), datetime.min.time())
                 return start_of_next_day - timedelta(microseconds=1)
             
@@ -67,7 +65,7 @@ class InAppReviewModel:
             # fetch the userids based on the condition
             filtered_df = weeklyClapsDF.filter(
                 col("claps_updated_this_week") & 
-                (expr("date_format(last_claps_updated_on, 'yyyy-MM-dd')") == currentDateTime)
+                (expr("date_format(last_claps_updated_on, 'yyyy-MM-dd')") == current_date())
             ).select("userid")
             
             # add required columns for feed data
@@ -76,7 +74,7 @@ class InAppReviewModel:
                 .withColumn("category", lit("InAppReview")) \
                 .withColumn("id", expr("uuid()").cast("string")) \
                 .withColumn("createdby", lit("weekly_claps")) \
-                .withColumn("createdon", currentDateTime) \
+                .withColumn("createdon", current_date()) \
                 .withColumn("action", lit("{}")) \
                 .withColumn("priority", lit(1)) \
                 .withColumn("status", lit("unread")) \
@@ -84,8 +82,6 @@ class InAppReviewModel:
                 .withColumn("updatedon", lit(None).cast("date")) \
                 .withColumn("version", lit("v1"))
             
-            result_df.printSchema()
-            result_df.show(5,truncate=False)
             
             result_df.write \
                 .format("org.apache.spark.sql.cassandra") \
@@ -102,11 +98,12 @@ class InAppReviewModel:
             sys.exit(1)
 
 def main():
+    os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
         .appName("In App Review Report Model") \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "42g") \
+        .config("spark.executor.memory", "15g") \
         .config("spark.driver.memory", "10g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
@@ -115,6 +112,12 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.cassandra.connection.host", config.sparkCassandraConnectionHost) \
+        .config("spark.cassandra.connection.port", '9042') \
+        .config("spark.cassandra.output.batch.size.rows", '10000') \
+        .config("spark.cassandra.connection.keepAliveMS", "60000") \
+        .config("spark.cassandra.connection.timeoutMS", '30000') \
+        .config("spark.cassandra.read.timeoutMS", '30000') \
         .getOrCreate()
     
 
@@ -130,7 +133,7 @@ def main():
     print(f"[END] InAppReviewModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
     spark.stop()
-# Example usage:
+
 if __name__ == "__main__":
    main()
 
