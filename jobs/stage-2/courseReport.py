@@ -334,7 +334,12 @@ class CourseReportModel:
                 .select(
                     col("courseID").alias("content_id"),
                     col("courseOrgID").alias("content_provider_id"),
-                    when(col("courseOrgName").isNotNull & trim(col("courseOrgName")) != "", col("courseOrgName")).otherwise(col("contentCreator")).alias("content_provider_name"),
+                    when(
+                        col("courseOrgName").isNotNull() & 
+                        (col("courseOrgName") != "") &
+                        (col("courseOrgName") != " "),
+                        col("courseOrgName")
+                    ).otherwise(col("contentCreator")).alias("content_provider_name"),
                     col("courseName").alias("content_name"),
                     col("category").alias("content_type"),
                     col("batchID").alias("batch_id"),
