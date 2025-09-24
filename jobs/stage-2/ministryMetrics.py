@@ -3,22 +3,13 @@ findspark.init()
 import sys
 from pathlib import Path
 import pandas as pd
-from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.functions import bround, col, broadcast, concat_ws, coalesce, lit, when, from_unixtime
-from pyspark.sql.functions import col, lit, coalesce, concat_ws, when, broadcast, get_json_object, rtrim
-from pyspark.sql.functions import col, from_json, explode_outer, coalesce, lit ,format_string
-from pyspark.sql.types import StructType, ArrayType, StringType, BooleanType, StructField
-from pyspark.sql.types import MapType, StringType, StructType, StructField,FloatType,LongType, DateType,IntegerType
-from pyspark.sql.functions import col, when, size, lit, expr, countDistinct, date_format, from_json, current_timestamp, to_date, round, explode, count, from_utc_timestamp,to_timestamp,sum as spark_sum
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, coalesce, lit, countDistinct, count
 
 from datetime import datetime
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from dfutil.content import contentDFUtil
-from dfutil.enrolment import enrolmentDFUtil
-from dfutil.user import userDFUtil
-from dfutil.dfexport import dfexportutil
 from dfutil.utils import utils
 from dfutil.utils.redis import Redis
 from jobs.default_config import create_config
@@ -40,13 +31,7 @@ class MinistryMetricsModel:
     
     def process_data(self, spark,conf):
         try:
-            today = self.get_date()
-            currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
-            
-            print("📥 Loading base DataFrames...")
-            primary_categories= ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
-            
-            # Load and cache base DataFrames that are used multiple times
+            print("📥 Loading base DataFrames...")            
             enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
             org_hierarchyDF = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE)
             ministryNamesDF = org_hierarchyDF.select(col("mdo_name").alias("ministry"), col("mdo_id").alias("ministryID"))
@@ -114,9 +99,6 @@ class MinistryMetricsModel:
             
             certificateResultDF = certificateMinistryDF.union(certificateDeptDF).union(certificateOrgDF)
             
-
-            joinedWithMinistryIDDF.printSchema()
-            joinedWithMinistryIDDF.show(2, truncate=False)
             # Enrolment counts
             enrolmentMinistrytDF = (joinedWithMinistryIDDF
                 .groupBy("ministry")
@@ -168,15 +150,10 @@ class MinistryMetricsModel:
                 .join(ministryNamesDF, ["ministry"], "inner")
                 .select(col("ministryID"), coalesce(col("enrolmentCount"), lit(0)).alias("enrolmentCount")))
             
-            
-            finalActiveUserCountDF.show(truncate=False)
-            finalCertificateCountDF.show(truncate=False)
-            finalUserCountDF.show(truncate=False)
-            finalEnrolmentCountDF.show(truncate=False) 
-            # Redis.dispatchDataFrame("dashboard_rolled_up_login_percent_last_24_hrs", finalActiveUserCountDF, "ministryID", "activeUserCount",conf)
-            # Redis.dispatchDataFrame("dashboard_rolled_up_user_count", finalUserCountDF, "ministryID", "userCount",conf)
-            # Redis.dispatchDataFrame("dashboard_rolled_up_certificates_generated_count", finalCertificateCountDF, "ministryID", "certificateCount",conf)
-            # Redis.dispatchDataFrame("dashboard_rolled_up_enrolment_content_count",finalEnrolmentCountDF, "ministryID", "enrolmentCount",conf)
+            Redis.dispatchDataFrame("dashboard_rolled_up_login_percent_last_24_hrs", finalActiveUserCountDF, "ministryID", "activeUserCount",conf=conf)
+            Redis.dispatchDataFrame("dashboard_rolled_up_user_count", finalUserCountDF, "ministryID", "userCount",conf=conf)
+            Redis.dispatchDataFrame("dashboard_rolled_up_certificates_generated_count", finalCertificateCountDF, "ministryID", "certificateCount",conf=conf)
+            Redis.dispatchDataFrame("dashboard_rolled_up_enrolment_content_count",finalEnrolmentCountDF, "ministryID", "enrolmentCount",conf=conf)
 
         except Exception as e:
             print(f"❌ Error occurred during MinistryMetricsModel processing: {str(e)}")
@@ -186,7 +163,7 @@ class MinistryMetricsModel:
 def main():
     # Initialize Spark Session with optimized settings for caching
     spark = SparkSession.builder \
-        .appName("Ministri Metrics") \
+        .appName("Ministry Metrics") \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "20g") \
         .config("spark.driver.memory", "15g") \
@@ -210,6 +187,6 @@ def main():
     print(f"[END] MinistryMetricsModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
     spark.stop()
-# Example usage:
+
 if __name__ == "__main__":
    main()
