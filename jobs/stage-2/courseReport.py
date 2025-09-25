@@ -272,7 +272,12 @@ class CourseReportModel:
             platformContentMdoReportDF = fullDF \
                 .select(
                     col("courseStatus").alias("Content_Status"),
-                    when(col("courseOrgName").isNotNull & trim(col("courseOrgName")) != "", col("courseOrgName")).otherwise(col("contentCreator")).alias("Content_Provider"),
+                    when(
+                        col("courseOrgName").isNotNull() & 
+                        (col("courseOrgName") != "") &
+                        (col("courseOrgName") != " "),
+                        col("courseOrgName")
+                    ).otherwise(col("contentCreator")).alias("Content_Provider"),
                     col("courseName").alias("Content_Name"),
                     col("category").alias("Content_Type"),
                     col("batchID").alias("Batch_Id"),
