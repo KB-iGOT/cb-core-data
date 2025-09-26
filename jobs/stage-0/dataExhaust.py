@@ -530,6 +530,10 @@ class DataExhaustModel:
             
             self.write_parquet(events_enrolment_with_duration_df.coalesce(1), f"{output_base_path}/eventEnrolmentDetails")
             events_enrolment_df.unpersist()
+
+            userExtendedProfileDF = self.read_cassandra_table( self.config.cassandraUserKeyspace,  self.config.cassandraUserExtendedProfileTable)
+            self.write_parquet(userExtendedProfileDF, f"{output_base_path}/userExtendedProfile")
+            userExtendedProfileDF.unpersist()
             
             self.logger.info("Data processing completed successfully!")
             

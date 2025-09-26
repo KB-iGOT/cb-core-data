@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, countDistinct, when, sum, bround, broadcast, coalesce, lit,
-    current_timestamp, date_format, from_unixtime, concat_ws
+    col, when, coalesce, lit,
+    current_timestamp, date_format, from_unixtime, concat_ws,from_json,explode,trim,length,first
 )
 import os
 import time
@@ -18,9 +18,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 # Import reusable utilities from project
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.user import userDFUtil
-from dfutil.enrolment.acbp import acbpDFUtil
-from dfutil.enrolment import enrolmentDFUtil
-from dfutil.content import contentDFUtil
+from util import schemas
 from dfutil.dfexport import dfexportutil
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
@@ -214,6 +212,187 @@ def processUserReport(config):
         warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
             f"{config.warehouseReportDir}/{config.dwUserTable}")
         print("✅ Step 9 Complete")
+
+
+        # Step 10: Process User Extended Profile Data
+        print("🔍 Step 10: Processing User Extended Profile Data...")
+        # Load user extended profile data
+        user_extended_profile_df = (
+            spark.read.parquet(ParquetFileConstants.USER_EXTENDED_PROFILE_FILE)  # You'll need to define this constant
+            .filter(col("contexttype") == "orgAdditionalProperties")
+            .withColumnRenamed("userid", "userID")
+            .withColumn("contextData", from_json(col("contextdata"), schemas.context_data_schema))
+            .select(
+                col("userID"),
+                col("contexttype").alias("contextType"),
+                col("contextData"),
+                col("contextData.organisationId").alias("mdo_id")
+            )
+        )
+        
+        # Step 1: Explode customFieldValues to get individual attribute-value pairs
+        exploded_df = (
+            user_extended_profile_df
+            .withColumn("customField", explode(col("contextData.customFieldValues")))
+            .select(
+                col("userID"),
+                col("mdo_id"),
+                col("customField.attributeName").alias("attribute_name"),
+                col("customField.value").alias("attribute_value")
+            )
+            .filter(
+                col("attribute_name").isNotNull() & 
+                col("attribute_value").isNotNull()
+            )
+        )
+        
+        # Write to warehouse tables
+        exploded_df.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+            f"{config.warehouseReportDir}/userCustomFields"
+        )
+        
+        # Cache the exploded data for reuse
+        exploded_cached = exploded_df.cache()
+        print("✅ Step 10 Complete")
+        
+        # Step 11: Create MDO-wise Slim Data for Custom Reports
+        print("📋 Step 11: Creating MDO-wise Custom Reports...")
+        
+        mdo_wise_slim = (
+            user_complete_data
+            .filter(col("userStatus").cast("int") == 1)
+            .select(
+                col("userID"),
+                col("fullName").alias("Full_Name"),
+                col("professionalDetails.designation").alias("Designation"),
+                col("personalDetails.primaryEmail").alias("Email"),
+                col("personalDetails.mobile").alias("Phone_Number"),
+                col("userOrgName").alias("MDO_Name"),
+                col("professionalDetails.group").alias("Group"),
+                col("Tag"),
+                when(col("ministry_name").isNull(), col("userOrgName"))
+                    .otherwise(col("ministry_name")).alias("Ministry"),
+                when(
+                    (col("ministry_name").isNotNull()) &
+                    (col("ministry_name") != col("userOrgName")) &
+                    ((col("dept_name").isNull()) | (col("dept_name") == "")),
+                    col("userOrgName")
+                ).otherwise(col("dept_name")).alias("Department"),
+                when(
+                    (col("ministry_name") != col("userOrgName")) &
+                    (col("dept_name") != col("userOrgName")),
+                    col("userOrgName")
+                ).otherwise(lit("")).alias("Organization"),
+                from_unixtime(col("userCreatedTimestamp") / 1000, ParquetFileConstants.DATE_FORMAT).alias("User_Registration_Date"),
+                col("role").alias("Roles"),
+                col("personalDetails.gender").alias("Gender"),
+                col("personalDetails.category").alias("Category"),
+                col("additionalProperties.externalSystem").alias("External_System"),
+                col("additionalProperties.externalSystemId").alias("External_System_Id"),
+                col("employmentDetails.employeeCode").alias("Employee_Id"),
+                from_unixtime(col("userOrgCreatedDate") / 1000, ParquetFileConstants.DATE_FORMAT).alias("MDO_Created_On"),
+                col("userProfileStatus").alias("Profile_Status"),
+                col("weekly_claps_day_before_yesterday"),
+                coalesce(col("total_points"), lit(0)).alias("Karma_Points"),
+                coalesce(col("total_event_enrolments"), lit(0)).alias("Event_Enrolments"),
+                coalesce(col("total_event_completions"), lit(0)).alias("Event_Completions"),
+                coalesce(col("total_event_learning_hours_with_certificates"), lit(0)).alias("Event_Learning_Hours"),
+                coalesce(col("total_content_enrolments"), lit(0)).alias("Course_Enrolments"),
+                coalesce(col("total_content_completions"), lit(0)).alias("Course_Completions"),
+                coalesce(col("total_content_duration"), lit(0)).alias("Course_Learning_Hours"),
+                (coalesce(col("total_event_enrolments"), lit(0)) + 
+                 coalesce(col("total_content_enrolments"), lit(0))).alias("Total_Enrolments"),
+                (coalesce(col("total_event_completions"), lit(0)) + 
+                 coalesce(col("total_content_completions"), lit(0))).alias("Total_Completions"),
+                coalesce(col("Total_Learning_Hours"), lit(0)).alias("Total_Learning_Hours"),
+                lit(currentDateTime).alias("Report_Last_Generated_On"),
+                col("userOrgID").alias("mdoid")
+            )
+        )
+        
+        base_out = f"standalone-reports/user-custom-report/{today}"
+        
+        # Get list of organization IDs
+        org_ids = [row.mdo_id for row in exploded_cached.select("mdo_id").distinct().collect()]
+        org_ids.sort()
+        
+        print(f"Processing {len(org_ids)} organizations for custom reports...")
+        
+        for org_id in org_ids:
+            print(f"  Processing organization: {org_id}")
+            
+            # Filter data for current organization
+            org_data = exploded_cached.filter(col("mdo_id") == org_id)
+            
+            # Get attribute names for this organization, sanitized
+            attribute_rows = (
+                org_data
+                .select(trim(col("attribute_name")).alias("n"))
+                .filter((col("n").isNotNull()) & (length(col("n")) > 0))
+                .distinct()
+                .collect()
+            )
+            attribute_names = sorted([row.n for row in attribute_rows])
+            
+            # Pivot only on these attributes → columns limited to this org's customs
+            if attribute_names:
+                # Create pivot with specific values
+                pivoted = (
+                    org_data
+                    .groupBy("userID")
+                    .pivot("attribute_name")
+                    .agg(first("attribute_value"))
+                )
+            else:
+                # No customs → keep ids only
+                pivoted = org_data.select("userID").distinct()
+            
+            # Join with MDO-wise slim data
+            joined = (
+                pivoted
+                .join(mdo_wise_slim, ["userID"], "left")
+                .withColumn("mdoid", lit(org_id))
+            )
+            
+            # Define fixed columns order
+            fixed_cols = [
+                "userID", "Full_Name", "Designation", "Email", "Phone_Number", "MDO_Name", "Group", "Tag",
+                "Ministry", "Department", "Organization", "User_Registration_Date", "Roles", "Gender",
+                "Category", "External_System", "External_System_Id", "Employee_Id", "MDO_Created_On",
+                "Profile_Status", "weekly_claps_day_before_yesterday", "Karma_Points", "Event_Enrolments",
+                "Event_Completions", "Event_Learning_Hours", "Course_Enrolments", "Course_Completions",
+                "Course_Learning_Hours", "Total_Enrolments", "Total_Completions", "Total_Learning_Hours",
+                "Report_Last_Generated_On", "mdoid"
+            ]
+            
+            # Combine fixed and dynamic columns
+            all_columns = fixed_cols + attribute_names
+            
+            # Select columns that exist in the dataframe
+            existing_columns = joined.columns
+            final_columns = [c for c in all_columns if c in existing_columns]
+            
+            ordered = joined.select(*[col(c) for c in final_columns])
+            
+            # Write one file per org using existing CSV writing function
+            out_path = f"{config.localReportDir}/{base_out}/mdoid={org_id}"
+            csv_file_path = f"{out_path}/UserCustomReport.csv"
+            
+            # Create directory if it doesn't exist
+            os.makedirs(out_path, exist_ok=True)
+            
+            # Use existing function to write single CSV per organization
+            dfexportutil.write_single_csv_duckdb(
+                df=ordered.coalesce(1),
+                output_path=csv_file_path,
+                parquet_tmp_path=f"{out_path}/temp_parquet_{org_id}",
+                keep_parquets=False
+            )
+        
+        exploded_cached.unpersist()
+        
+        print("✅ Step 11 Complete")
+        print(f"Custom reports generated for {len(org_ids)} organizations")
 
         # Performance Summary
         total_duration = time.time() - start_time

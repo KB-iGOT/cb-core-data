@@ -144,6 +144,25 @@ time_spent_schema = StructType([
     StructField("timeSpent", FloatType(), True)
 ])
 
+custom_field_value_schema = StructType([
+            StructField("attributeName", StringType(), True),
+            StructField("value", StringType(), True),
+            StructField("level", IntegerType(), True)
+        ])
+        
+custom_field_schema = StructType([
+            StructField("customFieldId", StringType(), True),
+            StructField("type", StringType(), True),
+            StructField("attributeName", StringType(), True),
+            StructField("value", StringType(), True),
+            StructField("values", ArrayType(custom_field_value_schema), True)
+        ])
+        
+context_data_schema = StructType([
+            StructField("organisationId", StringType(), True),
+            StructField("customFieldValues", ArrayType(custom_field_schema), True)
+        ])
+
 # fracCompetencySchema
 frac_competency_schema = StructType([
     StructField("competencyID", StringType(), True),
