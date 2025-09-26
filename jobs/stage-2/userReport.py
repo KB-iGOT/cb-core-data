@@ -8,6 +8,7 @@ from pyspark.sql.functions import (
     col, when, coalesce, lit,
     current_timestamp, date_format, from_unixtime, concat_ws,from_json,explode,trim,length,first
 )
+from pyspark.sql.types import ArrayType
 import os
 import time
 from datetime import datetime
@@ -218,32 +219,68 @@ def processUserReport(config):
         print("🔍 Step 10: Processing User Extended Profile Data...")
         # Load user extended profile data
         user_extended_profile_df = (
-            spark.read.parquet(ParquetFileConstants.USER_EXTENDED_PROFILE_FILE)  # You'll need to define this constant
-            .filter(col("contexttype") == "orgAdditionalProperties")
-            .withColumnRenamed("userid", "userID")
-            .withColumn("contextData", from_json(col("contextdata"), schemas.context_data_schema))
-            .select(
-                col("userID"),
-                col("contexttype").alias("contextType"),
-                col("contextData"),
-                col("contextData.organisationId").alias("mdo_id")
-            )
+        spark.read.parquet(ParquetFileConstants.USER_EXTENDED_PROFILE)
+        .filter(col("contexttype") == "orgAdditionalProperties")
+        .withColumnRenamed("userid", "userID")
+        .withColumn("contextDataArray", from_json(col("contextdata"), ArrayType(schemas.context_data_schema)))
+        .withColumn("contextData", explode(col("contextDataArray")))
+        .select(
+            col("userID"),
+            col("contexttype").alias("contextType"),
+            col("contextData"),
+            col("contextData.organisationId").alias("mdo_id")
+        )
         )
         
-        # Step 1: Explode customFieldValues to get individual attribute-value pairs
-        exploded_df = (
+        # Step 1: Explode customFieldValues and handle based on type
+        exploded_df_base = (
             user_extended_profile_df
             .withColumn("customField", explode(col("contextData.customFieldValues")))
             .select(
                 col("userID"),
                 col("mdo_id"),
+                col("customField.type").alias("field_type"),
                 col("customField.attributeName").alias("attribute_name"),
-                col("customField.value").alias("attribute_value")
+                col("customField.value").alias("direct_value"),
+                col("customField.values").alias("values_array")
             )
+        )
+        
+        # Handle direct values (where type is not "masterList" and direct_value is not null)
+        direct_values_df = (
+            exploded_df_base
             .filter(
-                col("attribute_name").isNotNull() & 
-                col("attribute_value").isNotNull()
+                (col("field_type") != "masterList") & 
+                col("direct_value").isNotNull()
             )
+            .select(
+                col("userID"),
+                col("mdo_id"),
+                col("attribute_name"),  # Use main attributeName for text fields
+                col("direct_value").alias("attribute_value")
+            )
+        )
+        
+        # Handle masterList values (where type is "masterList" and values_array is not null)
+        master_list_values_df = (
+            exploded_df_base
+            .filter(
+                (col("field_type") == "masterList") & 
+                col("values_array").isNotNull()
+            )
+            .withColumn("valueItem", explode(col("values_array")))
+            .select(
+                col("userID"),
+                col("mdo_id"),
+                col("valueItem.attributeName").alias("attribute_name"),  # Use nested attributeName for masterList
+                col("valueItem.value").alias("attribute_value")
+            )
+        )
+        
+        # Combine both direct values and masterList values
+        exploded_df = direct_values_df.union(master_list_values_df).filter(
+            col("attribute_name").isNotNull() & 
+            col("attribute_value").isNotNull()
         )
         
         # Write to warehouse tables
@@ -365,12 +402,68 @@ def processUserReport(config):
                 "Report_Last_Generated_On", "mdoid"
             ]
             
-            # Combine fixed and dynamic columns
-            all_columns = fixed_cols + attribute_names
+            # Create case-insensitive conflict detection
+            fixed_cols_lower = [col_name.lower() for col_name in fixed_cols]
+            attribute_names_lower = [attr_name.lower() for attr_name in attribute_names]
             
-            # Select columns that exist in the dataframe
-            existing_columns = joined.columns
-            final_columns = [c for c in all_columns if c in existing_columns]
+            # Find conflicts using case-insensitive comparison
+            conflicts = []
+            for i, attr_lower in enumerate(attribute_names_lower):
+                if attr_lower in fixed_cols_lower:
+                    conflicts.append(attribute_names[i])  # Add original case version
+            
+            print(f"    Debug - Column conflicts found (case-insensitive): {conflicts}")
+            
+            # Rename conflicting columns in pivoted DataFrame BEFORE join
+            renamed_pivoted = pivoted
+            custom_field_mapping = {}  # Track original -> renamed mappings
+            
+            for conflict_col in conflicts:
+                if conflict_col in pivoted.columns:
+                    new_name = f"Custom_{conflict_col}"
+                    renamed_pivoted = renamed_pivoted.withColumnRenamed(conflict_col, new_name)
+                    custom_field_mapping[conflict_col] = new_name
+                    print(f"    Debug - Renamed {conflict_col} to {new_name}")
+            
+            # print(f"    Debug - Pivoted columns after rename: {renamed_pivoted.columns}")
+            
+            # Join the cleaned DataFrames
+            joined = (
+                renamed_pivoted
+                .join(mdo_wise_slim, ["userID"], "left")
+                .withColumn("mdoid", lit(org_id))
+            )
+                        
+            # Create final column list using renamed mappings
+            final_custom_cols = []
+            for attr_name in attribute_names:
+                if attr_name in custom_field_mapping:
+                    final_custom_cols.append(custom_field_mapping[attr_name])  # Use renamed version
+                else:
+                    final_custom_cols.append(attr_name)  # Use original name
+            
+            # Get existing columns from each category
+            available_columns = set(joined.columns)
+            existing_fixed_cols = [c for c in fixed_cols if c in available_columns]
+            existing_custom_cols = [c for c in final_custom_cols if c in available_columns]
+            
+            # print(f"    Debug - Final fixed cols: {existing_fixed_cols}")
+            # print(f"    Debug - Final custom cols: {existing_custom_cols}")
+            
+            # Combine all columns for final selection
+            final_columns = existing_fixed_cols + existing_custom_cols
+            
+            # Check for any remaining duplicates
+            duplicate_check = {}
+            for col_name in final_columns:
+                duplicate_check[col_name] = duplicate_check.get(col_name, 0) + 1
+            duplicates = [k for k, v in duplicate_check.items() if v > 1]
+            
+            if duplicates:
+                print(f"    ❌ ERROR - Still have duplicate columns: {duplicates}")
+                # Remove duplicates by keeping only the first occurrence
+                final_columns = list(dict.fromkeys(final_columns))
+                print(f"    Debug - Deduplicated final columns: {final_columns}")
             
             ordered = joined.select(*[col(c) for c in final_columns])
             
@@ -390,9 +483,6 @@ def processUserReport(config):
             )
         
         exploded_cached.unpersist()
-        
-        print("✅ Step 11 Complete")
-        print(f"Custom reports generated for {len(org_ids)} organizations")
 
         # Performance Summary
         total_duration = time.time() - start_time
