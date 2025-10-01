@@ -134,6 +134,9 @@ class DataWarehouseModel:
                         "event_tag")
             self.write_postgres_table(events, postgres_url, "events_pyspark_test", config.dwPostgresUsername,
                                       config.dwPostgresCredential)
+            events.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+                f"{config.warehouseReportDir}/event_details")
+            
             eventEnrolmentsDF = spark.read.parquet(f"{output_path}/eventEnrolmentDetails")
             karmaPointsData = spark.read.parquet(f"{output_path}/userKarmaPoints")\
               .select(F.col("userid").alias("user_id"),\
@@ -147,6 +150,9 @@ class DataWarehouseModel:
                                                                           "left")
             self.write_postgres_table(eventsEnrolmentDataDFWithKarmaPoints, postgres_url, "events_enrolment_pyspark_test",
                                       config.dwPostgresUsername, config.dwPostgresCredential)
+            eventsEnrolmentDataDFWithKarmaPoints.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+                f"{config.warehouseReportDir}/event_enrolment_details")
+            
             print("✅ Processing completed successfully!")
 
 
@@ -172,7 +178,7 @@ def create_spark_session_with_packages(config):
         'PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
 
     spark = SparkSession.builder \
-        .appName('DataExhaustModel') \
+        .appName('DataWarehousetModel') \
         .master("local[*]") \
         .config("spark.executor.memory", '42g') \
         .config("spark.driver.memory", '18g') \
