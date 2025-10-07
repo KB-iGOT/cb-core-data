@@ -193,6 +193,8 @@ DEFAULT_CONFIG = {
     'mdoReportSyncPath': 'standalone-reports/merged/',
     'fullReportSyncPath': 'standalone-reports/merged/fullReport/',
     'kcmSyncPath': 'standalone-reports/merged/kcm/',
+    'unifiedParquetPath': 'airflowData/',
+    'unifiedParquetLocalPath': '/home/analytics/pyspark/warehouse/unified/',
     'directoriesToSelect': ["blended-program-report-mdo","cbp-report-mdo-summary","course-report","cba-report","cbp-report-mdo-enrolment","user-report","user-enrollment-report"],
     'pysparkDirectoriesToSelect': ["blended-program-report-mdo","cbp-report-mdo-summary","course-report","cba-report","cbp-report-mdo-enrolment","user-report","user-enrollment-report"],
     'googleServiceAccountFilePath': '/home/analytics/pyspark/jobs/gcp_service_account.json',

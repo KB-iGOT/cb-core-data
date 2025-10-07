@@ -44,7 +44,7 @@ class ZipUploadModel:
         try:
             print("Starting upload of Parquet files to GCP bucket")
 
-            base_path = "/mount/data/analytics/warehouse_pq/unified/"
+            base_path = config.unifiedParquetLocalPath
             user_details_file = os.path.join(base_path, "unified_user_details.parquet")
             enrolments_file = os.path.join(base_path, "unified_enrolments.parquet")
             org_hierarchy_file = os.path.join(base_path, "org_hierarchy.parquet")
@@ -63,7 +63,7 @@ class ZipUploadModel:
 
             # Proceed only if all exist
             if user_details_exists and enrolments_exists and org_hierarchy_exists:
-                sync_reports(base_path, "/testSync/airflowData", config)
+                sync_reports(base_path, config.unifiedParquetPath, config)
                 print("Completed uploading Parquet files to GCP bucket.")
             else:
                 print("Upload skipped: One or more required files are missing.")
