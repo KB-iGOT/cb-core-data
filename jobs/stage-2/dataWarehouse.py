@@ -112,7 +112,7 @@ class DataWarehouseModel:
                 .withColumn("resource_count_consumed", col("resource_count_consumed").cast("int")) \
                 .withColumn("live_cbp_plan_mandate", col("live_cbp_plan_mandate").cast("boolean")) \
                 .filter(col("content_id").isNotNull())
-            self.write_postgres_table(enrolments, postgres_url, config.dwEnrollmentsTable", config.dwPostgresUsername,
+            self.write_postgres_table(enrolments, postgres_url, config.dwEnrollmentsTable, config.dwPostgresUsername,
                                       config.dwPostgresCredential)
             org_hierarchy = spark.read.parquet(f"{output_path}/orgHierarchy") \
                 .withColumn("mdo_created_on", to_date(col("mdo_created_on")).cast("string"))
