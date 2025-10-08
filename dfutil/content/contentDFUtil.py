@@ -414,7 +414,7 @@ def writeWarehouseParquetFiles(spark, config):
         # Read and write events
         events = spark.read.parquet(f"{output_path}/eventDetails") \
             .select("event_id", "event_name", "event_provider_mdo_id", "event_start_datetime",
-                    "duration", "event_status", "event_type", "presenters", "video_link", "recording_link",
+                     F.col("duration").cast("string").alias("duration"), "event_status", "event_type", "presenters", "video_link", "recording_link",
                     "event_tag")
         
         events.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
