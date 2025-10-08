@@ -114,10 +114,7 @@ class DataWarehouseModel:
                 .filter(col("content_id").isNotNull())
             self.write_postgres_table(enrolments, postgres_url, config.dwEnrollmentsTable, config.dwPostgresUsername,
                                       config.dwPostgresCredential)
-            org_hierarchy = spark.read.parquet(f"{output_path}/orgHierarchy") \
-                .withColumn("mdo_created_on", to_date(col("mdo_created_on")).cast("string"))
-            org_hierarchy.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{config.warehouseReportDir}/{config.dwOrgTable}")
+            org_hierarchy = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwOrgTable}")
             self.write_postgres_table(org_hierarchy, postgres_url, config.dwOrgTable, config.dwPostgresUsername,
                                       config.dwPostgresCredential)
             kcm_content = spark.read.parquet(f"{warehouse_path}/{config.dwKcmContentTable}") \
@@ -128,30 +125,13 @@ class DataWarehouseModel:
             kcm_dict = spark.read.parquet(f"{warehouse_path}/{config.dwKcmDictionaryTable}")
             self.write_postgres_table(kcm_dict, postgres_url, config.dwKcmDictionaryTable, config.dwPostgresUsername,
                                       config.dwPostgresCredential)
-            events = spark.read.parquet(f"{output_path}/eventDetails") \
-                .select("event_id", "event_name", "event_provider_mdo_id", "event_start_datetime",
-                        "duration", "event_status", "event_type", "presenters", "video_link", "recording_link",
-                        "event_tag")
+            events = spark.read.parquet(f"{config.warehouseReportDir}/event_details")
             self.write_postgres_table(events, postgres_url, config.dwEventsTable, config.dwPostgresUsername,
                                       config.dwPostgresCredential)
-            events.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{config.warehouseReportDir}/event_details")
-            
-            eventEnrolmentsDF = spark.read.parquet(f"{output_path}/eventEnrolmentDetails")
-            karmaPointsData = spark.read.parquet(f"{output_path}/userKarmaPoints")\
-              .select(F.col("userid").alias("user_id"),\
-               F.col("context_id").alias("event_id"),\
-               F.col("points"))\
-              .withColumn("points",\
-               F.when(F.col("points").cast("int").isNotNull(), F.col("points").cast("int")).otherwise(F.lit(0)))\
-              .groupBy("user_id", "event_id")\
-              .agg(F.sum("points").alias("karma_points"))
-            eventsEnrolmentDataDFWithKarmaPoints = eventEnrolmentsDF.join(karmaPointsData, ["user_id", "event_id"],
-                                                                          "left")
+   
+            eventsEnrolmentDataDFWithKarmaPoints = spark.read.parquet(f"{config.warehouseReportDir}/event_enrolment_details")
             self.write_postgres_table(eventsEnrolmentDataDFWithKarmaPoints, postgres_url, config.dwEventsEnrolmentTable,
                                       config.dwPostgresUsername, config.dwPostgresCredential)
-            eventsEnrolmentDataDFWithKarmaPoints.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{config.warehouseReportDir}/event_enrolment_details")
             
             print("✅ Processing completed successfully!")
 
@@ -168,6 +148,7 @@ class DataWarehouseModel:
             .option("user", username) \
             .option("password", password) \
             .option("driver", "org.postgresql.Driver") \
+            .option("truncate", "true") \
             .mode(mode) \
             .save()
 
