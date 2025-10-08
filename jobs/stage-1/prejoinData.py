@@ -16,6 +16,9 @@ from dfutil.enrolment.acbp import acbpDFUtil
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.assessment import assessmentDFUtil
+from jobs.config import get_environment_config
+from jobs.default_config import create_config
+
 
 def initialize_spark():
     """
@@ -34,7 +37,7 @@ def initialize_spark():
     print("Spark Session initialized successfully")
     return spark
 
-def run_stage(name: str, func, spark):
+def run_stage(name: str, func, spark, config=None):
     """
     Executes a processing stage with minimal logging for performance
     
@@ -42,13 +45,19 @@ def run_stage(name: str, func, spark):
     - name: Name of the processing stage
     - func: The processing function to execute
     - spark: The SparkSession instance
+    - config: Optional config parameter for stages that need it
     """
     
     print(f"Stage: {name} - Starting...")
     start_time = time.time()
     
     try:
-        result = func(spark)
+        # Call function with or without config based on whether it's provided
+        if config is not None:
+            result = func(spark, config)
+        else:
+            result = func(spark)
+            
         duration = time.time() - start_time
         
         print(f"Stage: {name} - Complete ({duration:.2f}s)")
@@ -68,36 +77,43 @@ def main():
     
     # Initialize Spark session
     spark = initialize_spark()
+    config_dict = get_environment_config()
+    config = create_config(config_dict)
     
     # Track overall progress
     total_start_time = time.time()
     completed_stages = 0
     
-    # Define processing stages
+    # Define processing stages - tuple format: (name, function, needs_config)
     processing_stages = [
-        ("Org Hierarchy Computation", userDFUtil.preComputeOrgWithHierarchy),
-        ("Content Ratings & Summary", contentDFUtil.preComputeRatingAndSummaryDataFrame),
-        ("All Course/Program (ES)", contentDFUtil.preComputeAllCourseProgramESDataFrame),
-        ("Content Master Data", contentDFUtil.preComputeContentDataFrame),
-        ("Content Hierarchy Computation", contentDFUtil.precomputeContentHierarchyDataFrame),
-        ("Assessment Master Data", assessmentDFUtil.precomputeAssessmentEsDataframe),
-        ("External Content", contentDFUtil.preComputeExternalContentDataFrame),
-        ("User Profile Computation", userDFUtil.preComputeUser),
-        ("Enrolment Master Data", enrolmentDFUtil.preComputeEnrolment),
-        ("External Enrolment", enrolmentDFUtil.preComputeExternalEnrolment),
-        ("Org-User Mapping with Hierarchy", userDFUtil.preComputeOrgHierarchyWithUser),
-        ("Enrolment Warehouse", enrolmentDFUtil.preComputeUserEnrolmentWarehouseData),
-        ("User Warehouse", userDFUtil.preComputeUserWarehouseData),
-        ("Course Warehouse", contentDFUtil.preComputeContentWarehouseData),
-        ("ACBP Enrolment Computation", acbpDFUtil.preComputeACBPData),
-        ("Old Assessment Data", assessmentDFUtil.precomputeOldAssessmentDataframe),
-
+        ("Org Hierarchy Computation", userDFUtil.preComputeOrgWithHierarchy, False),
+        ("Content Ratings & Summary", contentDFUtil.preComputeRatingAndSummaryDataFrame, False),
+        ("All Course/Program (ES)", contentDFUtil.preComputeAllCourseProgramESDataFrame, False),
+        ("Content Master Data", contentDFUtil.preComputeContentDataFrame, False),
+        ("Content Hierarchy Computation", contentDFUtil.precomputeContentHierarchyDataFrame, False),
+        ("Assessment Master Data", assessmentDFUtil.precomputeAssessmentEsDataframe, False),
+        ("External Content", contentDFUtil.preComputeExternalContentDataFrame, False),
+        ("User Profile Computation", userDFUtil.preComputeUser, False),
+        ("Enrolment Master Data", enrolmentDFUtil.preComputeEnrolment, False),
+        ("External Enrolment", enrolmentDFUtil.preComputeExternalEnrolment, False),
+        ("Org-User Mapping with Hierarchy", userDFUtil.preComputeOrgHierarchyWithUser, False),
+        ("Enrolment Warehouse", enrolmentDFUtil.preComputeUserEnrolmentWarehouseData, False),
+        ("User Warehouse", userDFUtil.preComputeUserWarehouseData, False),
+        ("Course Warehouse", contentDFUtil.preComputeContentWarehouseData, False),
+        ("ACBP Enrolment Computation", acbpDFUtil.preComputeACBPData, False),
+        ("Warehouse Parquet Files", contentDFUtil.writeWarehouseParquetFiles, True),  # Only this needs config
+        ("Old Assessment Data", assessmentDFUtil.precomputeOldAssessmentDataframe, False)
     ]
+    
     total_stages = len(processing_stages)
     
     try:
-        for stage_name, stage_function in processing_stages:
-            run_stage(stage_name, stage_function, spark)
+        for stage_name, stage_function, needs_config in processing_stages:
+            if needs_config:
+                run_stage(stage_name, stage_function, spark, config)
+            else:
+                run_stage(stage_name, stage_function, spark)
+            
             completed_stages += 1
             
             # Progress update

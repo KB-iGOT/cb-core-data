@@ -391,3 +391,56 @@ def preComputeContentWarehouseData(spark):
     except Exception as e:
         print(f"Content warehouse data generation error: {str(e)}")
         raise
+
+def writeWarehouseParquetFiles(spark, config):
+    """
+    Write parquet files for org hierarchy, events, and event enrollments
+    This can be decoupled and run as a separate job if needed
+    """
+    try:
+        print("📦 Writing parquet files to warehouse...")
+        
+        output_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
+        warehouse_path = config.warehouseReportDir
+        
+        # Read and write org hierarchy
+        org_hierarchy = spark.read.parquet(f"{output_path}/orgHierarchy") \
+            .withColumn("mdo_created_on", to_date(col("mdo_created_on")).cast("string"))
+        
+        org_hierarchy.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+            f"{warehouse_path}/{config.dwOrgTable}")
+        print(f"✓ Written: {warehouse_path}/{config.dwOrgTable}")
+        
+        # Read and write events
+        events = spark.read.parquet(f"{output_path}/eventDetails") \
+            .select("event_id", "event_name", "event_provider_mdo_id", "event_start_datetime",
+                    "duration", "event_status", "event_type", "presenters", "video_link", "recording_link",
+                    "event_tag")
+        
+        events.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+            f"{warehouse_path}/event_details")
+        print(f"✓ Written: {warehouse_path}/event_details")
+        
+        # Read and process event enrollments with karma points
+        eventEnrolmentsDF = spark.read.parquet(f"{output_path}/eventEnrolmentDetails")
+        
+        karmaPointsData = spark.read.parquet(f"{output_path}/userKarmaPoints") \
+            .select(F.col("userid").alias("user_id"),
+                    F.col("context_id").alias("event_id"),
+                    F.col("points")) \
+            .withColumn("points",
+                        F.when(F.col("points").cast("int").isNotNull(), F.col("points").cast("int")).otherwise(F.lit(0))) \
+            .groupBy("user_id", "event_id") \
+            .agg(F.sum("points").alias("karma_points"))
+        
+        eventsEnrolmentDataDFWithKarmaPoints = eventEnrolmentsDF.join(karmaPointsData, ["user_id", "event_id"], "left")
+        
+        eventsEnrolmentDataDFWithKarmaPoints.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+            f"{warehouse_path}/event_enrolment_details")
+        print(f"✓ Written: {warehouse_path}/event_enrolment_details")
+        
+        print("✅ All parquet files written successfully!")
+        
+    except Exception as e:
+        print(f"❌ Error writing parquet files: {str(e)}")
+        raise
