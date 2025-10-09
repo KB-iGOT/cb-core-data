@@ -58,7 +58,8 @@ def preComputeACBPData(spark):
 
 def explodeAcbpData(spark, acbp_df):
     selectColumns = ["userID", "fullName", "userPrimaryEmail", "userMobile", "designation", "group", "userOrgID",
-                     "ministry_name", "dept_name", "userOrgName", "userStatus", "isapar", "acbpID",
+                     "ministry_name", "dept_name", "userOrgName", "cadreName", "civilServiceType", "civilServiceName",
+                     "cadreBatch", "organised_service", "userStatus", "isapar", "acbpID",
                      "assignmentType", "completionDueDate", "allocatedOn", "acbpCourseIDList", "acbpStatus",
                      "acbpCreatedBy", "cbPlanName"]
     user_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
