@@ -122,7 +122,8 @@ class ACBPModel:
                 .select(
                 # Select only needed columns early to reduce data shuffling
                 "fullName", "userPrimaryEmail", "userMobile", "userOrgName", "group",
-                "designation", "ministry_name", "dept_name", "courseName", "isapar",
+                "designation", "ministry_name", "dept_name", "cadreName", "civilServiceType", "civilServiceName",
+                "cadreBatch", "organised_service", "courseName", "isapar",
                 "userOrgID", "dbCompletionStatus", "courseCompletedTimestamp",
                 "allocatedOn", "completionDueDate"
             ) \
@@ -170,6 +171,11 @@ class ACBPModel:
                 col("Ministry"),
                 col("Department"),
                 col("Organization"),
+                col("cadreName").alias("Cadre"),
+                col("civilServiceType").alias("Civil Service Type"),
+                col("civilServiceName").alias("Civil Services"),
+                col("cadreBatch").alias("Cadre Batch"),
+                col("organised_service").alias("Is From Organised Service of Govt"),
                 col("courseName").alias("Name of CBP Allocated Course"),
                 col("isapar"),
                 col("allocatedOn").alias("Allocated On"),
@@ -196,7 +202,8 @@ class ACBPModel:
             ) \
                 .groupBy(
                 "userID", "fullName", "userPrimaryEmail", "userMobile",
-                "designation", "group", "userOrgID", "ministry_name",
+                "designation", "cadreName", "civilServiceType", "civilServiceName",
+                "cadreBatch", "organised_service", "group", "userOrgID", "ministry_name",
                 "dept_name", "userOrgName"
             ) \
                 .agg(
@@ -218,6 +225,11 @@ class ACBPModel:
                 col("userOrgName").alias("MDO_Name"),
                 col("group").alias("Group"),
                 col("designation").alias("Designation"),
+                col("cadreName").alias("Cadre"),
+                col("civilServiceType").alias("Civil Service Type"),
+                col("civilServiceName").alias("Civil Services"),
+                col("cadreBatch").alias("Cadre Batch"),
+                col("organised_service").alias("Is From Organised Service of Govt"),
                 when(
                     (col("ministry_name").isNull()) | (col("ministry_name") == ""),
                     col("userOrgName")

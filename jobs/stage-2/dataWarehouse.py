@@ -148,7 +148,6 @@ class DataWarehouseModel:
             .option("user", username) \
             .option("password", password) \
             .option("driver", "org.postgresql.Driver") \
-            .option("truncate", "true") \
             .mode(mode) \
             .save()
 
