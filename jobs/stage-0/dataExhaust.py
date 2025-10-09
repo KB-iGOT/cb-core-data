@@ -23,6 +23,21 @@ from dfutil.utils import utils
 from util import schemas
 
 class DataExhaustModel:
+
+    @staticmethod
+    def duration_format(df, in_col, out_col=None):
+        out_col_name = out_col if out_col is not None else in_col
+
+        return df.withColumn(out_col_name,
+            when(col(in_col).isNull(), lit(""))
+            .otherwise(
+                format_string("%02d:%02d:%02d",
+                    expr(f"{in_col} / 3600").cast("int"),
+                    expr(f"{in_col} % 3600 / 60").cast("int"),
+                    expr(f"{in_col} % 60").cast("int")
+                )
+            )
+        )
     
     def __init__(self, spark: SparkSession, config: dict):
         self.spark = spark
