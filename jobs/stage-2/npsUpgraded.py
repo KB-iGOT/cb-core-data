@@ -22,9 +22,6 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 # Reusable imports from userReport structure
 from constants.ParquetFileConstants import ParquetFileConstants
-from dfutil.assessment import assessmentDFUtil
-from dfutil.content import contentDFUtil
-from dfutil.dfexport import dfexportutil
 from dfutil.utils import utils
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
@@ -99,23 +96,14 @@ class NPSUpgradedModel:
                 .withColumn("version", lit("v1"))
             )
 
-            # self.writeToCassandra(additional_df, config.cassandraUserFeedKeyspace, config.cassandraUserFeedTable)
-            self.writeToCassandra(additional_df, config.cassandraUserFeedKeyspace, "notification_feed_pyspark_test")
-            #self.writeToCassandra(additional_df, "sunbird_notifications", "notification_feed_history")
+            utils.writeToCassandra(additional_df, config.cassandraUserFeedKeyspace, config.cassandraUserFeedTable)
+            utils.writeToCassandra(additional_df, "sunbird_notifications", "notification_feed_history")
 
             print("[SUCCESS] NpsUpgradeModel completed")
 
         except Exception as e:
             print(f"Error occurred during LearnerLeaderBoardModel processing: {str(e)}")
             raise
-
-    def writeToCassandra(self, df, keyspace: str, table: str, mode: str = "append"):
-        df.write \
-            .format("org.apache.spark.sql.cassandra") \
-            .option("keyspace", keyspace) \
-            .option("table", table) \
-            .mode(mode) \
-            .save()
 
     def nps_userids_schema(self):
         return StructType([StructField("userid", StringType(), True)])

@@ -10,18 +10,12 @@ import os
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
-from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType, FloatType, BooleanType,
-    ArrayType, TimestampType, LongType
-)
+from pyspark.sql.types import (StringType, LongType)
 
 # ----- project imports -----
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from constants.ParquetFileConstants import ParquetFileConstants
-from dfutil.assessment import assessmentDFUtil
-from dfutil.content import contentDFUtil
-from dfutil.dfexport import dfexportutil
-from dfutil.utils.utils import druidDFOption
+from dfutil.utils import utils
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 
@@ -202,27 +196,14 @@ class KarmaPointsModel:
                 .select("userid", "total_points")
             )
 
-            # Writes (uncomment when ready)
-            # self.writeToCassandra(all_karma_points_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsTable)
-            # self.writeToCassandra(lookup_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsLookupTable)
-            # self.writeToCassandra(summary_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsSummaryTable)
-            self.writeToCassandra(all_karma_points_df, config.cassandraUserKeyspace, "user_karma_points_pyspark_test")
-            self.writeToCassandra(lookup_df, config.cassandraUserKeyspace, "user_karma_points_credit_lookup_pyspark_test")
-            self.writeToCassandra(summary_df, config.cassandraUserKeyspace, "user_karma_points_summary_pyspark_test")
+            utils.writeToCassandra(all_karma_points_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsTable)
+            utils.writeToCassandra(lookup_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsLookupTable)
+            utils.writeToCassandra(summary_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsSummaryTable)
             print("[SUCCESS] KarmaPointsModel completed")
 
         except Exception as e:
             print(f"Error occurred during Karma points processing: {str(e)}")
             raise
-
-    def writeToCassandra(self, df, keyspace: str, table: str, mode: str = "append"):
-        (df.write
-           .format("org.apache.spark.sql.cassandra")
-           .option("keyspace", keyspace)
-           .option("table", table)
-           .mode(mode)
-           .save())
-
 
 def create_spark_session_with_packages(config):
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
@@ -262,7 +243,6 @@ def main():
     print(f"[END] Karma points completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"[INFO] Total duration: {duration}")
     spark.stop()
-
 
 if __name__ == "__main__":
     main()

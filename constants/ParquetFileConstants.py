@@ -34,6 +34,8 @@ class ParquetFileConstants:
     USER_KARMA_POINTS_SUMMARY_PARQUET_FILE = str(INPUT_DIR / "userKarmaPointsSummary/**.parquet")
     USER_ASSESSMENT_PARQUET_FILE = str(INPUT_DIR / "userAssessment/**.parquet")
     OLD_ASSESSMENT_PARQUET_FILE = str(INPUT_DIR / "oldAssessmentDetails/**.parquet")
+    USER_EXTENDED_PROFILE = str(INPUT_DIR / "userExtendedProfile/**.parquet")
+    FINAL_ASSESSMENT_PARQUET_FILE = str(INPUT_DIR / "esFinalAssessment/**.parquet")
 
     ###
     ###  Computed Parquet File

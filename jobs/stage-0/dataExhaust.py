@@ -23,20 +23,6 @@ from dfutil.utils import utils
 from util import schemas
 
 class DataExhaustModel:
-    @staticmethod
-    def duration_format(df, in_col, out_col=None):
-        out_col_name = out_col if out_col is not None else in_col
-        
-        return df.withColumn(out_col_name,
-            when(col(in_col).isNull(), lit(""))
-            .otherwise(
-                format_string("%02d:%02d:%02d",
-                    expr(f"{in_col} / 3600").cast("int"),
-                    expr(f"{in_col} % 3600 / 60").cast("int"),
-                    expr(f"{in_col} % 60").cast("int")
-                )
-            )
-        )
     
     def __init__(self, spark: SparkSession, config: dict):
         self.spark = spark
@@ -78,14 +64,13 @@ class DataExhaustModel:
               .option("compression", "snappy") \
               .parquet(path)
     
-    def duration_format_udf(self, duration_col: str) -> col:
-        """UDF equivalent for duration formatting"""
+    def duration_format_udf(self, duration_col: str) -> col:    
         return when(col(duration_col).isNotNull(), 
-                   concat(
-                       (col(duration_col) / 3600).cast("int").cast("string"), lit(":"),
-                       ((col(duration_col) % 3600) / 60).cast("int").cast("string"), lit(":"),
-                       (col(duration_col) % 60).cast("int").cast("string")
-                   )).otherwise(lit("00:00:00"))
+                format_string("%02d:%02d:%02d",
+                    expr(f"{duration_col} / 3600").cast("int"),
+                    expr(f"{duration_col} % 3600 / 60").cast("int"),
+                    expr(f"{duration_col} % 60").cast("int")
+                )).otherwise(lit("00:00:00"))
     
     
     def read_cassandra_safe_columns(self, keyspace: str, table: str) -> "DataFrame":
@@ -281,8 +266,8 @@ class DataExhaustModel:
             should_clause = ",".join([f'{{"match":{{"primaryCategory.raw":"{pc}"}}}}' for pc in primary_categories])
             fields = ["identifier", "name", "primaryCategory", "status", "reviewStatus", "channel", 
                      "duration", "leafNodesCount", "lastPublishedOn", "lastStatusChangedOn", 
-                     "createdFor", "competencies_v6", "programDirectorName", "language", "courseCategory"]
-            array_fields = ["createdFor", "language"]
+                     "createdFor", "competencies_v6", "programDirectorName", "language", "courseCategory","organisation"]
+            array_fields = ["createdFor", "language","organisation"]
             fields_clause = ",".join([f'"{f}"' for f in fields])
             query = f'{{"_source":[{fields_clause}],"query":{{"bool":{{"should":[{should_clause}]}}}}}}'
             
@@ -323,6 +308,7 @@ class DataExhaustModel:
                 col("id").alias("sborgid"),
                 col("organisationtype").alias("orgType"),
                 col("orgname").alias("cassOrgName"),
+                col("iscca").alias("isCCA"),
                 col("createddate").alias("orgCreatedDate")
             )
             
@@ -353,6 +339,7 @@ class DataExhaustModel:
                 col("ministry_id_sborgid").alias("ministry_id"),
                 col("l2orgname").alias("department"),
                 col("department_id_sborgid").alias("department_id"),
+                col("isCCA").alias("is_cca"),
                 col("orgCreatedDate").alias("mdo_created_on")
             ).withColumn(
                 "data_last_generated_on", current_timestamp()
@@ -457,7 +444,7 @@ class DataExhaustModel:
                 col("name").alias("event_name"),
                 col("event_provider_mdo_id"),
                 col("event_start_datetime"),
-                col("durationInSecs").alias("duration"),
+                col("duration_formatted").alias("duration"),
                 col("status").alias("event_status"),
                 col("objectType").alias("event_type"),
                 col("presenters"),
@@ -528,6 +515,10 @@ class DataExhaustModel:
             
             self.write_parquet(events_enrolment_with_duration_df.coalesce(1), f"{output_base_path}/eventEnrolmentDetails")
             events_enrolment_df.unpersist()
+
+            userExtendedProfileDF = self.read_cassandra_table( self.config.cassandraUserKeyspace,  self.config.cassandraUserExtendedProfileTable)
+            self.write_parquet(userExtendedProfileDF, f"{output_base_path}/userExtendedProfile")
+            userExtendedProfileDF.unpersist()
             
             self.logger.info("Data processing completed successfully!")
             

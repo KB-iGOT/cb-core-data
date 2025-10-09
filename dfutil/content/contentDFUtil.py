@@ -6,7 +6,7 @@ from pyspark.sql.functions import col, explode_outer,from_json, lit,when, format
 from pyspark.sql import functions as F
 from pyspark.sql.types import FloatType
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import (col, lit, when, expr, format_string, date_format, current_timestamp, to_date, from_json, explode_outer, greatest, size,min as F_min, max as F_max, count as F_count, sum as F_sum,broadcast)
+from pyspark.sql.functions import (col, lit, when, expr, format_string, date_format, current_timestamp, to_date, from_json, explode_outer, greatest, size,min as F_min, max as F_max, count as F_count, sum as F_sum,broadcast, trim)
 from pyspark.sql.types import ( DateType)
 from constants.ParquetFileConstants import ParquetFileConstants
 from util import schemas
@@ -22,6 +22,7 @@ def preComputeAllCourseProgramESDataFrame(spark: SparkSession) -> DataFrame:
     contentDF = esContentDataFrame(spark) \
         .withColumn("courseOrgID", explode_outer(col("createdFor"))) \
         .withColumn("contentLanguage", explode_outer(col("language"))) \
+        .withColumn("contentCreator", explode_outer(col("organisation"))) \
         .withColumn("competencyAreaRefId", 
                    F.when(F.col("competencies_v6").isNotNull(), 
                          F.col("competencies_v6")["competencyAreaRefId"])
@@ -51,7 +52,8 @@ def preComputeAllCourseProgramESDataFrame(spark: SparkSession) -> DataFrame:
             F.col("competencyThemeRefId"),
             F.col("competencySubThemeRefId"),
             col("contentLanguage"),
-            col("courseCategory")
+            col("courseCategory"),
+            col("contentCreator")
         ) \
         .dropDuplicates(["courseID", "category"]) \
         .fillna(0.0, subset=["courseDuration"]) \
@@ -329,7 +331,12 @@ def preComputeContentWarehouseData(spark):
             .select(
                 col("courseID").alias("content_id"),
                 col("courseOrgID").alias("content_provider_id"),
-                col("courseOrgName").alias("content_provider_name"),
+                when(
+                    col("courseOrgName").isNotNull() & 
+                    (col("courseOrgName") != "") &
+                    (col("courseOrgName") != " "),
+                    col("courseOrgName")
+                ).otherwise(col("contentCreator")).alias("content_provider_name"),
                 col("courseName").alias("content_name"),
                 col("category").alias("content_type"),
                 col("batchID").alias("batch_id"),
@@ -383,4 +390,57 @@ def preComputeContentWarehouseData(spark):
 
     except Exception as e:
         print(f"Content warehouse data generation error: {str(e)}")
+        raise
+
+def writeWarehouseParquetFiles(spark, config):
+    """
+    Write parquet files for org hierarchy, events, and event enrollments
+    This can be decoupled and run as a separate job if needed
+    """
+    try:
+        print("📦 Writing parquet files to warehouse...")
+        
+        output_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
+        warehouse_path = config.warehouseReportDir
+        
+        # Read and write org hierarchy
+        org_hierarchy = spark.read.parquet(f"{output_path}/orgHierarchy") \
+            .withColumn("mdo_created_on", to_date(col("mdo_created_on")).cast("string"))
+        
+        org_hierarchy.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+            f"{warehouse_path}/{config.dwOrgTable}")
+        print(f"✓ Written: {warehouse_path}/{config.dwOrgTable}")
+        
+        # Read and write events
+        events = spark.read.parquet(f"{output_path}/eventDetails") \
+            .select("event_id", "event_name", "event_provider_mdo_id", "event_start_datetime",
+                     F.col("duration").cast("string").alias("duration"), "event_status", "event_type", "presenters", "video_link", "recording_link",
+                    "event_tag")
+        
+        events.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+            f"{warehouse_path}/event_details")
+        print(f"✓ Written: {warehouse_path}/event_details")
+        
+        # Read and process event enrollments with karma points
+        eventEnrolmentsDF = spark.read.parquet(f"{output_path}/eventEnrolmentDetails")
+        
+        karmaPointsData = spark.read.parquet(f"{output_path}/userKarmaPoints") \
+            .select(F.col("userid").alias("user_id"),
+                    F.col("context_id").alias("event_id"),
+                    F.col("points")) \
+            .withColumn("points",
+                        F.when(F.col("points").cast("int").isNotNull(), F.col("points").cast("int")).otherwise(F.lit(0))) \
+            .groupBy("user_id", "event_id") \
+            .agg(F.sum("points").alias("karma_points"))
+        
+        eventsEnrolmentDataDFWithKarmaPoints = eventEnrolmentsDF.join(karmaPointsData, ["user_id", "event_id"], "left")
+        
+        eventsEnrolmentDataDFWithKarmaPoints.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+            f"{warehouse_path}/event_enrolment_details")
+        print(f"✓ Written: {warehouse_path}/event_enrolment_details")
+        
+        print("✅ All parquet files written successfully!")
+        
+    except Exception as e:
+        print(f"❌ Error writing parquet files: {str(e)}")
         raise

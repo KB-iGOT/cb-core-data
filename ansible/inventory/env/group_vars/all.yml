@@ -1,0 +1,201 @@
+# Not used
+metrics_search_params_bucket: "dev-data-store"
+log4j_appender_kafka_topic: "{{env}}.telemetry.backend"
+
+# Every where the value is telemetry-data-store
+# Shall we change the value to telemetry-data-store in dev also?
+# What's the implication
+# Is it azure blob or s3 bucket??
+channel_data_exhaust_bucket: dev-data-store
+secrets_path: '{{inventory_dir}}/secrets.yml'
+artifacts_container: "{{dp_vault_artifacts_container}}"
+
+report_azure_account_name: "{{sunbird_private_storage_account_name  | default('')}}"
+report_azure_storage_secret: "{{sunbird_private_storage_account_key | default('')}}"
+
+redis_host: "{{ groups['redis'][0] }}"
+metadata_redis_host: "{{ groups['redis'][0] }}"
+metadata2_redis_host: "{{ groups['redis'][0] }}"
+searchServiceAuthorizationToken: "{{ sunbird_api_auth_token }}"
+
+# Learning Service organization and location search endpoints
+channelSearchServiceEndpoint: "{{ proto}}://{{domain_name}}/api/org/v1/search"
+locationSearchServiceEndpoint: "{{ proto}}://{{domain_name}}/api/data/v1/location/search"
+
+env_name: "{{env}}"
+kafka_brokers: "{{groups['processing-cluster-kafka']|join(':9092,')}}:9092"
+zookeepers: "{{groups['zookeeper']|join(':2181,')}}:2181"
+# Ingestion cluster
+ingestion_kafka_brokers: "{{groups['ingestion-cluster-kafka']|join(':9092,')}}:9092"
+secor_ingestion_kafka_brokers: "{{groups['processing-cluster-kafka']|join(',')}}"
+ingestion_zookeepers: "{{groups['zookeeper']|join(':2181,')}}:2181"
+
+telemetry_schema_directory: /etc/{{env}}/telemetry
+telemetry_schema_path: /etc/{{env}}/telemetry/schemas
+schema_repo_url: https://github.com/project-sunbird/sunbird-data-pipeline.git
+# Create learningall group with LP ips
+cassandra_host:  "{{ groups['cassandra'][0] }}"
+core_cassandra_host: "{{ groups['core-cassandra'][0] }}"
+lp_cassandra_host: "{{ groups['lp-cassandra'][0] }}"
+
+report_cassandra_host: "{{ groups['report-cassandra'][0] }}"
+
+analytics_user: analytics
+analytics_group: analytics
+analytics_user_home: /home/{{ analytics_user }}
+sbin_path: "{{ analytics_user_home }}/sbin"
+
+# Secor vars
+secor:
+  properties: ['secor.common', 'secor', 'secor.partition', 'log4j']
+  artifact_dir: /mount/secor
+  artifact_ver: "0.25"
+  azure:
+    account_name: "{{sunbird_private_storage_account_name | default('')}}"
+    account_key: "{{sunbird_private_storage_account_key | default('')}}"
+    container_name: "{{channel_data_exhaust_bucket}}"
+  paths: ['/mount/secor', '/mount/secor/reports', '/mount/secor/logs', '/home/analytics/sbin', '/mount/data/analytics']
+  channel: "{{secor_alerts_slack_channel}}"
+
+# postgres
+# list of databases to be created
+# Can move this dictionary to postgres role; but incase we want to generalize roles!!
+postgresql_databases:
+  - name: analytics
+    owner: analytics
+
+postgresql_users:
+  - name: analytics
+    password: "{{dp_vault_pgdb_password}}"
+  - name: druid
+    password: "{{dp_vault_druid_postgress_pass}}"
+
+postgres:
+  db_url: "{{ groups['postgres'][0] }}"
+  db_username: analytics
+  db_name: analytics
+  db_password: "{{dp_vault_pgdb_password}}"
+  db_table_name: "{{env}}_consumer_channel_mapping"
+  db_port: 5432
+  db_admin_user: analytics
+  db_admin_password: "{{dp_vault_pgdb_admin_password}}"
+
+lp_composite_search: "http://{{ groups['composite-search-cluster'][0] }}:9200" # Composite Cluster ip of LP
+lp_composite_search_host: "{{ groups['composite-search-cluster'][0] }}"
+lp_search: "http://{{private_ingressgateway_ip}}/search"
+lp_url: http://{{ groups['learning'][0] }}:8080/learning-service
+service:
+  search:
+    url: http://{{private_ingressgateway_ip}}/search
+    path: /v3/search
+
+cassandra_hierarchy_store_prefix: "{{env}}_"
+data_exhaust_token: "{{dp_vault_data_exhaust_token}}"
+default_channel: "{{default_org_hash_id}}"
+
+telemetry_default_org_id: "{{ default_org_id }}"
+telemetry_frac_org_id: "{{ frac_org_id }}"
+
+# sunbird learner service
+sunbird_es_host: "{{groups['core-es']| join(',')}}"
+single_node_es_host: "{{ groups['core-es'][0] }}"
+
+### Druid related vars
+raw_overlord_host: "{{ groups['raw-overlord'][0] }}"
+ml_raw_overlord_host: "{{ groups['ml-raw-overlord'][0] }}"
+rollup_overlord_host: "{{ groups['rollup-overlord'][0] }}"
+
+### Datapipeline Custom monitoring related vars ###
+influxdb: "{{ groups['influxdb'][0] }}"
+CONTAINER_NAME_SAMZA: samza-logs
+script_path: /usr/local/hadoop
+
+job_names:
+  DeDuplication_1:
+      job_file_name: 'de-duplication'
+  DeNormalization_1:
+      job_file_name: 'de-normalization'
+  DruidEventsValidator_1:
+      job_file_name: 'druid-events-validator'
+  EventsRouter_1:
+      job_file_name: 'events-router'
+  TelemetryExtractor_1:
+      job_file_name: 'telemetry-extractor'
+  TelemetryLocationUpdater_1:
+      job_file_name: 'telemetry-location-updater'
+  TelemetryRouter_1:
+      job_file_name: 'telemetry-router'
+  TelemetryRedacter_1:
+      job_file_name: 'telemetry-redacter'
+  TelemetryValidator_1:
+      job_file_name: 'telemetry-validator'
+  DeviceProfileUpdater_1:
+      job_file_name: 'device-profile-updater'
+  AssessmentAggregator_1:
+      job_file_name: 'assessment-aggregator'
+  DerivedDeDuplication_1:
+      job_file_name: 'derived-de-duplication'
+  UserCacheUpdater_1:
+      job_file_name: 'user-cache-updater'
+  ContentCacheUpdater_1:
+      job_file_name: 'content-cache-updater'
+  ShareEventsFlattener_1:
+      job_file_name: 'share-events-flattener'
+
+druid_ingestion_specs:
+  telemetry-events:
+      ingestion_file_name: 'telemetry_index_kafka'
+  summary-events:
+      ingestion_file_name: 'summary_index_kafka'
+  telemtry-feedback-events:
+      ingestion_file_name: 'telemetry_feedback_index_kafka'
+  pipeline-metrics:
+      ingestion_file_name: 'pipeline_metrics_index_kafka'
+
+#Druid Proxy APi service
+sunbird_druid_broker_host: "http://{{ groups['raw-broker'][0] }}"
+sunbird_learner_service_url: "http://{{private_ingressgateway_ip}}/learner"
+
+location_search_url: "{{ domain_name }}/api/data/"
+location_search_token: "Bearer {{ sunbird_api_auth_token }}"
+
+druid_report_url_endpoint : "{{ proto}}://{{domain_name}}/api/data/v1/report/jobs"
+druid_report_url : "{{ proto}}://{{domain_name}}/api/data/v1/"
+druid_report_token : "Bearer {{ sunbird_api_auth_token }}"
+
+#redis multiprocess config
+content_port: 6379
+device_port: 6380
+user_port: 6381
+dialcode_port: 6382
+
+### kafka and zookeeper ip vars and being used in kafka topiccreation role.
+ingestion_zookeeper_ip: "{{ groups['ingestion-cluster-zookeepers'][0] }}"
+processing_zookeeper_ip: "{{ groups['processing-cluster-zookeepers'][0] }}"
+### docker image pull secrets name and this will be created in kubernetes
+imagepullsecrets: "{{env}}-registry-secret"
+dialcode_host: "http://{{private_ingressgateway_ip}}/dial"
+dialcode_endpoint: "dialcode/v3/read/"
+
+# s3 storage config
+report_storage_type: "gs"
+s3_storage_key: "{{ sunbird_private_s3_storage_key | default('') }}"
+s3_storage_secret: "{{ sunbird_private_s3_storage_secret | default('') }}"
+s3_storage_endpoint: ""
+s3_request_signature_version: AWS4-HMAC-SHA256
+s3_path_style_access: false
+s3_https_only: false
+s3_default_bucket_location: ""
+s3_storage_container: ""
+s3_dp_storage_container: ""
+
+
+postgres_address_space: "{{groups['postgres'][0].split(\".\")[0]}}.0.0.0/8"
+postgres_exporter_user: postgres_exporter
+postgresql_hba_entries:
+  - { type: local, database: all, user: postgres, auth_method: peer }
+  - { type: local, database: all, user: all, auth_method: peer }
+  - { type: host, database: all, user: all, address: '127.0.0.1/32', auth_method: md5 }
+  - { type: host, database: all, user: all, address: '::1/128', auth_method: md5 }
+  - { type: host, database: all, user: "{{ postgres_exporter_user }}", address: '{{ postgres_address_space }}', auth_method: md5 }
+  - { type: host, database: all, user: all, address: '{{ postgres_address_space }}', auth_method: md5 }

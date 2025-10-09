@@ -209,3 +209,11 @@ def read_elasticsearch_data(spark: SparkSession, host: str, port: str, index: st
     print(f"Successfully loaded {count} rows from Elasticsearch index: {index}")
 
     return df
+
+def writeToCassandra(df, keyspace: str, table: str, mode: str = "append"):
+    df.write \
+        .format("org.apache.spark.sql.cassandra") \
+        .option("keyspace", keyspace) \
+        .option("table", table) \
+        .mode(mode) \
+        .save()

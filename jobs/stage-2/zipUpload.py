@@ -44,7 +44,7 @@ class ZipUploadModel:
         try:
             print("Starting upload of Parquet files to GCP bucket")
 
-            base_path = "/mount/data/analytics/warehouse_pq/unified/"
+            base_path = config.unifiedParquetLocalPath
             user_details_file = os.path.join(base_path, "unified_user_details.parquet")
             enrolments_file = os.path.join(base_path, "unified_enrolments.parquet")
             org_hierarchy_file = os.path.join(base_path, "org_hierarchy.parquet")
@@ -63,7 +63,7 @@ class ZipUploadModel:
 
             # Proceed only if all exist
             if user_details_exists and enrolments_exists and org_hierarchy_exists:
-                sync_reports(base_path, "/testSync/airflowData", config)
+                sync_reports(base_path, config.unifiedParquetPath, config)
                 print("Completed uploading Parquet files to GCP bucket.")
             else:
                 print("Upload skipped: One or more required files are missing.")
@@ -88,13 +88,22 @@ class ZipUploadModel:
             today_date = datetime.today().strftime('%Y-%m-%d')
             merged_dir = os.path.join(config.localReportDir, config.destinationDirectoryPath)
             kcm_dir = os.path.join(base_dir, "kcm-report", today_date, "ContentCompetencyMapping")
-            kcm_file = glob.glob(os.path.join(kcm_dir, "*.csv"))[0] if os.path.exists(kcm_dir) else None
+            
+            # Better KCM file detection
+            kcm_file = None
+            if os.path.exists(kcm_dir):
+                kcm_files = glob.glob(os.path.join(kcm_dir, "*.csv"))
+                kcm_file = kcm_files[0] if kcm_files else None
+            
             password = config.password
 
             # Clean and recreate merged directory
             if os.path.exists(merged_dir):
                 shutil.rmtree(merged_dir)
             os.makedirs(merged_dir)
+
+            # Track all MDOID values for KCM distribution
+            all_mdoids = set()
 
             # Collect CSVs for each mdoid from all specified directories
             for subfolder in directories_to_select:
@@ -108,6 +117,10 @@ class ZipUploadModel:
                                 mdoid_value = item.replace(".csv", "")
                             else:
                                 mdoid_value = item
+                            
+                            # Track this MDOID for KCM distribution
+                            all_mdoids.add(mdoid_value)
+                            
                             dest_dir = os.path.join(merged_dir, mdoid_value)
                             os.makedirs(dest_dir, exist_ok=True)
 
@@ -115,15 +128,25 @@ class ZipUploadModel:
                                 for f in os.listdir(item_path):
                                     if f.endswith(".csv"):
                                         shutil.copy(os.path.join(item_path, f),
-                                                    os.path.join(dest_dir, f"{subfolder}.csv"))
+                                                    os.path.join(dest_dir, f))
                             elif item_path.endswith(".csv"):
                                 shutil.copy(item_path, os.path.join(dest_dir, f"{subfolder}.csv"))
-            if kcm_file:
-                print(f"Syncing KCM file once: {kcm_file} -> {config.kcmSyncPath}")
+
+            # Add KCM file to each MDOID folder
+            if kcm_file and os.path.exists(kcm_file):
+                print(f"Adding KCM file to {len(all_mdoids)} MDOID folders: {kcm_file}")
+                for mdoid_value in all_mdoids:
+                    dest_dir = os.path.join(merged_dir, mdoid_value)
+                    if os.path.exists(dest_dir):
+                        # Copy KCM file with its original name
+                        shutil.copy(kcm_file, os.path.join(dest_dir, "ContentCompetencyMapping.csv"))
+                
+                # Separate KCM sync (existing functionality)
+                print(f"Syncing KCM file separately: {kcm_file} -> {config.kcmSyncPath}")
                 try:
                     sync_reports(kcm_file, config.kcmSyncPath, config)
                 except Exception as e:
-                    print(f"WARNING: Failed to sync KCM file: {e}")
+                    print(f"WARNING: Failed to sync KCM file separately: {e}")
             else:
                 print(f"KCM file not found at expected path: {kcm_dir}")
             # Password-protected ZIP creation per mdoid folder
@@ -133,8 +156,7 @@ class ZipUploadModel:
                     zip_path = os.path.join(mdoid_path, "reports.zip")
                     csv_files = [f for f in os.listdir(mdoid_path) if f.endswith(".csv")]
                     if csv_files:
-                        command = ["zip", "-P", password, "-j", zip_path] + [os.path.join(mdoid_path, f) for f in
-                                                                             csv_files]
+                        command = ["zip", "-P", password, "-j", zip_path] + [os.path.join(mdoid_path, f) for f in csv_files]
                         subprocess.run(command, check=True)
                         # Delete the individual CSVs after zipping
                         for f in csv_files:
@@ -143,8 +165,7 @@ class ZipUploadModel:
             print(f"All MDOID folders zipped with password at: {merged_dir}")
             sync_reports(merged_dir, config.mdoReportSyncPath, config)
 
-            # ------------------ Part 2: Convert Parquet to CSV & Zip for full reports------------------ # '''
-
+            # ------------------ Part 2: Convert Parquet to CSV & Zip for full reports------------------ #
             warehouse_base = config.warehouseReportDir
             warehouse_output_dir = config.warehouseOutputDir
             warehouse_zip_path = os.path.join(warehouse_output_dir, "reports.zip")

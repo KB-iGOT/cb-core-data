@@ -5,12 +5,8 @@ findspark.init()
 import time
 from pathlib import Path
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType, BooleanType, ArrayType
 from pyspark.sql.window import Window
-from pyspark.sql.functions import (col, row_number, struct, lit, to_json, count, current_timestamp,
-                                   current_date, date_format, broadcast, desc, unix_timestamp, when, sum, collect_list,
-                                   max, lit, concat_ws, from_unixtime, format_string, expr, coalesce, dense_rank,
-                                   add_months, last_day, date_trunc, last_day, date_add, date_format, lit, concat)
+from pyspark.sql.functions import (col, row_number, lit, count,current_date, date_format, desc,max, lit, dense_rank,add_months, last_day, date_trunc, last_day, date_add, date_format, lit, concat)
 from datetime import datetime
 import sys
 import os
@@ -18,10 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 # Reusable imports from userReport structure
 from constants.ParquetFileConstants import ParquetFileConstants
-from dfutil.assessment import assessmentDFUtil
-from dfutil.content import contentDFUtil
-from dfutil.dfexport import dfexportutil
-from dfutil.utils.utils import druidDFOption
+from dfutil.utils import utils
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 from pyspark.sql import functions as F
@@ -37,7 +30,6 @@ class LearnerLeaderBoardModel:
     def process_data(self, spark, config):
         try:
             # Previous month start and end
-            current = current_date()
             month_start = date_format(date_trunc("MONTH", add_months(current_date(), -1)), "yyyy-MM-dd HH:mm:ss")
             month_end = concat(date_format(last_day(add_months(current_date(), -1)), "yyyy-MM-dd"), lit(" 23:59:59"))
 
@@ -100,22 +92,11 @@ class LearnerLeaderBoardModel:
                 F.col("u.year"),
                 F.coalesce(F.col("l.rank"), F.lit(0)).alias("previous_rank")))
             # Write to Cassandra
-            # self.writeToCassandra(finalDF, config.cassandraUserKeyspace, config.cassandraLearnerLeaderBoardTable)
-            self.writeToCassandra(finalDF, config.cassandraUserKeyspace, "learner_leaderboard_pyspark_test")
-            # self.writeToCassandra(finalDF.select("userid", "row_num"), config.cassandraUserKeyspace, config.cassandraLearnerLeaderBoardLookupTable)
-            self.writeToCassandra(finalDF.select("userid", "row_num"), config.cassandraUserKeyspace, "learner_leaderboard_lookup_pyspark_test")
+            utils.writeToCassandra(finalDF, config.cassandraUserKeyspace, config.cassandraLearnerLeaderBoardTable)
+            utils.writeToCassandra(finalDF.select("userid", "row_num"), config.cassandraUserKeyspace, config.cassandraLearnerLeaderBoardLookupTable)
         except Exception as e:
             print(f"Error occurred during LearnerLeaderBoardModel processing: {str(e)}")
             raise
-
-    def writeToCassandra(self, df, keyspace: str, table: str, mode: str = "append"):
-        df.write \
-            .format("org.apache.spark.sql.cassandra") \
-            .option("keyspace", keyspace) \
-            .option("table", table) \
-            .mode(mode) \
-            .save()
-
 
 def create_spark_session_with_packages(config):
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'

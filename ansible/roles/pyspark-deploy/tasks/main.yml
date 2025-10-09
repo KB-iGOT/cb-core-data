@@ -1,0 +1,12 @@
+# tasks file for pyspark-deploy
+- name: Copy pyspark-data folder to remote machine
+  become: yes
+  become_user: "{{ analytics_user }}"
+  copy:
+    src: pyspark-data/
+    dest: "{{ analytics.home }}/"
+    mode: '0755'
+
+- name: Copy config.py file to jobs
+  template: src=config.py.j2 dest={{ analytics.home }}/jobs/config.py mode=755 owner={{ analytics_user }} group={{ analytics_group }}
+
