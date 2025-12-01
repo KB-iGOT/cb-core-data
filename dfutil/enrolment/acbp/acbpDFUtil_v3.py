@@ -118,7 +118,7 @@ def preComputeACBPData(spark):
     print(f"Total plans: {total_count}, Live Plans: {live_count}")
     
     # Call optimized v4 explode function
-    #explodeAcbpData(spark, live_acbp_df)
+    explodeAcbpData(spark, live_acbp_df)
 
 
 def explodeAcbpData(spark, acbp_df: DataFrame) -> DataFrame:
