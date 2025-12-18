@@ -58,6 +58,7 @@ class CourseReportModel:
 
             
             allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("category").isin(primary_categories))
+            allCourseProgramDetailsDF.printSchema()
             contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
             enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE) 
 
@@ -154,8 +155,8 @@ class CourseReportModel:
 
             allCBPAndAggDF = allCourseProgramDetailsDF.join(aggregatedDF, ["courseID"], "left")
 
-            courseBatchDF=spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE) \
-
+            courseBatchDF=spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE) 
+            allCourseProgramDetailsDF.printSchema()
             curatedCourseDataDFWithBatchInfo = allCBPAndAggDF \
             .join(
                 broadcast(
@@ -163,7 +164,7 @@ class CourseReportModel:
                     .filter(col("category") == "Blended Program")
                     .select("courseID")
                     .join(courseBatchDF, ["courseID"], "inner")
-                    .select("courseID", "batchID", "courseBatchName", "courseBatchStartDate", "courseBatchEndDate")
+                    .select("courseID", "batchID", "courseBatchName", "courseBatchStartDate", "courseBatchEndDate",'difficultyLevel')
                 ), 
                 ["courseID"], 
                 "left"
@@ -362,6 +363,7 @@ class CourseReportModel:
                     col("contentLanguage").alias("language"),
                     col("courseCategory").alias("content_sub_type"),
                     col("scorm_flag"),
+                    col('difficultyLevel').alias('difficulty_level'),
                     col("data_last_generated_on")
                 )
             orgComputedDF = spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE) \
@@ -400,7 +402,8 @@ class CourseReportModel:
             platformContentWarehouseDF = platformContentWarehouseDF.unionByName(es_final_assessment_df)
 
             df_warehouse = platformContentWarehouseDF.union(marketPlaceContentWarehouseDF)
-            df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
+            df_warehouse.select("difficulty_level").show(5, truncate = False)
+            # df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
 
         except Exception as e:
             print(f"❌ Error occurred during CourseReportModel processing: {str(e)}")
