@@ -56,9 +56,7 @@ class CourseReportModel:
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             primary_categories= ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
 
-            
             allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("category").isin(primary_categories))
-            allCourseProgramDetailsDF.printSchema()
             contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
             enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE) 
 
@@ -156,20 +154,20 @@ class CourseReportModel:
             allCBPAndAggDF = allCourseProgramDetailsDF.join(aggregatedDF, ["courseID"], "left")
 
             courseBatchDF=spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE) 
-            allCourseProgramDetailsDF.printSchema()
+            
             curatedCourseDataDFWithBatchInfo = allCBPAndAggDF \
             .join(
                 broadcast(
                     allCourseProgramDetailsDF
                     .filter(col("category") == "Blended Program")
-                    .select("courseID")
+                    .select("courseID",'difficultyLevel')
                     .join(courseBatchDF, ["courseID"], "inner")
-                    .select("courseID", "batchID", "courseBatchName", "courseBatchStartDate", "courseBatchEndDate",'difficultyLevel')
+                    .select("courseID", "batchID", "courseBatchName", "courseBatchStartDate", "courseBatchEndDate")
                 ), 
                 ["courseID"], 
                 "left"
             )
-
+            
             fullDF = contentDFUtil.duration_format(curatedCourseDataDFWithBatchInfo,"courseDuration") \
             .filter(col("courseStatus").isin(["Live", "Draft", "Retired", "Review"])) \
             .withColumn("courseLastPublishedOn", to_date(col("courseLastPublishedOn"), ParquetFileConstants.DATE_FORMAT)) \
@@ -216,7 +214,7 @@ class CourseReportModel:
                     col("totalCertificatesIssued"),
                     col("firstCompletedOn"), 
                     col("lastCompletedOn"),
-                    col("data_last_generated_on")
+                    col("data_last_generated_on"),
                 )
             
 
@@ -241,6 +239,7 @@ class CourseReportModel:
                 lit("Not Available").alias("language"),  
                 lit("External Content").alias("content_sub_type"),
                 lit("0").alias("scorm_flag"),
+                lit(None).alias("difficulty_level"),
                 col("data_last_generated_on")
             )
 
@@ -390,6 +389,7 @@ class CourseReportModel:
                 col("language").getItem(0).alias("language"),
                 col("contextCategory").alias("content_sub_type"),
                 lit(0).alias("scorm_flag"),
+                lit(None).alias("difficulty_level"),
                 lit(currentDateTime).alias("data_last_generated_on")
             )
             es_final_assessment_df = es_final_assessment_df.join(
@@ -402,8 +402,7 @@ class CourseReportModel:
             platformContentWarehouseDF = platformContentWarehouseDF.unionByName(es_final_assessment_df)
 
             df_warehouse = platformContentWarehouseDF.union(marketPlaceContentWarehouseDF)
-            df_warehouse.select("difficulty_level").show(5, truncate = False)
-            # df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
+            df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
 
         except Exception as e:
             print(f"❌ Error occurred during CourseReportModel processing: {str(e)}")
