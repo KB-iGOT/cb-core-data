@@ -240,6 +240,18 @@ submit_assessment_request_schema = StructType([
     StructField("timeLimit", IntegerType(), False)
 ])
 
+questionset_hierarchy_schema = StructType([
+    StructField("identifier", StringType(), True),
+    StructField("name", StringType(), True),
+    StructField("status", StringType(), True),
+    StructField("scoreCutoffType", StringType(), True),
+    StructField("totalQuestions", IntegerType(), True),
+    StructField("primaryCategory", StringType(), True),
+    StructField("minimumPassPercentage", StringType(), True),
+    StructField("compatibilityLevel", IntegerType(), True),
+    StructField("noOfSection", IntegerType(), True)
+])
+
 submit_assessment_response_schema = StructType([
     StructField("result", FloatType(), False),
     StructField("total", IntegerType(), False),
@@ -251,7 +263,14 @@ submit_assessment_response_schema = StructType([
     StructField("passPercentage", FloatType(), False),
     StructField("totalSectionMarks", FloatType(), False),
     StructField("totalPercentage", FloatType(), False),
-    StructField("totalMarks", IntegerType(), False)
+    StructField("totalMarks", IntegerType(), False),
+    StructField("children", ArrayType(StructType([
+        StructField("identifier", StringType(), True),
+        StructField("name", StringType(), False),
+        StructField("result", FloatType(), False),
+        StructField("sectionResult", IntegerType(), False),
+        StructField("sectionMarks", StringType(), False)
+    ]), True), True)
 ])
 
 # Batch attribute schemas

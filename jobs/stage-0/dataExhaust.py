@@ -240,7 +240,11 @@ class DataExhaustModel:
                 col("submitassessmentrequest"),
                 col("language").alias("assessLanguage")
             ).fillna("{}", subset=["submitassessmentresponse", "submitassessmentrequest"])
-
+            
+            # code to keep a copy of the original dataframe with all columns before parsing JSON 
+            # this will be used later to ensure no records are lost during joins
+            #self.write_parquet(user_assessment_df, f"{output_base_path}/complete_assessment_data")
+            
             # Parse JSON columns
             user_assessment_with_json = user_assessment_df.withColumn(
                 "readResponse", from_json(col("assessmentreadresponse"), schemas.assessment_read_response_schema)
@@ -278,6 +282,7 @@ class DataExhaustModel:
                 col("submitResponse.correct").alias("assessCorrect"),
                 col("submitResponse.incorrect").alias("assessIncorrect"),
                 col("submitResponse.pass").cast(IntegerType()).alias("assessPassOriginal"),  # Keep original
+                col("submitResponse.overallResult").alias("assessOverallResult"),
                 col("submitResponse.passPercentage").alias("assessPassPercentageOriginal"),  # Keep original
                 col("submitResponse.totalSectionMarks").alias("assessTotalSectionMarks"),
                 col("submitResponse.totalPercentage").alias("assessOverallResultOriginal"),  # Keep original
@@ -461,15 +466,17 @@ class DataExhaustModel:
                 coalesce(col("fa_data.effectivePassPercentage"), col("fa_main.assessPassPercentageOriginal")).alias(
                     "assessPassPercentage"),
                 col("fa_main.assessTotalSectionMarks"),
+                col("fa_main.assessOverallResultOriginal").alias("assessOverallResult"),
                 coalesce(col("fa_data.assessOverallResultNew"), col("fa_main.assessOverallResultOriginal")).alias(
-                    "assessOverallResult"),
+                    "assessOverallResultFinal"),
                 col("fa_main.assessTotalMarks"),
                 col("fa_main.assessStartTimestamp"),
                 col("fa_main.assessEndTimestamp"),
+                col("fa_main.assessPassOriginal").alias("assessPass"),
                 # For assessPass: use new logic if available, otherwise use original
                 when(col("fa_data.finalResult").isNotNull(),
-                     when(col("fa_data.finalResult") == "pass", lit(1)).otherwise(lit(0))
-                     ).otherwise(col("fa_main.assessPassOriginal")).alias("assessPass")
+                     when(col("fa_data.finalResult") == "pass", lit("pass")).otherwise(lit("fail"))
+                     ).otherwise(col("fa_main.assessPassOriginal")).alias("assessPassFinal")
             )
 
             # Validation logging
@@ -921,6 +928,7 @@ class DataExhaustModel:
             )
             self.write_parquet(course_completion_survey_df, f"{output_base_path}/courseCompletionSurvey")
             course_completion_survey_df.unpersist()
+            
             self.logger.info("course completion survey data processing completed.")
             self.logger.info("Data processing completed successfully!")
 
