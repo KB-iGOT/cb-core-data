@@ -108,17 +108,23 @@ class CourseBasedAssessmentModel:
                 countDistinct("assessStartTime").alias("retakes"))
 
             # Step 2: Get latest entry per (assessChildID, userID) using row_number()
-            windowSpec = Window.partitionBy("assessChildID", "userID").orderBy(col("assessEndTimestamp").desc())
+            # TODO check this logic
+            # windowSpec = Window.partitionBy("assessChildID", "userID").orderBy(col("assessEndTimestamp").desc())
 
-            userAssessChildDataLatestDF = userAssessChildrenDetailsDF.withColumn("rowNum",
-                                                                                 row_number().over(windowSpec)).filter(
-                F.col("rowNum") == 1).drop("rowNum") \
+            # userAssessChildDataLatestDF = userAssessChildrenDetailsDF.withColumn("rowNum",
+            #                                                                      row_number().over(windowSpec)).filter(
+            #     F.col("rowNum") == 1).drop("rowNum") \
+            #     .join(retakesDF.select("assessChildID", "userID", "retakes"), ["assessChildID", "userID"], "left")
+
+            userAssessChildDataLatestDF = userAssessChildrenDetailsDF \
                 .join(retakesDF.select("assessChildID", "userID", "retakes"), ["assessChildID", "userID"], "left")
+            
             userAssessChildDataLatestDF.select("assessPass").distinct().show()
             finalDF = userAssessChildDataLatestDF.withColumn("userAssessmentDuration",
                                                              unix_timestamp("assessEndTimestamp") - unix_timestamp(
                                                                  "assessStartTimestamp")) \
                 .withColumn("Pass", when(col("assessPass") == "pass", "Yes").otherwise("No")) \
+                .withColumn("pass_corrected", when(col("assessPassFinal") == "pass", "Yes").otherwise("No")) \
                 .withColumn("assessPercentage",
                             when(col("assessPassPercentage").isNotNull(), col("assessPassPercentage")).otherwise(
                                 lit("Need to pass in all sections"))) \
@@ -175,8 +181,10 @@ class CourseBasedAssessmentModel:
                 date_format(from_unixtime(col("assessEndTime")), ParquetFileConstants.DATE_FORMAT).alias(
                     "last_attempted_date"),
                 col("assessOverallResult").alias("latest_percentage_achieved"),
+                col("assessOverallResultFinal").alias("latest_percentage_achieved_final"),
                 col("assessPercentage"),
                 col("Pass"),
+                col("pass_corrected").alias("Pass_Corrected"),
                 col("assessMaxQuestions").alias("total_questions"),
                 col("assessIncorrect").alias("incorrect_count"),
                 col("assessBlank").alias("unattempted_questions"),
@@ -287,12 +295,14 @@ class CourseBasedAssessmentModel:
                         date_format(from_unixtime(col("assessEndTime")), ParquetFileConstants.DATE_FORMAT).alias(
                             "completion_date"),
                         col("assessOverallResult").alias("score_achieved"),
+                        col("assessOverallResultFinal").alias("score_achieved_final"),
                         col("assessMaxQuestions").alias("overall_score"),
                         col("cut_off_percentage"),
                         col("assessMaxQuestions").alias("total_question"),
                         col("assessIncorrect").alias("number_of_incorrect_responses"),
                         lit(0).alias("number_of_retakes"),
                         col("assessPass").alias("pass"),
+                        col("pass_corrected").alias("pass_corrected"),
                         col("data_last_generated_on"))
 
             finalAssessmentDF = self.duration_format(finalAssessmentDF, "assessment_duration")
@@ -310,13 +320,15 @@ class CourseBasedAssessmentModel:
                 col("assessment_duration").alias("time_spent_by_the_user"),
                 date_format(from_unixtime(col("assessEndTime")), ParquetFileConstants.DATE_FORMAT).alias(
                     "completion_date"),
-                col("latest_percentage_achieved").alias("score_achieved"),  # enrollment
+                col("latest_percentage_achieved").alias("score_achieved"),
+                col("latest_percentage_achieved_final").alias("score_achieved_final"),
                 col("total_questions").alias("overall_score"),
                 col("cut_off_percentage"),
                 col("total_questions").alias("total_question"),
                 col("incorrect_count").alias("number_of_incorrect_responses"),
                 col("retakes").alias("number_of_retakes"),
                 col("Pass").alias("pass"),
+                col("pass_corrected").alias("pass_corrected"),
                 col("data_last_generated_on"))
 
             warehouseDF = warehouseDF.unionByName(finalAssessmentDF)
