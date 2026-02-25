@@ -475,7 +475,7 @@ class DataExhaustModel:
                 col("fa_main.assessPassOriginal").alias("assessPass"),
                 # For assessPass: use new logic if available, otherwise use original
                 when(col("fa_data.finalResult").isNotNull(),
-                     when(col("fa_data.finalResult") == "pass", lit(1)).otherwise(lit(0))
+                     when(col("fa_data.finalResult") == "pass", lit("pass")).otherwise(lit("fail"))
                      ).otherwise(col("fa_main.assessPassOriginal")).alias("assessPassFinal")
             )
 
