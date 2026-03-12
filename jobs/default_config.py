@@ -120,7 +120,9 @@ DEFAULT_CONFIG = {
     'cassandraMDOLearnerLeaderboardTable': 'mdo_learner_leaderboard',
     'cassandraSLWMdoLeaderboardTable': 'slw_mdo_leaderboard',
     'cassandraSLWMdoTopLearnerTable': 'slw_mdo_top_learners',
-    'cassandraUserExtendedProfileTable' : "user_extended_profile",
+    'cassandraUserExtendedProfileTable': "user_extended_profile",
+    'cassandraQuestionSetHierarchyTable': "questionset_hierarchy",
+    'cassandraAccessSettingRulesTable': "access_setting_rules_v2",
 
     # MongoDB Configuration
     'mongoDatabase': 'nodebb',

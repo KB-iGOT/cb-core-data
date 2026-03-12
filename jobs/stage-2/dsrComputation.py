@@ -46,18 +46,14 @@ class DSRComputationModel:
         try:
             output_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
             userDF = spark.read.option("recursiveFileLookup", "true").parquet(ParquetFileConstants.USER_PARQUET_FILE) \
-		.withColumnRenamed("id", "user_id") \
+		        .withColumnRenamed("id", "user_id") \
                 .withColumnRenamed("rootorgid", "mdo_id") \
                 .withColumn("userCreatedTimestamp", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ").cast("long"))
             eventsEnrolmentDataDF = spark.read.parquet(f"{output_path}/eventEnrolmentDetails")
             contentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE)
             externalContentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE)
-            contentDF = spark.read.parquet(ParquetFileConstants.ESCONTENT_PARQUET_FILE) \
-		        .withColumnRenamed("identifier", "content_id") \
-                .withColumnRenamed("primaryCategory", "content_type") \
-                .withColumnRenamed("status", "content_status")
+            contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
             externalContentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_PARQUET_FILE)
-
             # --- Active users (status == 1) joined with org
             userWithOrgDF = userDF.filter(col("mdo_id").isNotNull())
             activeUsersDF = userDF.filter(col("status") == 1)
@@ -150,6 +146,10 @@ class DSRComputationModel:
             .count()
             Redis.update("dashboard_new_users_registered_yesterday", str(usersRegisteredYesterdayCount), conf=config)
 
+            # --- Live courses count including external courses ---
+            contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            liveCourseCount = contentDF.filter(col("content_status").isin("Live", "LIVE")).filter(col("content_sub_type").isin("Course", "Moderated Course", "External Content")).count()
+            Redis.update("dashboard_courses_published_live_count", str(liveCourseCount), conf=config)
             # --- MAU (last 30 days) via Druid ---
             loginSchema = StructType([StructField("user_id", StringType(), True)])
             mau_query = """

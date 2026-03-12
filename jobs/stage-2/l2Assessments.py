@@ -399,8 +399,6 @@ class L2AssessmentReport:
             ) \
                 .dropDuplicates()
 
-            print(f"CAP with assessment count: {cap_with_assessment.count()}")
-            print("\nStage 4: Joining with user data...")
             validL2AssessmentConsumptionDF = cap_with_assessment \
                 .join(
                 userDF,
@@ -554,12 +552,27 @@ class L2AssessmentReport:
 
             # Union both dataframes
             print("\nUnioning APAR and CAP dataframes...")
-            masterFinalDF = apar_unified.unionByName(cap_unified).dropDuplicates()
+            w = Window.partitionBy("user_id", "content_id", "assessment_id") \
+                .orderBy(
+                col("score_achieved").desc(),
+                when(col("comprehensive_level_assessment_status") == "Pass", 1)
+                .when(col("comprehensive_level_assessment_status") == "Fail", 2)
+                .otherwise(3).asc())
 
+            cap_unified_deduped = cap_unified \
+                .withColumn("rn", row_number().over(w)) \
+                .filter(col("rn") == 1) \
+                .drop("rn")
+
+            masterFinalDF = apar_unified.unionByName(cap_unified)
             # Print schema and sample data
             print("\nFinal Schema:")
             masterFinalDF.printSchema()
+            masterFinalDF.groupBy("comprehensive_level_assessment_status").count().show()
 
+            print("NULL count:", masterFinalDF.filter(col("comprehensive_level_assessment_status").isNull()).count())
+            print("Pass count:", masterFinalDF.filter(col("comprehensive_level_assessment_status") == "Pass").count())
+            print("Fail count:", masterFinalDF.filter(col("comprehensive_level_assessment_status") == "Fail").count())
             print("\nSample data (10 rows):")
             # masterFinalDF.show(10, truncate=False)
             # masterFinalDF.filter(col("user_id") == "b39b6202-1718-4a26-afa8-dcd141756efe").show(20, truncate=False)
