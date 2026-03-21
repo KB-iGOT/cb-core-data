@@ -4,6 +4,7 @@ import findspark
 
 findspark.init()
 import sys
+import os
 import time
 from pathlib import Path
 from pyspark.sql import SparkSession, functions as F
@@ -32,6 +33,18 @@ class L2AssessmentReport:
     @staticmethod
     def get_date():
         return datetime.now().strftime("%Y-%m-%d")
+
+    # ── Added from temp ───────────────────────────────────────────────────────
+    def write_postgres_table(self, df, url: str, table: str, username: str, password: str, mode: str = "overwrite"):
+        df.write \
+            .format("jdbc") \
+            .option("url", url) \
+            .option("dbtable", table) \
+            .option("user", username) \
+            .option("password", password) \
+            .option("driver", "org.postgresql.Driver") \
+            .mode(mode) \
+            .save()
 
     def process_report(self, spark, config):
         """
@@ -74,6 +87,7 @@ class L2AssessmentReport:
                 assessmentDetailDF["*"],
                 assessMinPassDF["minimumPassPercentage"]
             )
+
             # If minimumPassPercentage is available for a matching assessment, prefer it
             # over the existing cut_off_percentage value.
             assessmentDetailDF = assessmentDetailDF.withColumn(
@@ -81,6 +95,11 @@ class L2AssessmentReport:
                 when(col("minimumPassPercentage").isNotNull(), col("minimumPassPercentage").cast("float"))
                 .otherwise(col("cut_off_percentage"))
             )
+
+            # ── Added from temp: dedup assessmentDetailDF ─────────────────────
+            print("before dropping count - ", assessmentDetailDF.count())
+            assessmentDetailDF = assessmentDetailDF.dropDuplicates(["user_id", "content_id", "assessment_id"])
+            print("after dropping count - ", assessmentDetailDF.count())
 
             kcmCourseDF = kcmDF.join(kcmMappingDF, kcmDF.competency_area_id == kcmMappingDF.competency_area_id, "inner") \
                 .select(
@@ -340,6 +359,7 @@ class L2AssessmentReport:
                 col("content_duration").alias("cap_content_duration"),
                 col("content_status").alias("cap_content_status")
             )
+
             cap_with_enrolment = capContentDF \
                 .join(
                 dwEnrolmentDF.filter(col("user_consumption_status").isin("in-progress", "completed")),
@@ -372,7 +392,7 @@ class L2AssessmentReport:
                 assessmentDetailDF,
                 (cap_with_enrolment.cap_user_id == assessmentDetailDF.user_id) &
                 (cap_with_enrolment.cap_content_id == assessmentDetailDF.content_id),
-                "left"  # Left join so in-progress records without assessment data are kept
+                "left"
             ) \
                 .select(
                 col("cap_content_id"),
@@ -399,12 +419,21 @@ class L2AssessmentReport:
             ) \
                 .dropDuplicates()
 
+            print(f"CAP with assessment count: {cap_with_assessment.count()}")
+            print("\nStage 4: Joining with user data...")
+
+            # ── Added from temp: normalise assess_pass before select ───────────
             validL2AssessmentConsumptionDF = cap_with_assessment \
                 .join(
                 userDF,
                 cap_with_assessment.cap_user_id == userDF.user_id,
                 "inner"
             ) \
+                .withColumn("assess_pass",
+                            when(col("assess_pass").isin("Yes", "1", "true"), lit("Yes"))
+                            .when(col("assess_pass").isin("No", "0", "false"), lit("No"))
+                            .otherwise(col("assess_pass"))
+                            ) \
                 .select(
                 col("cap_user_id").alias("assess_user_id"),
                 col("cap_content_id").alias("assess_content_id"),
@@ -489,7 +518,7 @@ class L2AssessmentReport:
                 lit(None).cast("string").alias("comprehensive_level_assessment_status"),
                 col("cbplan_start_date").cast("timestamp").alias("cbp_plan_start_date"),
                 col("cbplan_due_by").cast("timestamp").alias("cbp_plan_end_date"),
-                lit(None).cast("string").alias("parichay_id"),  # Assuming parichay_id is same as external_system_id
+                lit(None).cast("string").alias("parichay_id"),
                 col("enrol_user_consumption_status").alias("consumption_status"),
                 lit(None).alias("assessment_date")
             )
@@ -537,12 +566,17 @@ class L2AssessmentReport:
                 lit(None).alias("cbp_plan_id"),
                 lit(None).alias("allocated_on"),
                 when(
+                    col("cap_enrol_certificate_id").isNotNull() & (F.length(trim(col("cap_enrol_certificate_id"))) > 0),
+                    lit("Pass")
+                ).when(
                     col("assess_pass") == 'Yes',
                     lit("Pass")
                 ).when(
                     col("assess_pass") == 'No',
                     lit("Fail")
-                ).otherwise(lit(None)).alias("comprehensive_level_assessment_status"),
+                ).otherwise(
+                    lit(None)
+                ).alias("comprehensive_level_assessment_status"),
                 lit(None).alias("cbp_plan_start_date"),
                 lit(None).alias("cbp_plan_end_date"),
                 lit(None).alias("parichay_id"),
@@ -564,26 +598,30 @@ class L2AssessmentReport:
                 .filter(col("rn") == 1) \
                 .drop("rn")
 
-            masterFinalDF = apar_unified.unionByName(cap_unified)
+            masterFinalDF = apar_unified.unionByName(cap_unified_deduped)
+
             # Print schema and sample data
             print("\nFinal Schema:")
             masterFinalDF.printSchema()
             masterFinalDF.groupBy("comprehensive_level_assessment_status").count().show()
 
-            print("NULL count:", masterFinalDF.filter(col("comprehensive_level_assessment_status").isNull()).count())
-            print("Pass count:", masterFinalDF.filter(col("comprehensive_level_assessment_status") == "Pass").count())
-            print("Fail count:", masterFinalDF.filter(col("comprehensive_level_assessment_status") == "Fail").count())
-            print("\nSample data (10 rows):")
-            # masterFinalDF.show(10, truncate=False)
-            # masterFinalDF.filter(col("user_id") == "b39b6202-1718-4a26-afa8-dcd141756efe").show(20, truncate=False)
-
             print("\nReport generation completed successfully!")
+
+            # ── Added from temp: write to postgres ────────────────────────────
+            # postgres_url = f"jdbc:postgresql://{config.dwPostgresHost}/{config.dwPostgresSchema}"
+            # print(f"write final data to warehouse path - {postgres_url}/user_content_assessment")
+            # self.write_postgres_table(
+            #    masterFinalDF,
+            #    postgres_url,
+            #   "user_content_assessment",
+            #    config.dwPostgresUsername,
+            #    config.dwPostgresCredential
+            # )
 
             # Export report
             masterFinalDF.coalesce(1).write.mode("overwrite").parquet(
-                "/mount/data/analytics/igot-reports/assessment-report-apar/parquet")
-            # csv
-            # apar_assessment_data.coalesce(1).write.mode("overwrite").option("header", "true").csv("/home/analytics/shishir/assessment-report-apar/csv")
+                "/mount/data/analytics/igot-reports/assessment-report-apar/parquet"
+            )
 
         except Exception as e:
             print(f"Error occurred during processing: {str(e)}")
