@@ -17,6 +17,7 @@ from pyspark.sql.functions import (
     expr, date_format, to_utc_timestamp, current_timestamp, coalesce,
     to_timestamp, isnan, isnull, format_string, array_join, first, count, sum, row_number
 )
+from pyspark.sql.functions import unix_timestamp, abs
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, FloatType, ArrayType
 from pyspark import StorageLevel
 import logging
@@ -29,7 +30,6 @@ from jobs.default_config import create_config
 from dfutil.utils import utils
 from util import schemas
 from pyspark.sql.window import Window
-
 
 class DataExhaustModel:
 
@@ -240,7 +240,7 @@ class DataExhaustModel:
                 col("submitassessmentrequest"),
                 col("language").alias("assessLanguage")
             ).fillna("{}", subset=["submitassessmentresponse", "submitassessmentrequest"])
-
+            #self.write_parquet(user_assessment_df, f"{output_base_path}/userAssessmentRaw")
             # Parse JSON columns
             user_assessment_with_json = user_assessment_df.withColumn(
                 "readResponse", from_json(col("assessmentreadresponse"), schemas.assessment_read_response_schema)
@@ -280,7 +280,8 @@ class DataExhaustModel:
                 col("submitResponse.pass").cast(IntegerType()).alias("assessPassOriginal"),  # Keep original
                 col("submitResponse.passPercentage").alias("assessPassPercentageOriginal"),  # Keep original
                 col("submitResponse.totalSectionMarks").alias("assessTotalSectionMarks"),
-                col("submitResponse.totalPercentage").alias("assessOverallResultOriginal"),  # Keep original
+                col("submitResponse.overallResult").alias("assessOverallResultOriginal"),
+                col("submitResponse.totalPercentage").alias("assessSectionPercentage"),  # Keep original
                 col("submitResponse.totalMarks").alias("assessTotalMarks"),
                 col("assessStartTimestamp"),
                 col("assessEndTimestamp"),
@@ -390,9 +391,14 @@ class DataExhaustModel:
                     when(col("scoreCutoffType") == "SectionLevel", col("assessTotalSectionMarks"))
                     .otherwise(col("assessOverallResult"))
                 )
+                #.withColumn(
+                #    "assessOverallResultNew",
+                #    when(col("assessTotalSectionMarks").isNotNull(), col("assessTotalSectionMarks"))
+                #    .otherwise(col("assessOverallResult"))
+                #)
                 .withColumn(
                     "assessOverallResultNew",
-                    when(col("assessTotalSectionMarks").isNotNull(), col("assessTotalSectionMarks"))
+                    when(col("assessTotalSectionMarks").isNotNull(), col("assessTotalPercentage"))
                     .otherwise(col("assessOverallResult"))
                 )
                 .select(
@@ -407,7 +413,8 @@ class DataExhaustModel:
                     col("assessTotalSectionMarks"),
                     col("assessTotalMarks"),
                     col("effectivePassPercentage"),
-                    col("assessOverallResultNew")
+                    col("assessOverallResultNew"),
+                    col("assessTotalPercentage")
                 )
             )
 
@@ -427,7 +434,15 @@ class DataExhaustModel:
 
             fa_main = final_assessment_df.alias("fa_main")
             fa_data = final_assessment_data_deduped.alias("fa_data")
+            '''fa_main.filter(
+                (col("assessChildID") == "do_114510474380296192120514") &
+                (col("userID") == "6c74363e-99db-4fd9-9e07-040318cdc143")).select(
+                    "assessChildID", "userID", col("assessStartTimestamp").cast("string").alias("main_ts")).show(truncate=False)
 
+            fa_data.filter(
+                (col("assessChildID") == "do_114510474380296192120514") &
+                (col("userID") == "6c74363e-99db-4fd9-9e07-040318cdc143")).select(
+                    "assessChildID", "userID", col("assessStartTimestamp").cast("string").alias("data_ts")).show(truncate=False)'''
             final_assessment_df_merged = fa_main.join(
                 fa_data,
                 (col("fa_main.assessChildID") == col("fa_data.assessChildID")) &
@@ -436,7 +451,7 @@ class DataExhaustModel:
                  coalesce(col("fa_data.assessStartTimestamp").cast("string"), lit("__NULL__"))),
                 "left"  # LEFT JOIN - this is the key change!
             ) \
-                .select(
+            .select(
                 col("fa_main.assessChildID"),
                 col("fa_main.assessUserStatus"),
                 col("fa_main.userID"),
@@ -466,11 +481,24 @@ class DataExhaustModel:
                 col("fa_main.assessTotalMarks"),
                 col("fa_main.assessStartTimestamp"),
                 col("fa_main.assessEndTimestamp"),
+                col("fa_data.assessTotalPercentage"),
                 # For assessPass: use new logic if available, otherwise use original
                 when(col("fa_data.finalResult").isNotNull(),
                      when(col("fa_data.finalResult") == "pass", lit(1)).otherwise(lit(0))
                      ).otherwise(col("fa_main.assessPassOriginal")).alias("assessPass")
             )
+
+            # Validation logging
+            original_count = final_assessment_df.count()
+            final_count = final_assessment_df_merged.count()
+            self.logger.info(f"Original record count: {original_count}")
+            self.logger.info(f"Final record count: {final_count}")
+            self.logger.info(f"Record count difference: {original_count - final_count}")
+
+            if original_count != final_count:
+                self.logger.warning(f"WARNING: Record count mismatch! Lost {original_count - final_count} records")
+            else:
+                self.logger.info("SUCCESS: All records preserved!")
 
             # Write final output
             self.write_parquet(final_assessment_df_merged, f"{output_base_path}/userAssessment")
@@ -868,13 +896,6 @@ class DataExhaustModel:
             self.write_parquet(es_final_assessment_df, f"{output_base_path}/esFinalAssessment")
             es_final_assessment_df.unpersist()
 
-            # Process access control settings for CAP
-            self.logger.info("Processing access control settings for CAP...")
-            access_control_settings_df = self.read_cassandra_table(self.config.cassandraCourseKeyspace, self.config.cassandraAccessSettingRulesTable)
-
-            self.write_parquet(access_control_settings_df, f"{output_base_path}/accessControlSettings")
-            access_control_settings_df.unpersist()
-
             # Process course assessment data
             self.logger.info("Processing assessment ES content data...")
             primary_categories = ["Course Assessment"]
@@ -897,6 +918,13 @@ class DataExhaustModel:
             es_course_assessment_df.unpersist()
 
             self.logger.info("ES course assessment data processing completed.")
+
+            # Process access control settings for CAP
+            self.logger.info("Processing access control settings for CAP...")
+            access_control_settings_df = self.read_cassandra_table("sunbird_courses", "access_setting_rules_v2")
+
+            self.write_parquet(access_control_settings_df, f"{output_base_path}/accessControlSettings")
+            access_control_settings_df.unpersist()
 
             # Process Elasticsearch course completion data
             self.logger.info("Processing course completion survey data...")
