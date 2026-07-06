@@ -81,6 +81,8 @@ DEFAULT_CONFIG = {
     'dwNLWUserLeaderboardTable': 'nlw_user_leaderboard',
     'dwAparCBPEnrollmentTable': 'apar_cbp_enrollment',
     'dwCourseCompletionSurveryTable': 'course_completion_survey_details',
+    'dwBharatKalpCoursesTable': 'bharat_kalp_courses',
+    'dwBharatkalpEventsTable': 'bharat_kalp_events',
 
     # Cassandra Keyspaces
     'cassandraUserKeyspace': 'sunbird',
@@ -243,6 +245,10 @@ DEFAULT_CONFIG = {
     'courseCategoriesToSelect': ["Multilingual Course", "Moderated Course", "Case Study", "Moderated Assessment", "Standalone Assessment", "Pre Enrolment Assessment",
                                  "Curated Program", "Invite-Only Assessment", "Comprehensive Assessment Program", "Blended Program", "Course", "Moderated Program",
                                  "Invite-Only Program", "Learning Pathway"],
+
+    # Bharat Kalp Configuration
+    'bharat_kalp_event_tags': ['Bharat Kalp - Talks', 'Bharat Kalp - Podcast'],
+    'bharatKalpCoursesPath' : '/home/analytics/pyspark/warehouse/bharatKalpCourses.json'
 
 }
 
