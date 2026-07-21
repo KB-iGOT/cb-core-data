@@ -20,6 +20,7 @@ from dfutil.user import userDFUtil
 from dfutil.enrolment.acbp import acbpDFUtil
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
+from dfutil.utils import profiling
 
 
 
@@ -156,7 +157,8 @@ def merge_csv_files(csv_files: list, output_file: Path):
                     outfile.writelines(lines[1:])  # Skip header for subsequent files
 
 def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet_tmp_path: str = None,
-                               large_ids=None, max_workers: int = 4, keep_parquets: bool = False, csv_filename: str = "report.csv"):
+                               large_ids=None, max_workers: int = 4, keep_parquets: bool = False, csv_filename: str = "report.csv",
+                               job_name: str = None):
     """
     Writes CSVs per group_by_attr using partitioned parquet files and parallel conversion.
     Creates folder structure: group_by_attr=value/csv_filename
@@ -170,52 +172,54 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
         max_workers (int): Number of parallel workers for CSV conversion
         keep_parquets (bool): Whether to keep intermediate parquet files
         csv_filename (str): Name of the CSV file to create inside each partition folder
+        job_name (str, optional): Calling job's name, for profiling attribution
     """
-    # Setup temporary parquet path if not provided
-    if parquet_tmp_path is None:
-        parquet_tmp_path = output_dir + "_temp_partitioned_parquets"
-    
-    print(f"📦 Step 1: Writing partitioned parquets...")
-    print(f"    - Parquet path: {parquet_tmp_path}")
-    
-    # Filter by large_ids if provided (for backward compatibility)
-    if large_ids is not None and len(large_ids) > 0:
-        print(f"    - Filtering to {len(large_ids)} specific groups")
-        df = df.filter(col(group_by_attr).isin(large_ids))
-    
-    # Write partitioned parquet files (Step 1)
-    df \
-        .repartition(group_by_attr) \
-        .write \
-        .mode("overwrite") \
-        .partitionBy(group_by_attr) \
-        .option("compression", "snappy") \
-        .parquet(parquet_tmp_path)
-    
-    # Clean up DataFrame from cache
-    df.unpersist(blocking=True)
-    print("🧹 Freed DataFrame from cache after parquet write")
-    
-    # Convert partitioned parquets to CSV files (Step 2)
-    result = convert_partitioned_parquets_to_csv(
-        parquet_input_dir=parquet_tmp_path,
-        csv_output_dir=output_dir,
-        partition_column=group_by_attr,
-        max_workers=max_workers,
-        process_subset=large_ids,  # Only process the large_ids if specified
-        keep_parquets=keep_parquets,
-        csv_filename=csv_filename
-    )
-    
-    print("🎉 Done writing all group CSV files using partitioned parquet approach.")
-    
-    return {
-        'successful_writes': result['successful_conversions'],
-        'failed_writes': result['failed_conversions'],
-        'total_groups': result['total_partitions'],
-        'success_rate': result['success_rate'],
-        'detailed_results': result
-    }
+    with profiling.phase(job_name or "shared_utils", "write", f"csv_per_{group_by_attr}"):
+        # Setup temporary parquet path if not provided
+        if parquet_tmp_path is None:
+            parquet_tmp_path = output_dir + "_temp_partitioned_parquets"
+
+        print(f"📦 Step 1: Writing partitioned parquets...")
+        print(f"    - Parquet path: {parquet_tmp_path}")
+
+        # Filter by large_ids if provided (for backward compatibility)
+        if large_ids is not None and len(large_ids) > 0:
+            print(f"    - Filtering to {len(large_ids)} specific groups")
+            df = df.filter(col(group_by_attr).isin(large_ids))
+
+        # Write partitioned parquet files (Step 1)
+        df \
+            .repartition(group_by_attr) \
+            .write \
+            .mode("overwrite") \
+            .partitionBy(group_by_attr) \
+            .option("compression", "snappy") \
+            .parquet(parquet_tmp_path)
+
+        # Clean up DataFrame from cache
+        df.unpersist(blocking=True)
+        print("🧹 Freed DataFrame from cache after parquet write")
+
+        # Convert partitioned parquets to CSV files (Step 2)
+        result = convert_partitioned_parquets_to_csv(
+            parquet_input_dir=parquet_tmp_path,
+            csv_output_dir=output_dir,
+            partition_column=group_by_attr,
+            max_workers=max_workers,
+            process_subset=large_ids,  # Only process the large_ids if specified
+            keep_parquets=keep_parquets,
+            csv_filename=csv_filename
+        )
+
+        print("🎉 Done writing all group CSV files using partitioned parquet approach.")
+
+        return {
+            'successful_writes': result['successful_conversions'],
+            'failed_writes': result['failed_conversions'],
+            'total_groups': result['total_partitions'],
+            'success_rate': result['success_rate'],
+            'detailed_results': result
+        }
 
 def write_single_csv_duckdb(df, output_path: str, parquet_tmp_path: str = None, filter_condition: str = None,
                            keep_parquets: bool = False):

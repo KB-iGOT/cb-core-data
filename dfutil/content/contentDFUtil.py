@@ -11,6 +11,7 @@ from pyspark.sql.types import ( DateType)
 from constants.ParquetFileConstants import ParquetFileConstants
 from util import schemas
 from dfutil.enrolment import enrolmentDFUtil
+from dfutil.utils import profiling
 
 def esContentDataFrame(
     spark: SparkSession
@@ -229,17 +230,18 @@ def preComputeContentWarehouseData(spark):
         primary_categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
         
         print("Starting Content Warehouse Data Generation...")
-        
+
         # Load required data
-        print("Loading platform data...")
-        allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("category").isin(primary_categories))
-        contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
-        enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
-        courseBatchDF = spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE)
-        
-        print("Loading marketplace data...")
-        marketPlaceEnrolmentsDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
-        marketPlaceContentsDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+        with profiling.phase("stage1_dfutil", "read", "content_warehouse_reads", spark=spark):
+            print("Loading platform data...")
+            allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("category").isin(primary_categories))
+            contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
+            enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+            courseBatchDF = spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE)
+
+            print("Loading marketplace data...")
+            marketPlaceEnrolmentsDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
+            marketPlaceContentsDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
         
         # Process Platform Content Data
         print("Processing platform course progress and enrollments...")
@@ -389,7 +391,8 @@ def preComputeContentWarehouseData(spark):
         # Combine Platform and Marketplace Data & Write to Warehouse
         print("Writing content warehouse data...")
         df_warehouse = platformContentWarehouseDF.union(marketPlaceContentWarehouseDF)
-        exportDFToParquet(df_warehouse.coalesce(1), ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+        exportDFToParquet(df_warehouse.coalesce(1), ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE,
+                           job_name="stage1_dfutil", stage_name="content_warehouse_write")
 
     except Exception as e:
         print(f"Content warehouse data generation error: {str(e)}")

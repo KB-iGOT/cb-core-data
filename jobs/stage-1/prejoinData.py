@@ -17,8 +17,11 @@ from dfutil.enrolment.acbp import acbpDFUtil_v3
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.assessment import assessmentDFUtil
+from dfutil.utils import profiling
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
+
+JOB_NAME = "stage1_prejoinData"
 
 
 def initialize_spark():
@@ -27,8 +30,9 @@ def initialize_spark():
     """
     print("Initializing Spark Session...")
 
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("DataProcessing_Pipeline") \
+        .appName(f"{JOB_NAME}_{run_id}") \
         .config("spark.master", "local[28]") \
         .config("spark.driver.memory", "180g") \
         .config("spark.driver.memoryOverhead", "24g") \
@@ -39,6 +43,9 @@ def initialize_spark():
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.adaptive.skewJoin.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
 
     print("Spark Session initialized successfully")
@@ -60,11 +67,12 @@ def run_stage(name: str, func, spark, config=None):
     start_time = time.time()
 
     try:
-        # Call function with or without config based on whether it's provided
-        if config is not None:
-            result = func(spark, config)
-        else:
-            result = func(spark)
+        with profiling.phase(JOB_NAME, "process", name, spark=spark):
+            # Call function with or without config based on whether it's provided
+            if config is not None:
+                result = func(spark, config)
+            else:
+                result = func(spark)
 
         duration = time.time() - start_time
 
@@ -140,6 +148,7 @@ Pipeline Execution Summary:
 🎯 Success Rate: 100%
 📊 Status: All stages completed successfully
         """)
+        profiling.write_summary(JOB_NAME, total_duration, status="ok")
 
     except Exception as e:
         total_duration = time.time() - total_start_time
@@ -149,6 +158,7 @@ Pipeline Execution Failed:
 ⏱️  Duration before failure: {total_duration / 60:.1f} minutes
 🚨 Error: {str(e)}
         """)
+        profiling.write_summary(JOB_NAME, total_duration, status="error", error_msg=str(e))
         raise
 
     finally:

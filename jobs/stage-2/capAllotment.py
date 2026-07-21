@@ -21,8 +21,11 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
+
+JOB_NAME = "capAllotment"
 
 
 class CAPAccessControlModel:
@@ -79,10 +82,12 @@ class CAPAccessControlModel:
             print(f"  Temp directory: {temp_dir}")
 
             # Read content parquet
-            content_df = spark.read.parquet(f"{warehouse_path}/{conf.dwCourseTable}")
+            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark):
+                content_df = spark.read.parquet(f"{warehouse_path}/{conf.dwCourseTable}")
 
             # Read access settings from cache
-            access_settings_df = spark.read.parquet(f"{output_path}/accessControlSettings")
+            with profiling.phase(JOB_NAME, "read", "access_settings_df", spark=spark):
+                access_settings_df = spark.read.parquet(f"{output_path}/accessControlSettings")
 
             # Filter Live CAPs from content
             cap_df = content_df.filter(
@@ -159,8 +164,9 @@ class CAPAccessControlModel:
             meta_cap_count = meta_distinct_caps.count()
             print(f"  Distinct CAPs in meta: {meta_cap_count:,}")
 
-            cap_allocation_df.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{conf.warehouseReportDir}/cap_allocation_meta")
+            with profiling.phase(JOB_NAME, "write", "cap_allocation_df", spark=spark):
+                cap_allocation_df.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+                    f"{conf.warehouseReportDir}/cap_allocation_meta")
             print(f"\nCAP allocation meta data written to warehouse folder")
 
             print("\n[2/5] Exploding criteria with userGroup tracking...")
@@ -191,7 +197,8 @@ class CAPAccessControlModel:
 
             # Write to temp parquet
             cap_criteria_path = f"{temp_dir}/cap_criteria.parquet"
-            cap_criteria_exploded.write.mode("overwrite").parquet(cap_criteria_path)
+            with profiling.phase(JOB_NAME, "write", "cap_criteria_exploded", spark=spark):
+                cap_criteria_exploded.write.mode("overwrite").parquet(cap_criteria_path)
 
             print(f"  Exploded criteria written to temp")
 
@@ -583,11 +590,13 @@ class CAPAccessControlModel:
             print("=" * 80 + "\n")
 
             # Read back to Spark
-            final_df = spark.read.parquet(output_file)
+            with profiling.phase(JOB_NAME, "read", "final_df", spark=spark):
+                final_df = spark.read.parquet(output_file)
             final_df_cap_count = final_df.select("cap_id").distinct().count()
             print(f"\n[VERIFICATION] Distinct CAPs in user wise df: {final_df_cap_count:,}")
-            final_df.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{conf.warehouseReportDir}/cap_allocation_user_wise")
+            with profiling.phase(JOB_NAME, "write", "final_df", spark=spark):
+                final_df.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+                    f"{conf.warehouseReportDir}/cap_allocation_user_wise")
             print(f"\nUser wise allocation parquet written to warehouse folder")
 
             # Cleanup
@@ -617,8 +626,9 @@ def main():
     config = create_config(config_dict)
 
     # Initialize Spark Session
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("CAP Access Control Model - DuckDB") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "15g") \
         .config("spark.driver.memory", "10g") \
@@ -631,6 +641,9 @@ def main():
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .config("spark.sql.parquet.enableVectorizedReader", "false") \
         .config("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
 
     # Create model instance
@@ -638,12 +651,18 @@ def main():
     print(f"[START] CAPAccessControlModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     model = CAPAccessControlModel()
-    model.process_data(spark, config)
-
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] CAPAccessControlModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] CAPAccessControlModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 

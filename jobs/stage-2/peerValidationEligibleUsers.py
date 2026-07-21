@@ -14,8 +14,11 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 # Reusable imports from userReport structure
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+
+JOB_NAME = "peerValidationEligibleUsers"
 
 class PeerValidationEligibleUsers:
     def __init__(self, spark: SparkSession, config):
@@ -57,29 +60,32 @@ class PeerValidationEligibleUsers:
     
     
     def load_parquet_data(self):
-        enrolmentDF = self.spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).select(
-            col("userID").alias("user_id"),
-            col("courseID").alias("course_id"),
-            col("firstCompletedOn"),
-            col("certificateID"),
-            col("dbCompletionStatus")
-        ).filter(
-            (col("certificateID").isNotNull()) &
-            (col("certificateID") != "") &
-            (col("dbCompletionStatus") == "2")
-        ).withColumn(
-            "firstCompletedOn_date",
-            to_date(date_format(col("firstCompletedOn"), ParquetFileConstants.DATE_TIME_FORMAT))
-        )
-        userOrgDF = self.spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE).select(
-            col("userID").alias("user_id"),
-            col("userOrgID"),
-            col("fullName")
-        )
-        courseDetailsDF = self.spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).select(
-            col("courseID").alias("course_id"),
-            col("courseName").alias("course_name")
-        )
+        with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=self.spark):
+            enrolmentDF = self.spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).select(
+                col("userID").alias("user_id"),
+                col("courseID").alias("course_id"),
+                col("firstCompletedOn"),
+                col("certificateID"),
+                col("dbCompletionStatus")
+            ).filter(
+                (col("certificateID").isNotNull()) &
+                (col("certificateID") != "") &
+                (col("dbCompletionStatus") == "2")
+            ).withColumn(
+                "firstCompletedOn_date",
+                to_date(date_format(col("firstCompletedOn"), ParquetFileConstants.DATE_TIME_FORMAT))
+            )
+        with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=self.spark):
+            userOrgDF = self.spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE).select(
+                col("userID").alias("user_id"),
+                col("userOrgID"),
+                col("fullName")
+            )
+        with profiling.phase(JOB_NAME, "read", "courseDetailsDF", spark=self.spark):
+            courseDetailsDF = self.spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).select(
+                col("courseID").alias("course_id"),
+                col("courseName").alias("course_name")
+            )
         return enrolmentDF, userOrgDF, courseDetailsDF
     
     def filter_forms_by_state(self, forms: DataFrame, formHistoryDF: DataFrame) -> DataFrame:
@@ -122,22 +128,25 @@ class PeerValidationEligibleUsers:
     def process_data(self,output_path):
         try:
             print("Step 1: Loading Forms State Data...")
-            notification_queue = self.read_postgres_table(self.config.dwpeerValidationNotificationQueue).select(col("notification_id"))
-            formHistoryDF = self.read_postgres_table(self.config.dwpeerValidationFormStateTable)
+            with profiling.phase(JOB_NAME, "read", "notification_queue", spark=self.spark):
+                notification_queue = self.read_postgres_table(self.config.dwpeerValidationNotificationQueue).select(col("notification_id"))
+            with profiling.phase(JOB_NAME, "read", "formHistoryDF", spark=self.spark):
+                formHistoryDF = self.read_postgres_table(self.config.dwpeerValidationFormStateTable)
             print("✅ Step 1 Complete")
             print("Step 2: Loading Forms Data from Elasticsearch...")
             context_type = ["peerValidationSurvey"]
             fields = ["formId","contextType","title","version", "status", "createdBy", "additionalProperties","createdFor","endDate","createdDate"]
             query = {"bool": {"must": [{"match": {"contextType": pc}} for pc in context_type]}}
 
-            formsDF = utils.read_elasticsearch_data_scroll(
-                self.spark,
-                self.config.sparkIGotElasticsearchConnectionHost,
-                self.config.sparkElasticsearchConnectionPort,
-                self.config.peerValidationFormIndex,
-                fields = fields,
-                query = query
-            )
+            with profiling.phase(JOB_NAME, "read", "formsDF", spark=self.spark):
+                formsDF = utils.read_elasticsearch_data_scroll(
+                    self.spark,
+                    self.config.sparkIGotElasticsearchConnectionHost,
+                    self.config.sparkElasticsearchConnectionPort,
+                    self.config.peerValidationFormIndex,
+                    fields = fields,
+                    query = query
+                )
             formsDF = formsDF.withColumn("endDate",from_unixtime(col("endDate")/1000).cast("timestamp")) \
                 .withColumn("createdDate",from_unixtime(col("createdDate")/1000).cast("timestamp")) \
                     .filter(col("status") == "Active") \
@@ -227,7 +236,8 @@ class PeerValidationEligibleUsers:
                 )
 
                 print(f"Step 8 Complete - {count} notifications inserted into queue.")
-                self.write_postgres_table(eligibleUsersDF, self.config.dwpeerValidationNotificationQueue, mode="append")
+                with profiling.phase(JOB_NAME, "db_write", "eligibleUsersDF", spark=self.spark):
+                    self.write_postgres_table(eligibleUsersDF, self.config.dwpeerValidationNotificationQueue, mode="append")
             else:
                 print("Step 8 Skipped - No eligible users found for notification.")
 
@@ -240,8 +250,9 @@ def main():
         'PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
 
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Peer Validation Eligible Users Model") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "18g") \
         .config("spark.driver.memory", "18g") \
@@ -253,6 +264,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
     start_time = datetime.now()
@@ -261,11 +275,18 @@ def main():
     config = create_config(config_dict)
     output_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
     model = PeerValidationEligibleUsers(spark,config)
-    model.process_data(output_path)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Peer Validation Eligible Users completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(output_path)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Peer Validation Eligible Users completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 if __name__ == "__main__":

@@ -15,9 +15,11 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 # Reusable imports from userReport structure
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 
+JOB_NAME = "courseCompletionSurveyReport"
 
 
 class CourseCompletionSurveyReport:
@@ -37,7 +39,8 @@ class CourseCompletionSurveyReport:
             today = self.get_date()
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             print("Stage 1: Loading course completion survey data...")
-            courseCompletionSurveyDF = spark.read.parquet(ParquetFileConstants.COURSE_COMPLETION_SURVEY_PARQUET_FILE).filter(col("formId").isin(config.completionSurveyFormIds))
+            with profiling.phase(JOB_NAME, "read", "courseCompletionSurveyDF", spark=spark):
+                courseCompletionSurveyDF = spark.read.parquet(ParquetFileConstants.COURSE_COMPLETION_SURVEY_PARQUET_FILE).filter(col("formId").isin(config.completionSurveyFormIds))
             print("Stage 1: Complete")
             # Stage 2: Exploding of Array
             print("Stage 2: Exploding the response Array")
@@ -93,11 +96,12 @@ class CourseCompletionSurveyReport:
                    col("version").alias("survey_version"),
                    col("data_last_generated_on"))
 
-            (warehouseDF.coalesce(1)
-               .write
-               .mode("overwrite")
-               .option("compression", "snappy")
-               .parquet(f"{config.warehouseReportDir}/{config.dwCourseCompletionSurveryTable}"))
+            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+                (warehouseDF.coalesce(1)
+                   .write
+                   .mode("overwrite")
+                   .option("compression", "snappy")
+                   .parquet(f"{config.warehouseReportDir}/{config.dwCourseCompletionSurveryTable}"))
 
             print("Stage4 : Complete")
 
@@ -106,7 +110,8 @@ class CourseCompletionSurveyReport:
                 f"{config.localReportDir}/{config.courseCompletionSurveyPath}/{today}",
                 'formId',
                 f"{config.localReportDir}/temp/course-completion-survey-report/{today}",
-                csv_filename=config.completionSurveyReport
+                csv_filename=config.completionSurveyReport,
+                job_name=JOB_NAME
                )
             total_time = time.time() - start_time
             print(
@@ -118,8 +123,9 @@ class CourseCompletionSurveyReport:
 
 def main():
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Course Completion Survey Report Model") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "18g") \
         .config("spark.driver.memory", "18g") \
@@ -131,6 +137,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
     start_time = datetime.now()
@@ -138,12 +147,19 @@ def main():
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = CourseCompletionSurveyReport()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Course completion survey completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Course completion survey completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 if __name__ == "__main__":
     main()
  

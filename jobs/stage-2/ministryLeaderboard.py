@@ -17,8 +17,11 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+
+JOB_NAME = "ministryLeaderboard"
 
 
 class MinistryLeaderBoardModel:
@@ -273,7 +276,8 @@ class MinistryLeaderBoardModel:
 
             # Read back to Spark for Cassandra write
             print("\n[6/6] Writing to Cassandra...")
-            leaderboard_df = spark.read.parquet(output_file)
+            with profiling.phase(JOB_NAME, "read", "leaderboard_df", spark=spark):
+                leaderboard_df = spark.read.parquet(output_file)
             final_df = leaderboard_df.select(
                 col("org_id"),
                 col("row_num").cast("integer"),
@@ -291,10 +295,11 @@ class MinistryLeaderBoardModel:
 
             # Use coalesce instead of repartition to avoid shuffling
             final_df = final_df.coalesce(10)
-            self.write_postgres_table(final_df, app_postgres_url,
-                                      "slw_mdo_top_learners",
-                                      config.appPostgresUsername,
-                                      config.appPostgresCredential)
+            with profiling.phase(JOB_NAME, "db_write", "final_df", spark=spark):
+                self.write_postgres_table(final_df, app_postgres_url,
+                                          "slw_mdo_top_learners",
+                                          config.appPostgresUsername,
+                                          config.appPostgresCredential)
             # Cleanup
             print("\nCleaning up temporary files...")
             if os.path.exists(temp_dir):
@@ -328,8 +333,9 @@ class MinistryLeaderBoardModel:
 def create_spark_session_with_packages(config):
     os.environ[
         'PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Ministry leaderboard Model - DuckDB") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "50") \
         .config("spark.executor.memory", "10g") \
         .config("spark.driver.memory", "10g") \
@@ -344,6 +350,9 @@ def create_spark_session_with_packages(config):
         .config("spark.cassandra.connection.timeoutMS", '180000') \
         .config("spark.cassandra.read.timeoutMS", '180000') \
         .config("spark.cassandra.output.concurrent.writes", "3") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     return spark
 
@@ -355,12 +364,19 @@ def main():
     config = create_config(config_dict)
     spark = create_spark_session_with_packages(config)
     model = MinistryLeaderBoardModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Ministry leaderboard completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Ministry leaderboard completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 
 if __name__ == "__main__":

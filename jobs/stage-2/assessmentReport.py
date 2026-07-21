@@ -19,8 +19,11 @@ from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
 from dfutil.assessment import assessmentDFUtil
 from dfutil.content import contentDFUtil
+from dfutil.utils import profiling
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
+
+JOB_NAME = "assessmentReport"
 
 
 class UserAssessmentModel:
@@ -45,10 +48,13 @@ class UserAssessmentModel:
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             # Stage 1: Load Assessment Data
             print("Stage 1: Loading assessment data...")
-            assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE).filter(
-                col("assessCategory").isin("Standalone Assessment"))
-            hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
-            organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "assessmentDF", spark=spark):
+                assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE).filter(
+                    col("assessCategory").isin("Standalone Assessment"))
+            with profiling.phase(JOB_NAME, "read", "hierarchyDF", spark=spark):
+                hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "organizationDF", spark=spark):
+                organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
             print("Stage 1: Complete")
 
             # Stage 2: Add Hierarchy Information
@@ -80,7 +86,8 @@ class UserAssessmentModel:
 
             # Stage 5: Process User Assessment Data
             print("Stage 5: Processing user assessment data...")
-            userAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "userAssessmentDF", spark=spark):
+                userAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE)
             userAssessChildrenDF = assessmentDFUtil.user_assessment_children_dataframe(userAssessmentDF,
                                                                                        assessChildrenDF)
             print("User Assessment Children DataFrame Schema:")
@@ -167,9 +174,10 @@ class UserAssessmentModel:
             # Stage 10: Generate Final Report
             print("Stage 10: Generating final report...")
             # Export report
-            dfexportutil.write_csv_per_mdo_id(original_df,
-                                              f"{config.localReportDir}/{config.standaloneAssessmentReportPath}/{today}",
-                                              'mdoid', csv_filename=config.userAssessmentReport)
+            with profiling.phase(JOB_NAME, "write", "original_df", spark=spark):
+                dfexportutil.write_csv_per_mdo_id(original_df,
+                                                  f"{config.localReportDir}/{config.standaloneAssessmentReportPath}/{today}",
+                                                  'mdoid', csv_filename=config.userAssessmentReport)
             print("Stage 10: Complete")
 
             # Performance Summary
@@ -182,23 +190,33 @@ class UserAssessmentModel:
 
 
 def main():
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("AssessmentReportGenerator") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.executor.memory", "12g") \
         .config("spark.driver.memory", "10g") \
         .config("spark.sql.shuffle.partitions", "64") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     print("Starting Assessment Report Generation...")
     start_time = time.time()
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = UserAssessmentModel()
-    model.process_report(spark, config)
-    end_time = time.time()
-    total_time = end_time - start_time
-
-    print(f"Assessment report generation completed in {total_time:.2f} seconds")
+    status, error_msg = "ok", None
+    try:
+        model.process_report(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = time.time()
+        total_time = end_time - start_time
+        print(f"Assessment report generation completed in {total_time:.2f} seconds")
+        profiling.write_summary(JOB_NAME, total_time, status=status, error_msg=error_msg)
     spark.stop()
 
 

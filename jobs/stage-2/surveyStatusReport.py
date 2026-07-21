@@ -30,6 +30,9 @@ from jobs.default_config import create_config
 from jobs.config import get_environment_config
 from dfutil.utils import utils
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
+
+JOB_NAME = "surveyStatusReport"
 
 
 class SurveyStatusReportModel:
@@ -67,13 +70,14 @@ class SurveyStatusReportModel:
             collection = self.config.reportConfigCollection
             
             # Read from MongoDB using Spark MongoDB connector
-            mongo_df = (self.spark.read
-                       .format("mongo")
-                       .option("uri", mongo_uri)
-                       .option("database", database)
-                       .option("collection", collection)
-                       .load())
-            
+            with profiling.phase(JOB_NAME, "read", "mongo_df", spark=self.spark):
+                mongo_df = (self.spark.read
+                           .format("mongo")
+                           .option("uri", mongo_uri)
+                           .option("database", database)
+                           .option("collection", collection)
+                           .load())
+
             # Filter by report name
             filtered_df = mongo_df.filter(col("report") == filter_name).orderBy(col("_id").desc())
             
@@ -121,8 +125,9 @@ class SurveyStatusReportModel:
             DataFrame with unique solution IDs and names
         """
         query = f'SELECT DISTINCT solutionId, solutionName FROM "{datasource}"'
-        result = utils.druidDFOption(query, self.config.mlSparkDruidRouterHost, limit=1000000)
-        
+        with profiling.phase(JOB_NAME, "read", "result", spark=self.spark):
+            result = utils.druidDFOption(query, self.config.mlSparkDruidRouterHost, limit=1000000)
+
         if result is None:
             return self.spark.createDataFrame([], StructType([
                 StructField("solutionId", StringType(), True),
@@ -150,13 +155,14 @@ class SurveyStatusReportModel:
             database = self.config.mlMongoDatabase
             collection = "solutions"
             
-            solutions_df = (self.spark.read
-                          .format("mongo")
-                          .option("uri", mongo_uri)
-                          .option("database", database)
-                          .option("collection", collection)
-                          .load())
-            
+            with profiling.phase(JOB_NAME, "read", "solutions_df", spark=self.spark):
+                solutions_df = (self.spark.read
+                              .format("mongo")
+                              .option("uri", mongo_uri)
+                              .option("database", database)
+                              .option("collection", collection)
+                              .load())
+
             # Filter by solution IDs
             filtered_solutions = solutions_df.filter(col("solutionId").isin(solution_ids))
             
@@ -323,12 +329,13 @@ class SurveyStatusReportModel:
             WHERE solutionId='{solution_id}'
             '''
             
-            survey_submission_ids_df = utils.druidDFOption(
-                survey_submission_id_query, 
-                self.config.mlSparkDruidRouterHost, 
-                limit=1000000
-            )
-            
+            with profiling.phase(JOB_NAME, "read", "survey_submission_ids_df", spark=self.spark):
+                survey_submission_ids_df = utils.druidDFOption(
+                    survey_submission_id_query,
+                    self.config.mlSparkDruidRouterHost,
+                    limit=1000000
+                )
+
             if survey_submission_ids_df is None or survey_submission_ids_df.count() == 0:
                 logger.warning(f"No survey submissions found for solutionId: {solution_id}")
                 return
@@ -356,12 +363,13 @@ class SurveyStatusReportModel:
                 '''
                 
                 # Query Druid for batch
-                batch_df = utils.druidDFOption(
-                    batch_query, 
-                    self.config.mlSparkDruidRouterHost, 
-                    limit=1000000
-                )
-                
+                with profiling.phase(JOB_NAME, "read", "batch_df", spark=self.spark):
+                    batch_df = utils.druidDFOption(
+                        batch_query,
+                        self.config.mlSparkDruidRouterHost,
+                        limit=1000000
+                    )
+
                 if batch_df is None:
                     logger.warning(f"Batch {batch_count}: No data returned")
                     continue
@@ -446,17 +454,19 @@ class SurveyStatusReportModel:
             
             # Write CSV in append mode if specified
             if append:
-                df.coalesce(1).write \
-                    .mode("append") \
-                    .option("header", "true") \
-                    .option("encoding", "UTF-8") \
-                    .csv(output_path)
+                with profiling.phase(JOB_NAME, "write", "df", spark=self.spark):
+                    df.coalesce(1).write \
+                        .mode("append") \
+                        .option("header", "true") \
+                        .option("encoding", "UTF-8") \
+                        .csv(output_path)
             else:
-                df.coalesce(1).write \
-                    .mode("overwrite") \
-                    .option("header", "true") \
-                    .option("encoding", "UTF-8") \
-                    .csv(output_path)
+                with profiling.phase(JOB_NAME, "write", "df", spark=self.spark):
+                    df.coalesce(1).write \
+                        .mode("overwrite") \
+                        .option("header", "true") \
+                        .option("encoding", "UTF-8") \
+                        .csv(output_path)
                     
         except Exception as e:
             logger.error(f"Error generating report: {str(e)}")
@@ -684,7 +694,7 @@ class SurveyStatusReportModel:
             # Zip and sync reports
             logger.info("Zipping the csv content folder and syncing to blob storage")
             local_report_path = f"{self.config.localReportDir}/{report_path}"
-            utils.zip_and_sync_reports(local_report_path, report_path,config=self.config)
+            utils.zip_and_sync_reports(local_report_path, report_path,config=self.config, job_name=JOB_NAME)
             logger.info("Successfully zipped folder and synced to blob storage")
             
         except Exception as e:
@@ -702,8 +712,9 @@ def main():
         '--packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 pyspark-shell'
     )
 
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName('Survey Status Report Model') \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .master("local[*]") \
         .config("spark.executor.memory", '15g') \
         .config("spark.driver.memory", '15g') \
@@ -716,13 +727,18 @@ def main():
         .config("spark.sql.parquet.compression.codec", 'snappy') \
         .config("spark.sql.legacy.json.allowEmptyString.enabled", "true") \
         .config("spark.sql.caseSensitive", "true") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
 
     config_dict = get_environment_config()
     config = create_config(config_dict)
     start_time = datetime.now()
     print(f"[START] SurveyStatusReportModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    
+
+    status, error_msg = "ok", None
+    duration = None
     try:
         model = SurveyStatusReportModel(spark, config)
         model.process_data()
@@ -730,12 +746,20 @@ def main():
         duration = end_time - start_time
         print(f"[END] SurveyStatusReportModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"[INFO] Total duration: {duration}")
+    except SystemExit as e:
+        status, error_msg = "error", f"SystemExit(code={e.code})"
+        duration = datetime.now() - start_time
+        raise
     except Exception as e:
+        status, error_msg = "error", str(e)
+        duration = datetime.now() - start_time
         print(f"[ERROR] Processing failed: {str(e)}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
     finally:
+        if duration is not None:
+            profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
         spark.stop()
 
 

@@ -27,6 +27,9 @@ from dfutil.dfexport import dfexportutil
 from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+from dfutil.utils import profiling
+
+JOB_NAME = "userEnrolment"
 
 
 class UserEnrolmentModel:
@@ -68,15 +71,16 @@ class UserEnrolmentModel:
             primary_categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
 
             # Load and cache base DataFrames that are used multiple times
-            unenrolmentAuditDF = spark.read.parquet(ParquetFileConstants.UNENROLMENT_AUDIT_PARQUET_FILE) \
-                .filter(col('action') == 'UNENROLL') \
-                .select(
-                col("userid").alias("userID"),
-                col("courseid").alias("courseID"),
-                col("batchid").alias("batchID"),
-                col("actiondate").alias("unenrolledOn"),
-                col("action")
-            ).cache()
+            with profiling.phase(JOB_NAME, "read", "unenrolmentAuditDF", spark=spark):
+                unenrolmentAuditDF = spark.read.parquet(ParquetFileConstants.UNENROLMENT_AUDIT_PARQUET_FILE) \
+                    .filter(col('action') == 'UNENROLL') \
+                    .select(
+                    col("userid").alias("userID"),
+                    col("courseid").alias("courseID"),
+                    col("batchid").alias("batchID"),
+                    col("actiondate").alias("unenrolledOn"),
+                    col("action")
+                ).cache()
 
             # A user/course/batch can have more than one unenrol record (e.g. unenrolled,
             # re-enrolled, unenrolled again). Keep only the most recent one so the join
@@ -93,10 +97,13 @@ class UserEnrolmentModel:
                 .drop("rn")
             )
 
-            enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
-            userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-            contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(
-                col("category").isin(primary_categories))
+            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark):
+                enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
+                userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+            with profiling.phase(JOB_NAME, "read", "contentOrgDF", spark=spark):
+                contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(
+                    col("category").isin(primary_categories))
 
             print("🔄 Processing platform enrolments...")
 
@@ -135,8 +142,10 @@ class UserEnrolmentModel:
             print("🔄 Processing external/marketplace enrolments...")
 
             # Load external data
-            externalEnrolmentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE).withColumn("badge_details", explode_outer("issued_badges"))
-            externalContentOrgDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "externalEnrolmentDF", spark=spark):
+                externalEnrolmentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE).withColumn("badge_details", explode_outer("issued_badges"))
+            with profiling.phase(JOB_NAME, "read", "externalContentOrgDF", spark=spark):
+                externalContentOrgDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
 
             # Process marketplace data and cache
             marketPlaceContentEnrolmentsDF = (
@@ -179,12 +188,13 @@ class UserEnrolmentModel:
             print("🔄 Processing ACBP data...")
 
             # Load and process ACBP data
-            acbpAllEnrolmentDF = (spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
-                                  .withColumn("courseID", explode(col("acbpCourseIDList"))) \
-                                  .withColumn("courseID", regexp_replace(col("courseID"), r"^\s*\[|\]\s*$|\s+", "")) \
-                                  .withColumn("liveCBPlan", lit(True))
-                                  .select(col("userOrgID"), col("courseID"), col("userID"),
-                                          col("designation"), col("liveCBPlan")))
+            with profiling.phase(JOB_NAME, "read", "acbpAllEnrolmentDF", spark=spark):
+                acbpAllEnrolmentDF = (spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
+                                      .withColumn("courseID", explode(col("acbpCourseIDList"))) \
+                                      .withColumn("courseID", regexp_replace(col("courseID"), r"^\s*\[|\]\s*$|\s+", "")) \
+                                      .withColumn("liveCBPlan", lit(True))
+                                      .select(col("userOrgID"), col("courseID"), col("userID"),
+                                              col("designation"), col("liveCBPlan")))
 
             # Join platform data with ACBP, then with the (de-duplicated) unenrolment audit
             # data, in a single chain so neither join gets thrown away.
@@ -526,8 +536,9 @@ class UserEnrolmentModel:
 
             print("📦 Writing warehouse data...")
             warehouseDF = platformWarehouseDF.unionByName(marketPlaceWarehouseDF)
-            warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
+            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+                warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+                    f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
 
             mdoReportDF.unpersist()
 
@@ -541,8 +552,9 @@ class UserEnrolmentModel:
 
 def main():
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("User Enrolment Report Model - Cached") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.master", "local[16]") \
         .config("spark.sql.shuffle.partitions", "240") \
         .config("spark.executor.memory", "30g") \
@@ -555,6 +567,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
 
@@ -563,11 +578,18 @@ def main():
     start_time = datetime.now()
     print(f"[START] UserEnrolmentModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = UserEnrolmentModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] UserEnrolmentModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] UserEnrolmentModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 

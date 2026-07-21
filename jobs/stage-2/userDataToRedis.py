@@ -13,6 +13,9 @@ from dfutil.content import contentDFUtil
 from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
+from dfutil.utils import profiling
+
+JOB_NAME = "userDataToRedis"
 
 
 class UserDataToRedisModel:
@@ -39,15 +42,16 @@ class UserDataToRedisModel:
         Args:
             spark: SparkSession
         """
-        try:            
-            userOrgDF = spark.read.parquet(ParquetFileConstants.USER_SELECT_PARQUET_FILE).select(
-                F.col("userID"),
-                F.col("firstName"),
-                F.col("userProfileImgUrl"),
-                F.col("userProfileStatus"),
-                F.col("professionalDetails.designation").alias("designation"),
-                F.col("employmentDetails.departmentName").alias("departmentName")
-            )
+        try:
+            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
+                userOrgDF = spark.read.parquet(ParquetFileConstants.USER_SELECT_PARQUET_FILE).select(
+                    F.col("userID"),
+                    F.col("firstName"),
+                    F.col("userProfileImgUrl"),
+                    F.col("userProfileStatus"),
+                    F.col("professionalDetails.designation").alias("designation"),
+                    F.col("employmentDetails.departmentName").alias("departmentName")
+                )
 
             # Repartition the larger DataFrame to improve parallelism
             repartitioned_user_data = userOrgDF.repartition(500)
@@ -99,9 +103,10 @@ class UserDataToRedisModel:
                     redis_client.close()
 
                 # Section to add User Details into Redis
-    
+
                 # Apply the function to each partition
-            repartitioned_user_data.foreachPartition(process_partition)
+            with profiling.phase(JOB_NAME, "redis_write", "userOrgDF", spark=spark):
+                repartitioned_user_data.foreachPartition(process_partition)
         except Exception as e:
             print(f"Error occurred during UserDataToRedisModel processing: {str(e)}")
             sys.exit(1)
@@ -109,8 +114,9 @@ class UserDataToRedisModel:
     
     
 def main():
+    run_id = profiling.get_run_id()
     spark =SparkSession.builder \
-        .appName("User Data To Redis") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "15g") \
         .config("spark.driver.memory", "15g") \
@@ -121,19 +127,32 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
-    
+
     # Create model instance
     start_time = datetime.now()
     print(f"[START] UserDataToRedisModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = UserDataToRedisModel()
-    model.process_data(spark,config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] UserDataToRedisModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark,config)
+    except SystemExit as e:
+        status, error_msg = "error", f"SystemExit: {e.code}"
+        raise
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] UserDataToRedisModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 if __name__ == "__main__":

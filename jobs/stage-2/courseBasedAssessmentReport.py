@@ -21,8 +21,11 @@ from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.assessment import assessmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+
+JOB_NAME = "courseBasedAssessmentReport"
 
 
 class CourseBasedAssessmentModel:
@@ -43,11 +46,14 @@ class CourseBasedAssessmentModel:
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
 
             print("Stage 1: Loading assessment data...")
-            assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE) \
-                .filter(
-                col("assessCategory").isin("Course", "Standalone Assessment", "Blended Program", "Curated Program"))
-            hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
-            organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "assessmentDF", spark=spark):
+                assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE) \
+                    .filter(
+                    col("assessCategory").isin("Course", "Standalone Assessment", "Blended Program", "Curated Program"))
+            with profiling.phase(JOB_NAME, "read", "hierarchyDF", spark=spark):
+                hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "organizationDF", spark=spark):
+                organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
 
             print("Stage 1: Complete")
 
@@ -73,10 +79,11 @@ class CourseBasedAssessmentModel:
 
             print("Stage 4: Complete")
             print("Stage 5: Processing user assessment data...")
-            userAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE) \
-                .filter(col("assessUserStatus") == "SUBMITTED") \
-                .withColumn("assessStartTime", col("assessStartTimestamp").cast("long")) \
-                .withColumn("assessEndTime", col("assessEndTimestamp").cast("long"))
+            with profiling.phase(JOB_NAME, "read", "userAssessmentDF", spark=spark):
+                userAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE) \
+                    .filter(col("assessUserStatus") == "SUBMITTED") \
+                    .withColumn("assessStartTime", col("assessStartTimestamp").cast("long")) \
+                    .withColumn("assessEndTime", col("assessEndTimestamp").cast("long"))
             # Window for basic assessment — rank by highest assessPassPercentageOriginal
             windowBasic = Window.partitionBy("userID", "assessChildID") \
                 .orderBy(col("assessOverallResult").desc())
@@ -206,7 +213,8 @@ class CourseBasedAssessmentModel:
                 col("userOrgID").alias("mdoid"),
                 col("Report_Last_Generated_On"))
 
-            oldAssessmentDetailsDF = spark.read.parquet(ParquetFileConstants.OLD_ASSESSMENT_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "oldAssessmentDetailsDF", spark=spark):
+                oldAssessmentDetailsDF = spark.read.parquet(ParquetFileConstants.OLD_ASSESSMENT_COMPUTED_PARQUET_FILE)
 
             fullReportOldDF = oldAssessmentDetailsDF \
                 .withColumn("MDO_Name", col("userOrgName")) \
@@ -333,7 +341,8 @@ class CourseBasedAssessmentModel:
                 .otherwise(col("mdoid"))
             )
 
-            finalAssessmentDF = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "finalAssessmentDF", spark=spark):
+                finalAssessmentDF = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
             finalAssessmentDF = finalAssessmentDF.join(userAssessmentDF,
                                                        finalAssessmentDF["Identifier"] == userAssessmentDF[
                                                            "assessChildID"], "inner") \
@@ -387,7 +396,8 @@ class CourseBasedAssessmentModel:
             warehouseDF = warehouseDF.unionByName(finalAssessmentDF)
             # request from anshu to replace assesment_type 'Course Assessment' with 'Comprehensive Assessment Progam'
             # when course sub type is 'Comprehensive Assessment Program'
-            assessmentMinPassDF = spark.read.parquet(f"{config.baseCachePath}/esCourseAssessment")
+            with profiling.phase(JOB_NAME, "read", "assessmentMinPassDF", spark=spark):
+                assessmentMinPassDF = spark.read.parquet(f"{config.baseCachePath}/esCourseAssessment")
 
             # assessment Minimum Pass DF
             assessMinPassDF = assessmentMinPassDF.filter(
@@ -471,11 +481,12 @@ class CourseBasedAssessmentModel:
             else:
                 print("ℹ️  No Non-Govt (VOLUNTEER) users found in this run — skipping Non-Govt CSV write.")
 
-            (warehouseDF.coalesce(1)
-             .write
-             .mode("overwrite")
-             .option("compression", "snappy")
-             .parquet(f"{config.warehouseReportDir}/{config.dwAssessmentTable}"))
+            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+                (warehouseDF.coalesce(1)
+                 .write
+                 .mode("overwrite")
+                 .option("compression", "snappy")
+                 .parquet(f"{config.warehouseReportDir}/{config.dwAssessmentTable}"))
 
             mdoReportDF.unpersist()
 
@@ -572,8 +583,9 @@ class CourseBasedAssessmentModel:
 
 def main():
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Course Based Assessment Report Model - Cached") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "30g") \
         .config("spark.driver.memory", "128g") \
@@ -585,6 +597,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
     start_time = datetime.now()
@@ -592,11 +607,18 @@ def main():
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = CourseBasedAssessmentModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Course based assessment completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Course based assessment completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 

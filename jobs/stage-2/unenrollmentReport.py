@@ -21,10 +21,13 @@ from dfutil.content import contentDFUtil
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 
 from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+
+JOB_NAME = "unenrollmentReport"
 
 
 class UserUnenrolmentModel:
@@ -80,23 +83,27 @@ class UserUnenrolmentModel:
                 PRIMARY KEY (userid, action, actiondate)
             ) WITH CLUSTERING ORDER BY (action ASC, actiondate DESC)
             '''
-            unenrolmentAuditDF = spark.read.parquet(ParquetFileConstants.UNENROLMENT_AUDIT_PARQUET_FILE) \
-            .filter(col('action') == 'UNENROLL') \
-            .select(
-                col("userid").alias("userID"),
-                col("courseid").alias("courseID"),
-                col("batchid").alias("batchID"),
-                col("actiondate").alias("unenrolledOn"),
-                col("comment").alias("unenrolmentComment"),
-                col("progress").alias("unenrolemntProgress"),
-                col("reason").alias("unenrolmentReason"),
-                col("updatedby").alias("unenrolmentUpdatedBy"),
-                col("action")
-            ).cache()
-            unenrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
-            userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-            contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(
-                col("category").isin(primary_categories))
+            with profiling.phase(JOB_NAME, "read", "unenrolmentAuditDF", spark=spark):
+                unenrolmentAuditDF = spark.read.parquet(ParquetFileConstants.UNENROLMENT_AUDIT_PARQUET_FILE) \
+                .filter(col('action') == 'UNENROLL') \
+                .select(
+                    col("userid").alias("userID"),
+                    col("courseid").alias("courseID"),
+                    col("batchid").alias("batchID"),
+                    col("actiondate").alias("unenrolledOn"),
+                    col("comment").alias("unenrolmentComment"),
+                    col("progress").alias("unenrolemntProgress"),
+                    col("reason").alias("unenrolmentReason"),
+                    col("updatedby").alias("unenrolmentUpdatedBy"),
+                    col("action")
+                ).cache()
+            with profiling.phase(JOB_NAME, "read", "unenrolmentDF", spark=spark):
+                unenrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
+            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
+                userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+            with profiling.phase(JOB_NAME, "read", "contentOrgDF", spark=spark):
+                contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(
+                    col("category").isin(primary_categories))
 
             print("🔄 Processing platform unenrolments...")
 
@@ -300,13 +307,15 @@ class UserUnenrolmentModel:
                 f"{config.localReportDir}/{config.userUnenrolmentReportPath}/{today}",
                 'mdoid',
                 f"{config.localReportDir}/temp/user_unenrolment_report/{today}",
-                csv_filename=config.userUnenrolmentReport
+                csv_filename=config.userUnenrolmentReport,
+                job_name=JOB_NAME
             )
 
             print("📦 Writing warehouse data...")
             warehouseDF = platformWarehouseDF
-            warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{config.warehouseReportDir}/{config.dwUnenrollmentsTable}")
+            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+                warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+                    f"{config.warehouseReportDir}/{config.dwUnenrollmentsTable}")
 
             print("✅ Processing completed successfully!")
 
@@ -318,8 +327,9 @@ class UserUnenrolmentModel:
 
 def main():
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("User Unenrolment Report Model - Cached") \
+        .appName(f'unenrollmentReport_{run_id}') \
         .config("spark.master", "local[16]") \
         .config("spark.sql.shuffle.partitions", "240") \
         .config("spark.executor.memory", "30g") \
@@ -332,6 +342,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
 
@@ -340,12 +353,19 @@ def main():
     start_time = datetime.now()
     print(f"[START] UserUnenrolmentModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = UserUnenrolmentModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] UserUnenrolmentModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] UserUnenrolmentModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 
 # Example usage:

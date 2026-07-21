@@ -8,23 +8,25 @@ import time
 from datetime import datetime
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+from dfutil.utils import profiling
 stage_1 = importlib.import_module('jobs.stage-1.prejoinData')
-stage_2a = importlib.import_module('jobs.stage-2.userReport') 
+stage_2a = importlib.import_module('jobs.stage-2.userReport')
 stage_2b = importlib.import_module('jobs.stage-2.assessmentReport')
 stage_2c = importlib.import_module('jobs.stage-2.kcmReport')
-stage_2d = importlib.import_module('jobs.stage-2.userEnrolment') 
+stage_2d = importlib.import_module('jobs.stage-2.userEnrolment')
 
 
 def execute_all_stages():
     """
     Executes all pipeline stages with minimal logging for optimal performance
     """
-    
+
+    run_id = profiling.get_run_id()
     print("Starting Multi-Stage Data Pipeline...")
-    print(f"Execution started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
+    print(f"Execution started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (profiling run_id={run_id})")
+
     total_start_time = time.time()
-    
+
     try:
         # Stage 1: Data Preparation
         print("\nStage 1: Data Preparation - Starting...")
@@ -34,7 +36,8 @@ def execute_all_stages():
         
         stage1_duration = time.time() - stage1_start
         print(f"Stage 1: Data Preparation - Complete ({stage1_duration:.2f}s)")
-        
+        profiling.write_summary("stage1_data_preparation", stage1_duration)
+
         # Stage 2A: User Analytics
         print("\nStage 2A: User Analytics - Starting...")
         stage2a_start = time.time()
@@ -43,7 +46,8 @@ def execute_all_stages():
         
         stage2a_duration = time.time() - stage2a_start
         print(f"Stage 2A: User Analytics - Complete ({stage2a_duration:.2f}s)")
-        
+        profiling.write_summary("stage2a_user_analytics", stage2a_duration)
+
         # Stage 2B: Assessment Analytics
         print("\nStage 2B: Assessment Analytics - Starting...")
         stage2b_start = time.time()
@@ -52,6 +56,7 @@ def execute_all_stages():
         
         stage2b_duration = time.time() - stage2b_start
         print(f"Stage 2B: Assessment Analytics - Complete ({stage2b_duration:.2f}s)")
+        profiling.write_summary("stage2b_assessment_analytics", stage2b_duration)
 
          # Stage 2C: KCM Model
         print("\nStage 2C: KCM Model - Starting...")
@@ -61,6 +66,7 @@ def execute_all_stages():
         
         stage2c_duration = time.time() - stage2c_start
         print(f"Stage 2C: KCM Model - Complete ({stage2c_duration:.2f}s)")
+        profiling.write_summary("stage2c_kcm_model", stage2c_duration)
 
           # Stage 2D: User Enrolment
         print("\nStage 2D: User Enrolment - Starting...")
@@ -70,7 +76,8 @@ def execute_all_stages():
         
         stage2d_duration = time.time() - stage2d_start
         print(f"Stage 2D: User Enrolment - Complete ({stage2d_duration:.2f}s)")
-        
+        profiling.write_summary("stage2d_user_enrolment", stage2d_duration)
+
         # Pipeline Summary
         total_duration = time.time() - total_start_time
         
@@ -83,7 +90,8 @@ def execute_all_stages():
         print(f"Total Duration: {total_duration:.2f}s ({total_duration/60:.1f} min)")
         print(f"Execution completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("Status: All stages completed successfully")
-        
+        profiling.write_summary("full_pipeline", total_duration, status="ok")
+
         return {
             "status": "SUCCESS",
             "total_duration": total_duration,
@@ -102,6 +110,7 @@ def execute_all_stages():
         print(f"\nPipeline execution failed after {total_duration:.2f}s")
         print(f"Error: {str(e)}")
         print(f"Failed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        profiling.write_summary("full_pipeline", total_duration, status="error", error_msg=str(e))
         raise e
 
 if __name__ == "__main__":

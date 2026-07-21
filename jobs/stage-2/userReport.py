@@ -23,17 +23,24 @@ from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.user import userDFUtil
 from util import schemas
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 
+JOB_NAME = "userReport"
+
 # Initialize Spark
+run_id = profiling.get_run_id()
 spark = SparkSession.builder \
-    .appName("UserReportGenerator") \
+    .appName(f'{JOB_NAME}_{run_id}') \
     .config("spark.executor.memory", "25g") \
     .config("spark.driver.memory", "15g") \
     .config("spark.sql.caseSensitive", "true") \
     .config("spark.sql.shuffle.partitions", "64") \
     .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+    .config("spark.eventLog.enabled", "true") \
+    .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+    .config("spark.eventLog.compress", "true") \
     .getOrCreate()
 
 print("✅ Spark Session initialized")
@@ -51,29 +58,33 @@ def processUserReport(config):
 
         # Step 1: Load User Master Data
         print("📊 Step 1: Loading User Master Data...")
-        user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+        with profiling.phase(JOB_NAME, "read", "user_master_df", spark=spark):
+            user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
         print("✅ Step 1 Complete")
 
         # Step 2: Load Enrolment Data
         print("📚 Step 2: Loading Enrolment Data...")
-        user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+        with profiling.phase(JOB_NAME, "read", "user_enrolment_df", spark=spark):
+            user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
 
-        user_badges = (spark.read.parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE)
-                       .select(col("userID").alias("user_id"), "badge_id")
-                       .groupBy("user_id").agg(expr("count(distinct badge_id)").alias("total_badges_earned")))
+        with profiling.phase(JOB_NAME, "read", "user_badges", spark=spark):
+            user_badges = (spark.read.parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE)
+                           .select(col("userID").alias("user_id"), "badge_id")
+                           .groupBy("user_id").agg(expr("count(distinct badge_id)").alias("total_badges_earned")))
         print("✅ Step 2 Complete")
 
         # Step 3: Load Content Duration
         print("📖 Step 3: Loading Content Duration Data...")
-        content_duration_df = (
-            spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
-            .filter((col("courseCategory") == "Course"))
-            .select(
-                col("courseID").alias("content_id"),
-                col("courseDuration").cast("double"),
-                col("category")
+        with profiling.phase(JOB_NAME, "read", "content_duration_df", spark=spark):
+            content_duration_df = (
+                spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+                .filter((col("courseCategory") == "Course"))
+                .select(
+                    col("courseID").alias("content_id"),
+                    col("courseDuration").cast("double"),
+                    col("category")
+                )
             )
-        )
         print("✅ Step 3 Complete")
 
         # Step 4: Add User Status Classification
@@ -161,27 +172,29 @@ def processUserReport(config):
 
         # Step 9: Export Warehouse Data
         print("📁 Step 9: Exporting Warehouse Data...")
-        warehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(
-            f"{config.warehouseReportDir}/{config.dwUserTable}")
+        with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+            warehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(
+                f"{config.warehouseReportDir}/{config.dwUserTable}")
         print("✅ Step 9 Complete")
 
 
         # Step 10: Process User Extended Profile Data
         print("🔍 Step 10: Processing User Extended Profile Data...")
         # Load user extended profile data
-        user_extended_profile_df = (
-            spark.read.parquet(ParquetFileConstants.USER_EXTENDED_PROFILE)
-            .filter(col("contexttype") == "orgAdditionalProperties")
-            .withColumnRenamed("userid", "userID")
-            .withColumn("contextDataArray", from_json(col("contextdata"), ArrayType(schemas.context_data_schema)))
-            .withColumn("contextData", explode(col("contextDataArray")))
-            .select(
-                col("userID"),
-                col("contexttype").alias("contextType"),
-                col("contextData"),
-                col("contextData.organisationId").alias("mdo_id")
+        with profiling.phase(JOB_NAME, "read", "user_extended_profile_df", spark=spark):
+            user_extended_profile_df = (
+                spark.read.parquet(ParquetFileConstants.USER_EXTENDED_PROFILE)
+                .filter(col("contexttype") == "orgAdditionalProperties")
+                .withColumnRenamed("userid", "userID")
+                .withColumn("contextDataArray", from_json(col("contextdata"), ArrayType(schemas.context_data_schema)))
+                .withColumn("contextData", explode(col("contextDataArray")))
+                .select(
+                    col("userID"),
+                    col("contexttype").alias("contextType"),
+                    col("contextData"),
+                    col("contextData.organisationId").alias("mdo_id")
+                )
             )
-        )
 
         # Step 1: Explode customFieldValues and handle based on type
         exploded_df_base = (
@@ -235,20 +248,21 @@ def processUserReport(config):
         )
 
         # Write to warehouse tables
-        exploded_df \
-            .select(
-            col("userID").alias("user_id"),
-            col("mdo_id"),
-            col("attribute_name"),
-            col("attribute_value")
-        ) \
-            .coalesce(1) \
-            .write \
-            .mode("overwrite") \
-            .option("compression", "snappy") \
-            .parquet(
-            f"{config.warehouseReportDir}/userCustomFields"
-        )
+        with profiling.phase(JOB_NAME, "write", "exploded_df", spark=spark):
+            exploded_df \
+                .select(
+                col("userID").alias("user_id"),
+                col("mdo_id"),
+                col("attribute_name"),
+                col("attribute_value")
+            ) \
+                .coalesce(1) \
+                .write \
+                .mode("overwrite") \
+                .option("compression", "snappy") \
+                .parquet(
+                f"{config.warehouseReportDir}/userCustomFields"
+            )
 
         # Cache the exploded data for reuse
         exploded_cached = exploded_df.cache()
@@ -501,15 +515,27 @@ def processUserReport(config):
 
         max_workers = min(8, len(tasks)) if tasks else 1
 
-        if max_workers > 1 and len(tasks) > 3:
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_task = {
-                    executor.submit(process_single_organization, org_id, slim_df, base_out, label, suffix): (org_id, suffix)
-                    for (org_id, slim_df, label, suffix) in tasks
-                }
+        with profiling.phase(JOB_NAME, "write", "mdo_wise_custom_reports", spark=spark):
+            if max_workers > 1 and len(tasks) > 3:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_task = {
+                        executor.submit(process_single_organization, org_id, slim_df, base_out, label, suffix): (org_id, suffix)
+                        for (org_id, slim_df, label, suffix) in tasks
+                    }
 
-                for future in as_completed(future_to_task):
-                    result = future.result()
+                    for future in as_completed(future_to_task):
+                        result = future.result()
+
+                        if result['success']:
+                            successful_orgs += 1
+                            total_rows += result['rows_written']
+                            print(f"  ✅ {result['org_id']}: {result['rows_written']:,} rows, {result['custom_fields_count']} custom fields")
+                        else:
+                            failed_orgs += 1
+                            print(f"  ❌ {result['org_id']}: {result['error']}")
+            else:
+                for (org_id, slim_df, label, suffix) in tasks:
+                    result = process_single_organization(org_id, slim_df, base_out, label, suffix)
 
                     if result['success']:
                         successful_orgs += 1
@@ -518,17 +544,6 @@ def processUserReport(config):
                     else:
                         failed_orgs += 1
                         print(f"  ❌ {result['org_id']}: {result['error']}")
-        else:
-            for (org_id, slim_df, label, suffix) in tasks:
-                result = process_single_organization(org_id, slim_df, base_out, label, suffix)
-
-                if result['success']:
-                    successful_orgs += 1
-                    total_rows += result['rows_written']
-                    print(f"  ✅ {result['org_id']}: {result['rows_written']:,} rows, {result['custom_fields_count']} custom fields")
-                else:
-                    failed_orgs += 1
-                    print(f"  ❌ {result['org_id']}: {result['error']}")
 
         print(f"Done: {successful_orgs} successful, {failed_orgs} failed, {total_rows:,} total rows")
 
@@ -547,11 +562,18 @@ def main():
     config = create_config(config_dict)
     start_time = datetime.now()
     print(f"[START] UserReport processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    processUserReport(config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] UserReport completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        processUserReport(config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] UserReport completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 if __name__ == "__main__":

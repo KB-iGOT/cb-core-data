@@ -10,6 +10,7 @@ import shutil
 import time
 import duckdb
 from dfutil.user.userDFUtil import exportDFToParquet
+from dfutil.utils import profiling
 from pyspark.sql.types import *
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
@@ -42,7 +43,8 @@ def preComputeACBPData(spark):
     spark.conf.set("spark.sql.parquet.enableVectorizedReader", "false")
     spark.conf.set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS")
 
-    acbp_df = spark.read.parquet(ParquetFileConstants.ACBP_PARQUET_FILE)
+    with profiling.phase("stage1_dfutil", "read", "acbp_read", spark=spark):
+        acbp_df = spark.read.parquet(ParquetFileConstants.ACBP_PARQUET_FILE)
 
     acbp_df = acbp_df.withColumn("contextdata",
                                  F.regexp_replace(col("contextdata"),
@@ -116,7 +118,8 @@ def preComputeACBPData(spark):
     total_plans = final_df.count()
     print(f"  Total plans (final_df): {total_plans:,} rows")
 
-    exportDFToParquet(final_df, ParquetFileConstants.ACBP_SELECT_FILE)
+    exportDFToParquet(final_df, ParquetFileConstants.ACBP_SELECT_FILE,
+                       job_name="stage1_dfutil", stage_name="acbp_write")
 
     live_acbp_df = final_df.filter(col("acbpStatus") == "Live")
     live_count = live_acbp_df.count()

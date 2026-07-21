@@ -25,11 +25,14 @@ from dfutil.utils import utils
 from dfutil.utils.redis import Redis
 from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 from util import schemas
 
 from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+
+JOB_NAME = "dsrComputation"
 
 
 # ---------------------------------------------------------------------------
@@ -71,10 +74,11 @@ class DSRComputationModel:
         try:
             output_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
 
-            userDF = spark.read.option("recursiveFileLookup", "true").parquet(ParquetFileConstants.USER_PARQUET_FILE) \
-                .withColumnRenamed("id", "user_id") \
-                .withColumnRenamed("rootorgid", "mdo_id") \
-                .withColumn("userCreatedTimestamp", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ").cast("long"))
+            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark):
+                userDF = spark.read.option("recursiveFileLookup", "true").parquet(ParquetFileConstants.USER_PARQUET_FILE) \
+                    .withColumnRenamed("id", "user_id") \
+                    .withColumnRenamed("rootorgid", "mdo_id") \
+                    .withColumn("userCreatedTimestamp", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ").cast("long"))
 
             # ------------------------------------------------------------------ #
             # Exclude VOLUNTEER (Non-Govt) users from every metric in this report.
@@ -122,11 +126,16 @@ class DSRComputationModel:
 
             userDF = userDF.filter(~is_volunteer_expr).drop("is_volunteer_by_designation")
 
-            eventsEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
-            contentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            externalContentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
-            contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            externalContentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "eventsEnrolmentDataDF", spark=spark):
+                eventsEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "contentEnrolmentDataDF", spark=spark):
+                contentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "externalContentEnrolmentDataDF", spark=spark):
+                externalContentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
+                contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "externalContentDF", spark=spark):
+                externalContentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
 
             # Event enrolments aren't joined against userDF anywhere below (unlike content
             # enrolments), so VOLUNTEER exclusion has to be applied explicitly here via an
@@ -243,7 +252,8 @@ class DSRComputationModel:
             # ------------------------------------------------------------------ #
             # Live courses — reuse single filtered DF for count, publishers, duration
             # ------------------------------------------------------------------ #
-            contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
+                contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
 
             liveCoursesDF = contentDF \
                 .filter(col("content_status").isin("Live", "LIVE")) \
@@ -304,8 +314,9 @@ class DSRComputationModel:
                     }
                 }
             }
-            response = requests.post(es_url, json=count_query, headers={"Content-Type": "application/json"})
-            total_orgs = response.json()["count"]
+            with profiling.phase(JOB_NAME, "read", "es_org_count", spark=spark):
+                response = requests.post(es_url, json=count_query, headers={"Content-Type": "application/json"})
+                total_orgs = response.json()["count"]
 
             #total_orgs = org_df.filter(col("status") == 1).count()
             dept_org_onboarded = total_orgs - CENTRAL_MINISTRIES_COUNT - STATE_UT_COUNT
@@ -326,9 +337,10 @@ class DSRComputationModel:
                              AND __time >= TIME_FLOOR(CURRENT_TIMESTAMP + INTERVAL '5:30' HOUR TO MINUTE - INTERVAL '30' DAY, 'P1D')
                              AND __time <  TIME_FLOOR(CURRENT_TIMESTAMP + INTERVAL '5:30' HOUR TO MINUTE, 'P1D')"""
 
-            mau_df = druidDFOption(mau_query, config.sparkDruidRouterHost, limit=10000000, spark=spark)
-            if mau_df is None:
-                mau_df = self._empty_df(spark, "actor_id")
+            with profiling.phase(JOB_NAME, "read", "mau_df", spark=spark):
+                mau_df = druidDFOption(mau_query, config.sparkDruidRouterHost, limit=10000000, spark=spark)
+                if mau_df is None:
+                    mau_df = self._empty_df(spark, "actor_id")
 
             mau_govt_only_df = mau_df.join(volunteerUserIdsDF, ["actor_id"], "left_anti")
             total_mau = mau_govt_only_df.select(countDistinct("actor_id").alias("activeCount")).first()["activeCount"]
@@ -346,16 +358,17 @@ class DSRComputationModel:
                                                  AND __time >= TIME_FLOOR(CURRENT_TIMESTAMP + INTERVAL '5:30' HOUR TO MINUTE - INTERVAL '24' HOUR, 'P1D')
                                                  AND __time <  TIME_FLOOR(CURRENT_TIMESTAMP + INTERVAL '5:30' HOUR TO MINUTE, 'P1D')"""
 
-            user_loggedin_yesterday_df = druidDFOption(
-                user_loggedin_yesterday_query,
-                config.sparkDruidRouterHost,
-                limit=10000000,
-                spark=spark
-            )
-            if user_loggedin_yesterday_df is None:
-                user_loggedin_yesterday_df = spark.createDataFrame(
-                    [], StructType([StructField("actor_id", StringType(), True)])
+            with profiling.phase(JOB_NAME, "read", "user_loggedin_yesterday_df", spark=spark):
+                user_loggedin_yesterday_df = druidDFOption(
+                    user_loggedin_yesterday_query,
+                    config.sparkDruidRouterHost,
+                    limit=10000000,
+                    spark=spark
                 )
+                if user_loggedin_yesterday_df is None:
+                    user_loggedin_yesterday_df = spark.createDataFrame(
+                        [], StructType([StructField("actor_id", StringType(), True)])
+                    )
 
             user_loggedin_yesterday_govt_only_df = user_loggedin_yesterday_df.join(
                 volunteerUserIdsDF, ["actor_id"], "left_anti"
@@ -378,8 +391,9 @@ class DSRComputationModel:
 def main():
     os.environ[
         'PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("DSR computation Model") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.executor.memory", "90g") \
         .config("spark.driver.memory", "20g") \
         .config("spark.memory.fraction", "0.8") \
@@ -391,6 +405,9 @@ def main():
         .config("spark.sql.adaptive.skewJoin.enabled", "true") \
         .config("spark.sql.adaptive.advisoryPartitionSizeInBytes", "134217728") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
 
     config_dict = get_environment_config()
@@ -398,12 +415,19 @@ def main():
     start_time = datetime.now()
     print(f"[START] DSR computation processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = DSRComputationModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] DSR computation processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] DSR computation processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 
 if __name__ == "__main__":

@@ -17,6 +17,9 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
+from dfutil.utils import profiling
+
+JOB_NAME = "programProgressSyncList_v5"
 
 
 class ContentStatusValidationModel:
@@ -208,34 +211,42 @@ class ContentStatusValidationModel:
             print(f"  Temp directory: {temp_dir}")
 
             # Read and export enrollment data - ALL enrollments (for metric 3)
-            enrollment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "enrollment_df", spark=spark):
+                enrollment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE)
             enrollment_path = f"{temp_dir}/enrollment.parquet"
-            enrollment_df.select("userid", "courseid", "batchid", "courseContentStatus", "certificateID").write.mode(
-                "overwrite").parquet(enrollment_path)
+            with profiling.phase(JOB_NAME, "write", "enrollment_df", spark=spark):
+                enrollment_df.select("userid", "courseid", "batchid", "courseContentStatus", "certificateID").write.mode(
+                    "overwrite").parquet(enrollment_path)
             print(f"  ✓ Exported enrollment data")
 
             # Read consumption from cache
             print(f"  ✓ Using cached consumption data")
-            consumption_df = spark.read.parquet(cached_consumption_path)
+            with profiling.phase(JOB_NAME, "read", "consumption_df", spark=spark):
+                consumption_df = spark.read.parquet(cached_consumption_path)
             consumption_path = f"{temp_dir}/consumption.parquet"
-            consumption_df.select("userid", "courseid", "batchid", "contentid", "status").write.mode(
-                "overwrite").parquet(consumption_path)
+            with profiling.phase(JOB_NAME, "write", "consumption_df", spark=spark):
+                consumption_df.select("userid", "courseid", "batchid", "contentid", "status").write.mode(
+                    "overwrite").parquet(consumption_path)
             print(f"  ✓ Exported consumption data")
 
             # Read and export content warehouse
-            content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark):
+                content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
             content_path = f"{temp_dir}/content.parquet"
-            content_warehouse_df.filter(col("content_type").like("%Program%")).select("content_id",
-                                                                                      "content_sub_type").write.mode(
-                "overwrite").parquet(content_path)
+            with profiling.phase(JOB_NAME, "write", "content_warehouse_df", spark=spark):
+                content_warehouse_df.filter(col("content_type").like("%Program%")).select("content_id",
+                                                                                          "content_sub_type").write.mode(
+                    "overwrite").parquet(content_path)
             print(f"  ✓ Exported program IDs")
 
             # CHANGE 2: Export content_resource with resource_type filter
             content_resource_path = f"{config.warehouseReportDir}/{config.dwContentResourceTable}"
-            content_resource_df = spark.read.parquet(content_resource_path)
+            with profiling.phase(JOB_NAME, "read", "content_resource_df", spark=spark):
+                content_resource_df = spark.read.parquet(content_resource_path)
             resource_path = f"{temp_dir}/content_resource.parquet"
-            content_resource_df.select("content_id", "resource_id", "resource_type").write.mode("overwrite").parquet(
-                resource_path)
+            with profiling.phase(JOB_NAME, "write", "content_resource_df", spark=spark):
+                content_resource_df.select("content_id", "resource_id", "resource_type").write.mode("overwrite").parquet(
+                    resource_path)
             print(f"  ✓ Exported content_resource data")
 
             print("\n[STEP 2] Initializing DuckDB...")
@@ -578,7 +589,8 @@ class ContentStatusValidationModel:
 
             # Read back into Spark BEFORE cleanup
             if mismatch_count > 0:
-                program_mismatches_df = spark.read.parquet(output_path)
+                with profiling.phase(JOB_NAME, "read", "program_mismatches_df", spark=spark):
+                    program_mismatches_df = spark.read.parquet(output_path)
                 program_mismatches_df.cache()
                 actual_count = program_mismatches_df.count()
                 print(f"  ✓ Loaded {actual_count:,} mismatches into Spark")
@@ -597,7 +609,8 @@ class ContentStatusValidationModel:
 
             # Read metric 3 results
             if cert_mismatch_count > 0:
-                cert_mismatch_df = spark.read.parquet(metric3_output_path)
+                with profiling.phase(JOB_NAME, "read", "cert_mismatch_df", spark=spark):
+                    cert_mismatch_df = spark.read.parquet(metric3_output_path)
                 cert_mismatch_df.cache()
                 cert_mismatch_df.count()
             else:
@@ -605,7 +618,8 @@ class ContentStatusValidationModel:
 
             # Read metric 1 results
             if metric1_count > 0:
-                metric1_df = spark.read.parquet(metric1_output_path)
+                with profiling.phase(JOB_NAME, "read", "metric1_df", spark=spark):
+                    metric1_df = spark.read.parquet(metric1_output_path)
                 metric1_df.cache()
                 metric1_df.count()
             else:
@@ -653,28 +667,36 @@ class ContentStatusValidationModel:
             os.makedirs(temp_dir, exist_ok=True)
 
             # Export required data
-            enrollment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "enrollment_df", spark=spark):
+                enrollment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE)
             enrollment_path = f"{temp_dir}/enrollment.parquet"
-            enrollment_df.select("userid", "courseid", "batchid", "certificateID",
-                                 "langCourseContentStatus").write.mode("overwrite").parquet(enrollment_path)
+            with profiling.phase(JOB_NAME, "write", "enrollment_df", spark=spark):
+                enrollment_df.select("userid", "courseid", "batchid", "certificateID",
+                                     "langCourseContentStatus").write.mode("overwrite").parquet(enrollment_path)
 
-            consumption_df = spark.read.parquet(cached_consumption_path)
+            with profiling.phase(JOB_NAME, "read", "consumption_df", spark=spark):
+                consumption_df = spark.read.parquet(cached_consumption_path)
             consumption_path = f"{temp_dir}/consumption.parquet"
-            consumption_df.select("userid", "courseid", "batchid", "contentid", "status", "language").write.mode(
-                "overwrite").parquet(consumption_path)
+            with profiling.phase(JOB_NAME, "write", "consumption_df", spark=spark):
+                consumption_df.select("userid", "courseid", "batchid", "contentid", "status", "language").write.mode(
+                    "overwrite").parquet(consumption_path)
 
             # Export content warehouse with content_sub_type
-            content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark):
+                content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
             content_path = f"{temp_dir}/content.parquet"
-            content_warehouse_df.filter(col("content_type") == "Course").select("content_id",
-                                                                                "content_sub_type").write.mode(
-                "overwrite").parquet(content_path)
+            with profiling.phase(JOB_NAME, "write", "content_warehouse_df", spark=spark):
+                content_warehouse_df.filter(col("content_type") == "Course").select("content_id",
+                                                                                    "content_sub_type").write.mode(
+                    "overwrite").parquet(content_path)
 
             # Export content_resource to get all children of courses
             content_resource_path = f"{config.warehouseReportDir}/{config.dwContentResourceTable}"
-            content_resource_df = spark.read.parquet(content_resource_path)
+            with profiling.phase(JOB_NAME, "read", "content_resource_df", spark=spark):
+                content_resource_df = spark.read.parquet(content_resource_path)
             resource_path = f"{temp_dir}/content_resource.parquet"
-            content_resource_df.select("content_id", "resource_id").write.mode("overwrite").parquet(resource_path)
+            with profiling.phase(JOB_NAME, "write", "content_resource_df", spark=spark):
+                content_resource_df.select("content_id", "resource_id").write.mode("overwrite").parquet(resource_path)
 
             # DuckDB processing
             db_path = f"{temp_dir}/course_cert.duckdb"
@@ -784,12 +806,14 @@ class ContentStatusValidationModel:
 
             # Read back into Spark and join with content to get content_sub_type
             if metric2_count > 0:
-                metric2_df = spark.read.parquet(metric2_output_path)
+                with profiling.phase(JOB_NAME, "read", "metric2_df", spark=spark):
+                    metric2_df = spark.read.parquet(metric2_output_path)
 
                 # Join with content warehouse to get content_sub_type
-                content_with_subtype = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE) \
-                    .filter(col("content_type") == "Course") \
-                    .select("content_id", "content_sub_type")
+                with profiling.phase(JOB_NAME, "read", "content_with_subtype", spark=spark):
+                    content_with_subtype = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE) \
+                        .filter(col("content_type") == "Course") \
+                        .select("content_id", "content_sub_type")
 
                 metric2_df = metric2_df.join(
                     content_with_subtype,
@@ -843,12 +867,14 @@ class ContentStatusValidationModel:
             cache_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
             cached_consumption_path = f"{cache_path}/consumption_v2"
             print(f"  → Reading consumption from Cassandra (this will take time)...")
-            consumption_df = spark.read \
-                .format("org.apache.spark.sql.cassandra") \
-                .options(table="user_content_consumption_v2", keyspace="sunbird_courses") \
-                .load()
+            with profiling.phase(JOB_NAME, "read", "consumption_df", spark=spark):
+                consumption_df = spark.read \
+                    .format("org.apache.spark.sql.cassandra") \
+                    .options(table="user_content_consumption_v2", keyspace="sunbird_courses") \
+                    .load()
             print(f"  → Caching consumption to: {cached_consumption_path}")
-            consumption_df.write.mode("overwrite").parquet(cached_consumption_path)
+            with profiling.phase(JOB_NAME, "write", "consumption_df", spark=spark):
+                consumption_df.write.mode("overwrite").parquet(cached_consumption_path)
             print(f"  ✓ Cached consumption data")
 
             '''content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
@@ -954,8 +980,9 @@ def main():
     config_dict = get_environment_config()
     config = create_config(config_dict)
 
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Content Status Validation - Courses & Programs") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "15g") \
         .config("spark.driver.memory", "10g") \
@@ -969,6 +996,9 @@ def main():
         .config("spark.cassandra.input.fetch.sizeInRows", "1000") \
         .config("spark.cassandra.input.split.sizeInMB", "64") \
         .config("spark.cassandra.input.consistency.level", "LOCAL_ONE") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
 
     start_time = datetime.now()
@@ -977,17 +1007,23 @@ def main():
     print(f"{'=' * 80}\n")
 
     model = ContentStatusValidationModel()
-    model.process_data(spark, config)
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
 
-    end_time = datetime.now()
-    duration = end_time - start_time
+        print(f"\n{'=' * 80}")
+        print(f"JOB COMPLETED: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Total duration: {duration}")
+        print(f"{'=' * 80}\n")
 
-    print(f"\n{'=' * 80}")
-    print(f"JOB COMPLETED: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Total duration: {duration}")
-    print(f"{'=' * 80}\n")
-
-    spark.stop()
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 
 if __name__ == "__main__":
