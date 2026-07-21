@@ -12,13 +12,17 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from dfutil.utils import utils
 from dfutil.utils.redis import Redis
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 
 
 from constants.ParquetFileConstants import ParquetFileConstants
 
-class MinistryMetricsModel:    
+JOB_NAME = "ministryMetrics"
+
+
+class MinistryMetricsModel:
     def __init__(self):
         self.class_name = "org.ekstep.analytics.dashboard.report.MinistryMetricsModel"
         
@@ -31,18 +35,22 @@ class MinistryMetricsModel:
     
     def process_data(self, spark,conf):
         try:
-            print("📥 Loading base DataFrames...")            
-            enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            org_hierarchyDF = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE)
+            print("📥 Loading base DataFrames...")
+            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark):
+                enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "org_hierarchyDF", spark=spark):
+                org_hierarchyDF = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE)
             ministryNamesDF = org_hierarchyDF.select(col("mdo_name").alias("ministry"), col("mdo_id").alias("ministryID"))
-            userDF= spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE) \
-            .withColumnRenamed("userOrgID", "user_org_id") \
-                      .withColumnRenamed("userID", "user_ID") \
-                      .filter(col("userStatus") == 1)
-            
+            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark):
+                userDF= spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE) \
+                .withColumnRenamed("userOrgID", "user_org_id") \
+                          .withColumnRenamed("userID", "user_ID") \
+                          .filter(col("userStatus") == 1)
+
             # Druid query for active users
             query = """SELECT DISTINCT(uid) as user_ID FROM "summary-events" WHERE dimensions_type='app' AND __time > CURRENT_TIMESTAMP - INTERVAL '24' HOUR"""
-            usersLoggedInLast24HrsDF = utils.druidDFOption(query, conf.sparkDruidRouterHost)
+            with profiling.phase(JOB_NAME, "read", "usersLoggedInLast24HrsDF", spark=spark):
+                usersLoggedInLast24HrsDF = utils.druidDFOption(query, conf.sparkDruidRouterHost)
             twentyFoutHrActiveUserDF = userDF.join(usersLoggedInLast24HrsDF, ["user_ID"], "inner")
             joined24HrActiveUserDF = twentyFoutHrActiveUserDF.join(
                 org_hierarchyDF, 
@@ -150,10 +158,14 @@ class MinistryMetricsModel:
                 .join(ministryNamesDF, ["ministry"], "inner")
                 .select(col("ministryID"), coalesce(col("enrolmentCount"), lit(0)).alias("enrolmentCount")))
             
-            Redis.dispatchDataFrame("dashboard_rolled_up_login_percent_last_24_hrs", finalActiveUserCountDF, "ministryID", "activeUserCount",conf=conf)
-            Redis.dispatchDataFrame("dashboard_rolled_up_user_count", finalUserCountDF, "ministryID", "userCount",conf=conf)
-            Redis.dispatchDataFrame("dashboard_rolled_up_certificates_generated_count", finalCertificateCountDF, "ministryID", "certificateCount",conf=conf)
-            Redis.dispatchDataFrame("dashboard_rolled_up_enrolment_content_count",finalEnrolmentCountDF, "ministryID", "enrolmentCount",conf=conf)
+            with profiling.phase(JOB_NAME, "redis_write", "finalActiveUserCountDF", spark=spark):
+                Redis.dispatchDataFrame("dashboard_rolled_up_login_percent_last_24_hrs", finalActiveUserCountDF, "ministryID", "activeUserCount",conf=conf)
+            with profiling.phase(JOB_NAME, "redis_write", "finalUserCountDF", spark=spark):
+                Redis.dispatchDataFrame("dashboard_rolled_up_user_count", finalUserCountDF, "ministryID", "userCount",conf=conf)
+            with profiling.phase(JOB_NAME, "redis_write", "finalCertificateCountDF", spark=spark):
+                Redis.dispatchDataFrame("dashboard_rolled_up_certificates_generated_count", finalCertificateCountDF, "ministryID", "certificateCount",conf=conf)
+            with profiling.phase(JOB_NAME, "redis_write", "finalEnrolmentCountDF", spark=spark):
+                Redis.dispatchDataFrame("dashboard_rolled_up_enrolment_content_count",finalEnrolmentCountDF, "ministryID", "enrolmentCount",conf=conf)
 
         except Exception as e:
             print(f"❌ Error occurred during MinistryMetricsModel processing: {str(e)}")
@@ -162,8 +174,9 @@ class MinistryMetricsModel:
 
 def main():
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Ministry Metrics") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "20g") \
         .config("spark.driver.memory", "15g") \
@@ -174,19 +187,29 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
-    
+
     config_dict = get_environment_config()
     config = create_config(config_dict)
     start_time = datetime.now()
     print(f"[START] MinistryMetricsModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = MinistryMetricsModel()
-    model.process_data(spark,config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] MinistryMetricsModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark,config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] MinistryMetricsModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 if __name__ == "__main__":
    main()

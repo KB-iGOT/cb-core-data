@@ -23,10 +23,13 @@ from dfutil.assessment import assessmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.dfexport import dfexportutil
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 
 IST = ZoneInfo("Asia/Kolkata")
+
+JOB_NAME = "weeklyClaps"
 
 
 class WeeklyClapsModel:
@@ -84,8 +87,10 @@ class WeeklyClapsModel:
             weekStart, weekEnd, weekEndTime, dataTillDate = self.get_this_week_dates()
             app_postgres_url = f"jdbc:postgresql://{config.appPostgresHost}/{config.appPostgresSchema}"
 
-            existing_weekly_claps_df = spark.read.parquet(ParquetFileConstants.CLAPS_PARQUET_FILE)
-            platform_engagement_df = self.users_platform_engagement_dataframe(weekStart, weekEndTime, spark, config)
+            with profiling.phase(JOB_NAME, "read", "existing_weekly_claps_df", spark=spark):
+                existing_weekly_claps_df = spark.read.parquet(ParquetFileConstants.CLAPS_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "platform_engagement_df", spark=spark):
+                platform_engagement_df = self.users_platform_engagement_dataframe(weekStart, weekEndTime, spark, config)
 
             joined_df = existing_weekly_claps_df.join(platform_engagement_df, ["userid"], "full_outer")
 
@@ -182,13 +187,15 @@ class WeeklyClapsModel:
 
             final_df.show(5, truncate=False)
             # === Write outputs ===
-            final_df.coalesce(1).write.mode("overwrite").csv(f"/tmp/weeklyClaps{today}", header=True)
+            with profiling.phase(JOB_NAME, "write", "final_df", spark=spark):
+                final_df.coalesce(1).write.mode("overwrite").csv(f"/tmp/weeklyClaps{today}", header=True)
 
             # Uncomment for Postgres writes
-            self.write_postgres_table(final_df, app_postgres_url,
-                                      config.dwLearnerStatsTable,
-                                      config.appPostgresUsername,
-                                      config.appPostgresCredential)
+            with profiling.phase(JOB_NAME, "db_write", "final_df", spark=spark):
+                self.write_postgres_table(final_df, app_postgres_url,
+                                          config.dwLearnerStatsTable,
+                                          config.appPostgresUsername,
+                                          config.appPostgresCredential)
 
             total_time = time.time() - start_time
             print(f"\n✅ Weekly Claps Job completed in {total_time:.2f} seconds ({total_time / 60:.1f} minutes)")
@@ -212,8 +219,9 @@ def main():
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
 
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Weekly Claps Model - Cached") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "18g") \
         .config("spark.driver.memory", "18g") \
@@ -224,6 +232,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
     start_time = datetime.now()
@@ -231,11 +242,18 @@ def main():
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = WeeklyClapsModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Weekly claps job completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Weekly claps job completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 if __name__ == "__main__":
     main()

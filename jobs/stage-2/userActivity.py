@@ -14,9 +14,12 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from dfutil.utils import utils
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
 from constants.ParquetFileConstants import ParquetFileConstants
+
+JOB_NAME = "userActivity"
 
 class UserActivityModel:
     def __init__(self):
@@ -31,14 +34,22 @@ class UserActivityModel:
 
     def processData(self,spark, config):
         today = self.get_date()
-        organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
-        userDF = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
-        userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-        orgHierarchyDF = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_SELECT_PARQUET_FILE)
-        contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE).withColumnRenamed("content_id", "_id").withColumnRenamed("batch_id", "c_batch_id").drop("data_last_generated_on")
-        enrollmentDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
-        eventDF = spark.read.parquet(ParquetFileConstants.EVENT_PARQUET_FILE).withColumnRenamed("event_id", "ed_event_id")
-        eventEnrolmentsDF = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
+        with profiling.phase(JOB_NAME, "read", "organizationDF", spark=spark):
+            organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
+        with profiling.phase(JOB_NAME, "read", "userDF", spark=spark):
+            userDF = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
+        with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
+            userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+        with profiling.phase(JOB_NAME, "read", "orgHierarchyDF", spark=spark):
+            orgHierarchyDF = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_SELECT_PARQUET_FILE)
+        with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
+            contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE).withColumnRenamed("content_id", "_id").withColumnRenamed("batch_id", "c_batch_id").drop("data_last_generated_on")
+        with profiling.phase(JOB_NAME, "read", "enrollmentDF", spark=spark):
+            enrollmentDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
+        with profiling.phase(JOB_NAME, "read", "eventDF", spark=spark):
+            eventDF = spark.read.parquet(ParquetFileConstants.EVENT_PARQUET_FILE).withColumnRenamed("event_id", "ed_event_id")
+        with profiling.phase(JOB_NAME, "read", "eventEnrolmentsDF", spark=spark):
+            eventEnrolmentsDF = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
 
         eventEnrolmentWithDetails = eventEnrolmentsDF.join(broadcast(eventDF), eventEnrolmentsDF["event_id"] == eventDF["ed_event_id"], how="left")
 
@@ -103,14 +114,16 @@ class UserActivityModel:
 
         warehouseDF = contentEnrolmentWithDetails.union(userEventEnrolmentsDF)
         print("📦 Writing warehouse data...")
-        warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwUserActivityTable}")
+        with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+            warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwUserActivityTable}")
 
         
 
 def main():
-        
+
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName('User Activity Model') \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .master("local[*]") \
         .config("spark.executor.memory", '15g') \
         .config("spark.driver.memory", '15g') \
@@ -123,19 +136,23 @@ def main():
         .config("spark.sql.parquet.compression.codec", 'snappy') \
         .config("spark.sql.legacy.json.allowEmptyString.enabled", "true") \
         .config("spark.sql.caseSensitive", "true") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
-    
+
     config_dict = get_environment_config()
     config = create_config(config_dict)
-    
+
     print(f"Starting User Activity processing")
 
     model = UserActivityModel()
     output_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
     start_time = datetime.now()
-    
+
     print(f"[START] User Activity processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Output path: {output_path}")
+    status, error_msg = "ok", None
     try:
         model.processData(spark,config)
         end_time = datetime.now()
@@ -143,9 +160,13 @@ def main():
         print(f"[END] User Activity completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"[INFO] Total duration: {duration}")
     except Exception as e:
+        status, error_msg = "error", str(e)
         print(f"Error processing data: {e}")
         print(traceback.format_exc())
+        end_time = datetime.now()
+        duration = end_time - start_time
     finally:
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
         spark.stop()
 
 if __name__ == "__main__":

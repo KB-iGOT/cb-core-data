@@ -3,10 +3,15 @@ import psycopg2
 import requests
 import os
 import sys
+import time
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+from dfutil.utils import profiling
+
+JOB_NAME = "gamificationNotificationConsumer"
+
 class GamificationNotificationConsumer:
     def __init__(self, config):
         self.config = config
@@ -67,20 +72,25 @@ def main():
     config = create_config(config_dict)
     model = GamificationNotificationConsumer(config)
     conn = None
-    try: 
+    start_time = time.time()
+    status, error_msg = "ok", None
+    try:
         conn = model.get_db_connection()
         print("[INFO] Starting Gamification Notification Consumer...")
 
-        count = model.process_batch(conn)
+        with profiling.phase(JOB_NAME, "process", "process_batch"):
+            count = model.process_batch(conn)
         if count:
             print(f"[INFO] Processed {count} Gamification notifications.")
         else:
             print("[INFO] No pending notifications found in this batch.")
     except Exception as e:
+        status, error_msg = "error", str(e)
         print(f"[ERROR] An error occurred: {str(e)}")
     finally:
         print("Closing database connection")
         if conn:
             conn.close()
+        profiling.write_summary(JOB_NAME, time.time() - start_time, status=status, error_msg=error_msg)
 if __name__ == "__main__":
     main()

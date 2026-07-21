@@ -16,8 +16,11 @@ from pyspark.sql.types import (StringType, LongType)
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+
+JOB_NAME = "karmaPoints"
 
 # UUID v1 epoch offset (100ns ticks between 1582-10-15 and 1970-01-01)
 UUID_EPOCH_OFFSET = 0x01b21dd213814000
@@ -61,36 +64,38 @@ class KarmaPointsModel:
             # ---------------- ratings -> karma (operation_type = RATING) ----------------
             timeuuid_to_millis_udf = F.udf(KarmaPointsModel.timeuuid_to_millis, LongType())
 
-            course_rating_df = (
-                spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)
-                .withColumnRenamed("activityid", "courseID")
-                .withColumnRenamed("userid", "userID")
-                .withColumnRenamed("rating", "userRating")
-                .withColumnRenamed("activitytype", "cbpType")
-                # UUID v1 (ms) -> seconds -> timestamp (one shot)
-                .withColumn(
-                    "credit_date",
-                    F.to_timestamp(
-                        F.from_unixtime(
-                            (timeuuid_to_millis_udf(F.col("createdOn")) / F.lit(1000))
+            with profiling.phase(JOB_NAME, "read", "course_rating_df", spark=spark):
+                course_rating_df = (
+                    spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)
+                    .withColumnRenamed("activityid", "courseID")
+                    .withColumnRenamed("userid", "userID")
+                    .withColumnRenamed("rating", "userRating")
+                    .withColumnRenamed("activitytype", "cbpType")
+                    # UUID v1 (ms) -> seconds -> timestamp (one shot)
+                    .withColumn(
+                        "credit_date",
+                        F.to_timestamp(
+                            F.from_unixtime(
+                                (timeuuid_to_millis_udf(F.col("createdOn")) / F.lit(1000))
+                            )
                         )
                     )
+                    # IMPORTANT: compare timestamp to timestamp bounds (no lit(...) around bounds)
+                    .where((F.col("credit_date") >= month_start_ts) & (F.col("credit_date") < month_end_ts))
                 )
-                # IMPORTANT: compare timestamp to timestamp bounds (no lit(...) around bounds)
-                .where((F.col("credit_date") >= month_start_ts) & (F.col("credit_date") < month_end_ts))
-            )
 
             categories = [
                 "Course", "Program", "Blended Program", "CuratedCollections",
                 "Standalone Assessment", "Curated Program"
             ]
 
-            cbp_details = (
-                spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
-                .filter(F.col("category").isin(categories))
-                .where(F.col("courseStatus").isin("Live", "Retired"))
-                .select("courseID", "courseName", "category")
-            )
+            with profiling.phase(JOB_NAME, "read", "cbp_details", spark=spark):
+                cbp_details = (
+                    spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+                    .filter(F.col("category").isin(categories))
+                    .where(F.col("courseStatus").isin("Live", "Retired"))
+                    .select("courseID", "courseName", "category")
+                )
             course_details = cbp_details.where(F.col("category") == F.lit("Course"))
 
             karma_from_rating_df = (
@@ -112,16 +117,17 @@ class KarmaPointsModel:
             )
 
             # -------- course completions (first 4 per user) -> karma (COURSE_COMPLETION) --------
-            course_completion_src = (
-                spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
-                # Here courseCompletedTimestamp must be TIMESTAMP (you were filtering with timestamp bounds already)
-                .where(
-                    (F.col("dbCompletionStatus") == F.lit(2)) &
-                    (F.col("courseCompletedTimestamp") >= month_start_ts) &
-                    (F.col("courseCompletedTimestamp") < month_end_ts)
+            with profiling.phase(JOB_NAME, "read", "course_completion_src", spark=spark):
+                course_completion_src = (
+                    spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+                    # Here courseCompletedTimestamp must be TIMESTAMP (you were filtering with timestamp bounds already)
+                    .where(
+                        (F.col("dbCompletionStatus") == F.lit(2)) &
+                        (F.col("courseCompletedTimestamp") >= month_start_ts) &
+                        (F.col("courseCompletedTimestamp") < month_end_ts)
+                    )
+                    .join(course_details, ["courseID"], "inner")
                 )
-                .join(course_details, ["courseID"], "inner")
-            )
 
             w_first4 = Window.partitionBy("userID").orderBy(F.col("courseCompletedTimestamp").asc())
             first_completion_df = (
@@ -131,12 +137,13 @@ class KarmaPointsModel:
                 .drop("rowNum")
             )
 
-            courses_with_assessment_df = (
-                spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE)
-                .where((F.col("assessUserStatus") == F.lit("SUBMITTED")) & F.col("assessChildID").isNotNull())
-                .select("courseID").distinct()
-                .withColumn("hasAssessment", F.lit(True))
-            )
+            with profiling.phase(JOB_NAME, "read", "courses_with_assessment_df", spark=spark):
+                courses_with_assessment_df = (
+                    spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE)
+                    .where((F.col("assessUserStatus") == F.lit("SUBMITTED")) & F.col("assessChildID").isNotNull())
+                    .select("courseID").distinct()
+                    .withColumn("hasAssessment", F.lit(True))
+                )
 
             karma_from_completion_df = (
                 first_completion_df
@@ -182,10 +189,11 @@ class KarmaPointsModel:
             )
 
             # -------- summary --------
-            existing_summary_df = (
-                spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_SUMMARY_PARQUET_FILE)
-                .select(F.col("userid"), F.col("total_points").alias("existing_total_points"))
-            )
+            with profiling.phase(JOB_NAME, "read", "existing_summary_df", spark=spark):
+                existing_summary_df = (
+                    spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_SUMMARY_PARQUET_FILE)
+                    .select(F.col("userid"), F.col("total_points").alias("existing_total_points"))
+                )
 
             summary_df = (
                 all_karma_points_df
@@ -196,9 +204,12 @@ class KarmaPointsModel:
                 .select("userid", "total_points")
             )
 
-            utils.writeToCassandra(all_karma_points_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsTable)
-            utils.writeToCassandra(lookup_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsLookupTable)
-            utils.writeToCassandra(summary_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsSummaryTable)
+            with profiling.phase(JOB_NAME, "write", "all_karma_points_df", spark=spark):
+                utils.writeToCassandra(all_karma_points_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsTable)
+            with profiling.phase(JOB_NAME, "write", "lookup_df", spark=spark):
+                utils.writeToCassandra(lookup_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsLookupTable)
+            with profiling.phase(JOB_NAME, "write", "summary_df", spark=spark):
+                utils.writeToCassandra(summary_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsSummaryTable)
             print("[SUCCESS] KarmaPointsModel completed")
 
         except Exception as e:
@@ -208,8 +219,9 @@ class KarmaPointsModel:
 def create_spark_session_with_packages(config):
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
 
+    run_id = profiling.get_run_id()
     spark = (SparkSession.builder
-        .appName("Karma points Model - Cached")
+        .appName(f'{JOB_NAME}_{run_id}')
         .config("spark.sql.shuffle.partitions", "200")
         .config("spark.executor.memory", "18g")
         .config("spark.driver.memory", "18g")
@@ -226,6 +238,9 @@ def create_spark_session_with_packages(config):
         .config("spark.cassandra.connection.keepAliveMS", "60000")
         .config("spark.cassandra.connection.timeoutMS", '30000')
         .config("spark.cassandra.read.timeoutMS", '30000')
+        .config("spark.eventLog.enabled", "true")
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}")
+        .config("spark.eventLog.compress", "true")
         .getOrCreate())
     return spark
 
@@ -237,12 +252,19 @@ def main():
     config = create_config(config_dict)
     spark = create_spark_session_with_packages(config)
     model = KarmaPointsModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Karma points completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Karma points completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 if __name__ == "__main__":
     main()

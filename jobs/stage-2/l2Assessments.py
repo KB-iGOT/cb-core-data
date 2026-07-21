@@ -21,6 +21,9 @@ from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
 from dfutil.content import contentDFUtil
+from dfutil.utils import profiling
+
+JOB_NAME = "l2Assessments"
 
 
 class L2AssessmentReport:
@@ -58,17 +61,27 @@ class L2AssessmentReport:
 
             # Load dataframes
             print("Loading base dataframes...")
-            kcmDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
-            kcmMappingDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}")
-            dwEnrolmentDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
-            acbpAllEnrolDF = spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
-            contentDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
-            assessmentDetailDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwAssessmentTable}")
-            dwOrgDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwOrgTable}")
-            userDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwUserTable}")
+            with profiling.phase(JOB_NAME, "read", "kcmDF", spark=spark):
+                kcmDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
+            with profiling.phase(JOB_NAME, "read", "kcmMappingDF", spark=spark):
+                kcmMappingDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}")
+            with profiling.phase(JOB_NAME, "read", "dwEnrolmentDF", spark=spark):
+                dwEnrolmentDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
+            with profiling.phase(JOB_NAME, "read", "acbpAllEnrolDF", spark=spark):
+                acbpAllEnrolDF = spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
+            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
+                contentDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
+            with profiling.phase(JOB_NAME, "read", "assessmentDetailDF", spark=spark):
+                assessmentDetailDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwAssessmentTable}")
+            with profiling.phase(JOB_NAME, "read", "dwOrgDF", spark=spark):
+                dwOrgDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwOrgTable}")
+            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark):
+                userDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwUserTable}")
             userDF = userDF.join(dwOrgDF.select("mdo_id", "mdo_name"), "mdo_id", "left")
-            dwcbPlanDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
-            assessmentMinPassDF = spark.read.parquet(f"{config.baseCachePath}/esCourseAssessment")
+            with profiling.phase(JOB_NAME, "read", "dwcbPlanDF", spark=spark):
+                dwcbPlanDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
+            with profiling.phase(JOB_NAME, "read", "assessmentMinPassDF", spark=spark):
+                assessmentMinPassDF = spark.read.parquet(f"{config.baseCachePath}/esCourseAssessment")
 
             # assessment Minimum Pass DF
             assessmentMinPassDF.printSchema()
@@ -604,8 +617,9 @@ class L2AssessmentReport:
             print("\nReport generation completed successfully!")
 
             # Export report
-            masterFinalDF.coalesce(1).write.mode("overwrite").parquet(
-                "/mount/data/analytics/igot-reports/assessment-report-apar/parquet")
+            with profiling.phase(JOB_NAME, "write", "masterFinalDF", spark=spark):
+                masterFinalDF.coalesce(1).write.mode("overwrite").parquet(
+                    "/mount/data/analytics/igot-reports/assessment-report-apar/parquet")
             # csv
             # apar_assessment_data.coalesce(1).write.mode("overwrite").option("header", "true").csv("/home/analytics/shishir/assessment-report-apar/csv")
 
@@ -615,23 +629,34 @@ class L2AssessmentReport:
 
 
 def main():
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("L2AssessmentReport") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.executor.memory", "30g") \
         .config("spark.driver.memory", "128g") \
         .config("spark.sql.shuffle.partitions", "64") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     print("Starting L2 Report Generation...")
     start_time = time.time()
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = L2AssessmentReport()
-    model.process_report(spark, config)
-    end_time = time.time()
-    total_time = end_time - start_time
-    print(f"L2 report generation completed in {total_time:.2f} seconds")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_report(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = time.time()
+        total_time = end_time - start_time
+        print(f"L2 report generation completed in {total_time:.2f} seconds")
+        profiling.write_summary(JOB_NAME, total_time, status=status, error_msg=error_msg)
+        spark.stop()
 
 
 if __name__ == "__main__":

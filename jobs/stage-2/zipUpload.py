@@ -32,6 +32,9 @@ from dfutil.utils.utils import sync_reports
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
 from dfutil.utils.redis import Redis
+from dfutil.utils import profiling
+
+JOB_NAME = "zipUpload"
 
 
 class ZipUploadModel:
@@ -183,7 +186,7 @@ class ZipUploadModel:
                 print(f"WARNING: File not found: {org_hierarchy_file}")
 
             if user_details_exists and enrolments_exists and org_hierarchy_exists:
-                sync_reports(base_path, config.unifiedParquetPath, config)
+                sync_reports(base_path, config.unifiedParquetPath, config, job_name=JOB_NAME)
                 print("Completed uploading Parquet files to GCP bucket.")
             else:
                 print("Upload skipped: One or more required files are missing.")
@@ -280,10 +283,11 @@ class ZipUploadModel:
 
             # ── Read org hierarchy for L0-based password grouping ──────────────
             print("📥 Reading org hierarchy...")
-            org_hierarchy_df = spark.read.parquet(
-                f"{config.warehouseReportDir}/{config.dwOrgTable}"
-            ).select("mdo_id", "ministry_id", "department_id").cache()
-            print(f"  Org hierarchy rows: {org_hierarchy_df.count()}")
+            with profiling.phase(JOB_NAME, "read", "org_hierarchy_df", spark=spark):
+                org_hierarchy_df = spark.read.parquet(
+                    f"{config.warehouseReportDir}/{config.dwOrgTable}"
+                ).select("mdo_id", "ministry_id", "department_id").cache()
+                print(f"  Org hierarchy rows: {org_hierarchy_df.count()}")
 
             # ------------------ Part 1: Merge & Zip MDOID Reports ------------- #
             part1_start = time.time()
@@ -314,7 +318,7 @@ class ZipUploadModel:
                 if os.path.exists(cbp_dir):
                     print(f"  → Syncing: {cbp_dir}")
                     try:
-                        sync_reports(cbp_dir, os.path.join(config.prefixDirectoryPath, subfolder, today_date), config)
+                        sync_reports(cbp_dir, os.path.join(config.prefixDirectoryPath, subfolder, today_date), config, job_name=JOB_NAME)
                     except Exception as e:
                         print(f"✗ Failed syncing CBP folder {subfolder}: {e}")
                 else:
@@ -385,7 +389,8 @@ class ZipUploadModel:
                 key_value_map=key_value_map,
                 host=config.redisKpHost,
                 port=config.redisPort,
-                db='0'
+                db='0',
+                job_name=JOB_NAME
             )
             print(f"✅ L0-grouped password mapping saved to Redis ({len(key_value_map)} keys)")
 
@@ -400,12 +405,13 @@ class ZipUploadModel:
                 if folder in mdoid_password_map
             ]
 
-            with ThreadPoolExecutor(max_workers=12) as executor:
-                futures = [executor.submit(self.zip_mdoid_folder, task) for task in zip_tasks]
-                for future in as_completed(futures):
-                    result = future.result()
-                    if result:
-                        print(f"  {result}")
+            with profiling.phase(JOB_NAME, "process", "build_password_zips", spark=spark):
+                with ThreadPoolExecutor(max_workers=12) as executor:
+                    futures = [executor.submit(self.zip_mdoid_folder, task) for task in zip_tasks]
+                    for future in as_completed(futures):
+                        result = future.result()
+                        if result:
+                            print(f"  {result}")
 
             print(f"✅ All MDOID folders zipped with L0-grouped passwords at: {merged_dir}")
             print(f"⏱️  Zipping completed in {time.time() - zip_start:.2f}s")
@@ -413,13 +419,13 @@ class ZipUploadModel:
 
             print("\n📤 Syncing MDOID reports to cloud...")
             mdoid_sync_start = time.time()
-            sync_reports(merged_dir, config.mdoReportSyncPath, config)
+            sync_reports(merged_dir, config.mdoReportSyncPath, config, job_name=JOB_NAME)
             print(f"⏱️  MDOID sync completed in {time.time() - mdoid_sync_start:.2f}s")
 
             print(f"\n📤 Syncing KCM file separately to: {config.kcmSyncPath}")
             try:
                 kcm_sync_start = time.time()
-                sync_reports(kcm_file, config.kcmSyncPath, config)
+                sync_reports(kcm_file, config.kcmSyncPath, config, job_name=JOB_NAME)
                 print(f"⏱️  KCM sync completed in {time.time() - kcm_sync_start:.2f}s")
             except Exception as e:
                 print(f"⚠️ WARNING: Failed to sync KCM file separately: {e}")
@@ -453,12 +459,13 @@ class ZipUploadModel:
                 conversion_start  = time.time()
                 conversion_tasks  = [(folder, warehouse_base, warehouse_output_dir) for folder in folders]
 
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    futures = [executor.submit(self.convert_parquet_to_csv, task) for task in conversion_tasks]
-                    for future in as_completed(futures):
-                        result = future.result()
-                        if result:
-                            print(f"  {result}")
+                with profiling.phase(JOB_NAME, "write", "convert_parquet_to_csv", spark=spark):
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        futures = [executor.submit(self.convert_parquet_to_csv, task) for task in conversion_tasks]
+                        for future in as_completed(futures):
+                            result = future.result()
+                            if result:
+                                print(f"  {result}")
 
                 print(f"⏱️  Conversion completed in {time.time() - conversion_start:.2f}s")
 
@@ -471,16 +478,17 @@ class ZipUploadModel:
                 ]
 
                 if warehouse_csvs:
-                    with ZipFile(warehouse_zip_path, 'w', ZIP_DEFLATED) as zipf:
-                        zipf.setpassword(password.encode())
-                        for csv_path in warehouse_csvs:
-                            zipf.write(csv_path, arcname=os.path.basename(csv_path))
+                    with profiling.phase(JOB_NAME, "process", "build_full_report_zip", spark=spark):
+                        with ZipFile(warehouse_zip_path, 'w', ZIP_DEFLATED) as zipf:
+                            zipf.setpassword(password.encode())
+                            for csv_path in warehouse_csvs:
+                                zipf.write(csv_path, arcname=os.path.basename(csv_path))
                     print(f"✅ Warehouse reports zipped at: {warehouse_zip_path}")
                     print(f"⏱️  Zipping completed in {time.time() - zip_start:.2f}s")
 
                     print("\n📤 Syncing warehouse reports to cloud...")
                     sync_start = time.time()
-                    sync_reports(warehouse_zip_path, config.fullReportSyncPath, config)
+                    sync_reports(warehouse_zip_path, config.fullReportSyncPath, config, job_name=JOB_NAME)
                     print(f"⏱️  Sync completed in {time.time() - sync_start:.2f}s")
                 else:
                     print("⚠️  No CSV files found to zip")
@@ -497,8 +505,9 @@ class ZipUploadModel:
 
 
 def main():
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Zip Upload Model") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.master", "local[28]") \
         .config("spark.driver.memory", "180g") \
         .config("spark.driver.memoryOverhead", "24g") \
@@ -509,6 +518,9 @@ def main():
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.adaptive.skewJoin.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
 
     config_dict = get_environment_config()
@@ -519,11 +531,18 @@ def main():
     print(f"[CONFIG] createFullReport flag: {getattr(config, 'createFullReport', False)}")
 
     model = ZipUploadModel()
-    model.process_data(spark, config)
-
-    end_time = datetime.now()
-    print(f"\n[END] ZipUpload completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {end_time - start_time}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"\n[END] ZipUpload completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 

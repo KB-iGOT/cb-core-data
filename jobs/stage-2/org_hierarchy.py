@@ -11,7 +11,13 @@ import logging
 import redis
 import json
 from pyspark.sql.functions import lit
+from pathlib import Path
+import sys
 
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from dfutil.utils import profiling
+
+JOB_NAME = "org_hierarchy"
 
 # Configure logger at the top of your script (add this near your imports)
 logging.basicConfig(level=logging.DEBUG)
@@ -41,17 +47,18 @@ pg_conn.commit()
 #redis_client = redis.Redis(host='localhost', port=6379, db=12)
 
 # Truncate the target table before processing
-try:
-    pg_cursor.execute("TRUNCATE TABLE org_hierarchy_new;")
-    pg_conn.commit()
-    pg_cursor.execute("TRUNCATE TABLE org_hierarchy_lookup;")
-    pg_conn.commit()
-    pg_cursor.execute("TRUNCATE TABLE mdo_children_lookup;")
-    pg_conn.commit()
-    print("Tables org_hierarchy_new, org_hierarchy_lookup, and mdo_children_lookup truncated successfully.")
-except Exception as e:
-    print(f"Failed to truncate table: {e}")
-    exit(1)
+with profiling.phase(JOB_NAME, "db_write", "truncate_tables"):
+    try:
+        pg_cursor.execute("TRUNCATE TABLE org_hierarchy_new;")
+        pg_conn.commit()
+        pg_cursor.execute("TRUNCATE TABLE org_hierarchy_lookup;")
+        pg_conn.commit()
+        pg_cursor.execute("TRUNCATE TABLE mdo_children_lookup;")
+        pg_conn.commit()
+        print("Tables org_hierarchy_new, org_hierarchy_lookup, and mdo_children_lookup truncated successfully.")
+    except Exception as e:
+        print(f"Failed to truncate table: {e}")
+        exit(1)
 
 # API and headers
 API_URL_TEMPLATE = 'https://spv.igotkarmayogi.gov.in/api/framework/v1/read/{}'
@@ -86,16 +93,17 @@ def fetch_es_data():
     query_body["size"] = page_size  # move size into body
 
     results = []
-    page = es.search(index=index_name, body=query_body, scroll=scroll)
-    sid = page['_scroll_id']
-    scroll_size = len(page['hits']['hits'])
-    results.extend(page['hits']['hits'])
-
-    while scroll_size > 0:
-        page = es.scroll(scroll_id=sid, scroll=scroll)
+    with profiling.phase(JOB_NAME, "read", "es_org_data"):
+        page = es.search(index=index_name, body=query_body, scroll=scroll)
         sid = page['_scroll_id']
         scroll_size = len(page['hits']['hits'])
         results.extend(page['hits']['hits'])
+
+        while scroll_size > 0:
+            page = es.scroll(scroll_id=sid, scroll=scroll)
+            sid = page['_scroll_id']
+            scroll_size = len(page['hits']['hits'])
+            results.extend(page['hits']['hits'])
 
     df = pd.DataFrame([r['_source'] for r in results])
     #print(f"Fetched {df} ")
@@ -418,8 +426,17 @@ def insert_hierarchy_lookup(org_id, org_name, data):
 
 
 if __name__ == "__main__":
-    df = fetch_es_data()
-    process_frameworks(df)
-    pg_cursor.close()
-    pg_conn.close()
-    logger.debug("All data processed and saved.")
+    _job_start_time = time.time()
+    _status, _error_msg = "ok", None
+    try:
+        df = fetch_es_data()
+        with profiling.phase(JOB_NAME, "process", "process_frameworks"):
+            process_frameworks(df)
+    except Exception as e:
+        _status, _error_msg = "error", str(e)
+        raise
+    finally:
+        pg_cursor.close()
+        pg_conn.close()
+        logger.debug("All data processed and saved.")
+        profiling.write_summary(JOB_NAME, time.time() - _job_start_time, status=_status, error_msg=_error_msg)

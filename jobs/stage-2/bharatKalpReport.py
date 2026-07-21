@@ -19,6 +19,9 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
 from constants.ParquetFileConstants import ParquetFileConstants
+from dfutil.utils import profiling
+
+JOB_NAME = "bharatKalpReport"
 
 
 class BharatKalpReport:
@@ -140,15 +143,22 @@ class BharatKalpReport:
     def process_data(self):
         currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
         print("Step 1: Loading Data ")
-        api_response = self.fetch_bharat_kalp_courses()
-        bharatKalpCoursesDF = self.read_bharat_kalp_courses(api_response)
-        bharatKalpEventTagsDF = self.read_bharat_kalp_events(api_response)
+        with profiling.phase(JOB_NAME, "read", "api_response", spark=self.spark):
+            api_response = self.fetch_bharat_kalp_courses()
+        with profiling.phase(JOB_NAME, "read", "bharatKalpCoursesDF", spark=self.spark):
+            bharatKalpCoursesDF = self.read_bharat_kalp_courses(api_response)
+        with profiling.phase(JOB_NAME, "read", "bharatKalpEventTagsDF", spark=self.spark):
+            bharatKalpEventTagsDF = self.read_bharat_kalp_events(api_response)
         event_tags = [row.event_tag for row in bharatKalpEventTagsDF.collect()]
 
-        enrolmentDF = self.read_warehouse_data(self.config.dwEnrollmentsTable)
-        eventsDF = self.read_warehouse_data("event_details").filter(col("event_tag").isin(event_tags))
-        eventEnrolmentsDF = self.read_warehouse_data("event_enrolment_details")
-        userDF = self.spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE).filter(col("isBharatKalpMember") == True).select(col("userID").alias("user_id")).distinct()
+        with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=self.spark):
+            enrolmentDF = self.read_warehouse_data(self.config.dwEnrollmentsTable)
+        with profiling.phase(JOB_NAME, "read", "eventsDF", spark=self.spark):
+            eventsDF = self.read_warehouse_data("event_details").filter(col("event_tag").isin(event_tags))
+        with profiling.phase(JOB_NAME, "read", "eventEnrolmentsDF", spark=self.spark):
+            eventEnrolmentsDF = self.read_warehouse_data("event_enrolment_details")
+        with profiling.phase(JOB_NAME, "read", "userDF", spark=self.spark):
+            userDF = self.spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE).filter(col("isBharatKalpMember") == True).select(col("userID").alias("user_id")).distinct()
         print("Step 1: Complete")
         print("Step 2: Processing Bharat Kalp Events with Event Enrolments")
         eventWarehouseDF = self.build_event_report(eventsDF, eventEnrolmentsDF, userDF)
@@ -159,16 +169,19 @@ class BharatKalpReport:
         print("Step 4: Writing Bharat Kalp Report to Warehouse")
         courseWarehouseDF = courseWarehouseDF.withColumn("data_last_generated_on", currentDateTime)
         eventWarehouseDF = eventWarehouseDF.withColumn("data_last_generated_on", currentDateTime)
-        courseWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{self.config.warehouseReportDir}/{self.config.dwBharatKalpCoursesTable}")
-        eventWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{self.config.warehouseReportDir}/{self.config.dwBharatKalpEventsTable}")
+        with profiling.phase(JOB_NAME, "write", "courseWarehouseDF", spark=self.spark):
+            courseWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{self.config.warehouseReportDir}/{self.config.dwBharatKalpCoursesTable}")
+        with profiling.phase(JOB_NAME, "write", "eventWarehouseDF", spark=self.spark):
+            eventWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{self.config.warehouseReportDir}/{self.config.dwBharatKalpEventsTable}")
         print("Step 4: Complete")
 def main():
     os.environ[
         'PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
 
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Bharat Kalp Model") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "18g") \
         .config("spark.driver.memory", "18g") \
@@ -178,6 +191,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
     start_time = datetime.now()
@@ -185,11 +201,18 @@ def main():
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = BharatKalpReport(spark,config)
-    model.process_data()
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Bharat Kalp Report completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data()
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Bharat Kalp Report completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 if __name__ == "__main__":

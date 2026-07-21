@@ -15,9 +15,12 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from dfutil.utils.redis import Redis
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+
+JOB_NAME = "nationalLearningWeek"
 
 
 class NationalLearningWeekLeaderboardModel:
@@ -126,57 +129,64 @@ class NationalLearningWeekLeaderboardModel:
             # 1. READ SOURCE DATA
             # -----------------------------------------------------------
 
-            orgHierDF = (
-                spark.read.parquet(f"{config.warehouseReportDir}/{config.dwOrgTable}")
-                .select("mdo_id", "mdo_name", "ministry_id", "department_id")
-                .dropDuplicates(["mdo_id"])
-            )
-
-            userDF = (
-                spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-                .withColumnRenamed("userID", "user_id")
-                .withColumnRenamed("userOrgID", "mdo_id")
-                .select("user_id", "mdo_id", "fullName", "designation", "userProfileImgUrl")
-                .dropDuplicates(["user_id"])
-            )
-
-            karmaPerUserDF = (
-                spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE)
-                .filter(
-                    (F.col("credit_date") >= F.lit(nlw_start)) &
-                    (F.col("credit_date") <= F.lit(nlw_end))
+            with profiling.phase(JOB_NAME, "read", "orgHierDF", spark=spark):
+                orgHierDF = (
+                    spark.read.parquet(f"{config.warehouseReportDir}/{config.dwOrgTable}")
+                    .select("mdo_id", "mdo_name", "ministry_id", "department_id")
+                    .dropDuplicates(["mdo_id"])
                 )
-                .groupBy(F.col("userid").alias("user_id"))
-                .agg(
-                    F.sum("points").alias("user_total_points"),
-                    F.max("credit_date").alias("last_credit_date")
+
+            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark):
+                userDF = (
+                    spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+                    .withColumnRenamed("userID", "user_id")
+                    .withColumnRenamed("userOrgID", "mdo_id")
+                    .select("user_id", "mdo_id", "fullName", "designation", "userProfileImgUrl")
+                    .dropDuplicates(["user_id"])
                 )
-            )
+
+            with profiling.phase(JOB_NAME, "read", "karmaPerUserDF", spark=spark):
+                karmaPerUserDF = (
+                    spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE)
+                    .filter(
+                        (F.col("credit_date") >= F.lit(nlw_start)) &
+                        (F.col("credit_date") <= F.lit(nlw_end))
+                    )
+                    .groupBy(F.col("userid").alias("user_id"))
+                    .agg(
+                        F.sum("points").alias("user_total_points"),
+                        F.max("credit_date").alias("last_credit_date")
+                    )
+                )
             karmaPerUserDF.filter(F.col("user_id") == 'a1a6e5ce-9ca9-4b96-9799-69cac0d1e38b').show()
 
-            contentEnrolDF = (
-                spark.read.parquet(
-                    ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentEnrolDF", spark=spark):
+                contentEnrolDF = (
+                    spark.read.parquet(
+                        ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+                    )
+                    .withColumnRenamed("userID", "user_id")
+                    .withColumnRenamed("certificateID", "certificate_id")
                 )
-                .withColumnRenamed("userID", "user_id")
-                .withColumnRenamed("certificateID", "certificate_id")
-            )
 
-            contentMasterDF = (
-                spark.read.parquet(
-                    ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentMasterDF", spark=spark):
+                contentMasterDF = (
+                    spark.read.parquet(
+                        ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+                    )
+                    .filter(F.col("content_sub_type").isin("Course", "Moderated Course", "External Content"))
+                    .select("content_id", "content_duration")
                 )
-                .filter(F.col("content_sub_type").isin("Course", "Moderated Course", "External Content"))
-                .select("content_id", "content_duration")
-            )
 
-            eventEnrolDF = spark.read.parquet(EVENT_ENROLMENT_PARQUET)
+            with profiling.phase(JOB_NAME, "read", "eventEnrolDF", spark=spark):
+                eventEnrolDF = spark.read.parquet(EVENT_ENROLMENT_PARQUET)
 
-            eventMasterDF = (
-                spark.read.parquet(ParquetFileConstants.EVENT_PARQUET_FILE)
-                .withColumnRenamed("duration", "event_complete_duration")
-                .select("event_id", "event_complete_duration")
-            )
+            with profiling.phase(JOB_NAME, "read", "eventMasterDF", spark=spark):
+                eventMasterDF = (
+                    spark.read.parquet(ParquetFileConstants.EVENT_PARQUET_FILE)
+                    .withColumnRenamed("duration", "event_complete_duration")
+                    .select("event_id", "event_complete_duration")
+                )
 
             contentCertDF = (
                 contentEnrolDF
@@ -207,17 +217,18 @@ class NationalLearningWeekLeaderboardModel:
             )
 
             # TODO: badgeDetails_v1 source data issue - fix schema before uncommenting
-            badgesDF = (
-                spark.read.parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE)
-                .withColumnRenamed("userID", "user_id")
-                .filter(
-                    (F.col("badge_issued_on") >= F.lit(nlw_start)) &
-                    (F.col("badge_issued_on") <= F.lit(nlw_end)) &
-                    F.col("enrolment_badge_id").isNotNull()
+            with profiling.phase(JOB_NAME, "read", "badgesDF", spark=spark):
+                badgesDF = (
+                    spark.read.parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE)
+                    .withColumnRenamed("userID", "user_id")
+                    .filter(
+                        (F.col("badge_issued_on") >= F.lit(nlw_start)) &
+                        (F.col("badge_issued_on") <= F.lit(nlw_end)) &
+                        F.col("enrolment_badge_id").isNotNull()
+                    )
+                    .groupBy("user_id")
+                    .agg(F.count("enrolment_badge_id").alias("total_badges"))
                 )
-                .groupBy("user_id")
-                .agg(F.count("enrolment_badge_id").alias("total_badges"))
-            )
             # Temporary: return empty badgesDF with 0 badges for all users
             #badgesDF = spark.createDataFrame([], "user_id STRING, total_badges LONG")
 
@@ -525,16 +536,19 @@ class NationalLearningWeekLeaderboardModel:
             finalLeaderboardDF.show(15, truncate=False)
             userStatsFinalDF.show(20, truncate=False)
             BqLeaderboardDF = finalLeaderboardDF.select("size", "org_id", "org_name", "total_users", "total_points", "per_capita_kp", "row_num", "is_state")
-            BqLeaderboardDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/nlw_mdo_leaderboard")
+            with profiling.phase(JOB_NAME, "write", "BqLeaderboardDF", spark=spark):
+                BqLeaderboardDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/nlw_mdo_leaderboard")
 
-            utils.writeToCassandra(finalLeaderboardDF, config.cassandraUserKeyspace, "nlw_mdo_leaderboard")
-            self.write_postgres_table(
-                userStatsFinalDF,
-                app_postgres_url,
-                "nlw_user_leaderboard",
-                config.appPostgresUsername,
-                config.appPostgresCredential
-            )
+            with profiling.phase(JOB_NAME, "db_write", "finalLeaderboardDF", spark=spark):
+                utils.writeToCassandra(finalLeaderboardDF, config.cassandraUserKeyspace, "nlw_mdo_leaderboard")
+            with profiling.phase(JOB_NAME, "db_write", "userStatsFinalDF", spark=spark):
+                self.write_postgres_table(
+                    userStatsFinalDF,
+                    app_postgres_url,
+                    "nlw_user_leaderboard",
+                    config.appPostgresUsername,
+                    config.appPostgresCredential
+                )
 
             # -----------------------------------------------------------
             # 8. LAST-24-HOUR STATS
@@ -704,19 +718,22 @@ class NationalLearningWeekLeaderboardModel:
             [("across:yesterday", yesterday_cert_str)],
             ["across:yesterday", "cert_count_str"]
         )
-        Redis.dispatchDataFrame("lhp_certifications", cert_yesterday_df, "across:yesterday", "cert_count_str",
-                                replace=False, conf=config)
+        with profiling.phase(JOB_NAME, "redis_write", "cert_yesterday_df", spark=spark):
+            Redis.dispatchDataFrame("lhp_certifications", cert_yesterday_df, "across:yesterday", "cert_count_str",
+                                    replace=False, conf=config)
 
         hours_yesterday_df = spark.createDataFrame(
             [("across:yesterday", yesterday_hours_str)],
             ["across:yesterday", "learning_hours_str"]
         )
-        Redis.dispatchDataFrame("lhp_learningHours", hours_yesterday_df, "across:yesterday", "learning_hours_str",
-                                replace=False, conf=config)
+        with profiling.phase(JOB_NAME, "redis_write", "hours_yesterday_df", spark=spark):
+            Redis.dispatchDataFrame("lhp_learningHours", hours_yesterday_df, "across:yesterday", "learning_hours_str",
+                                    replace=False, conf=config)
 
         yesterday_org_df = yesterday_org_df.withColumn("redis_key", F.concat(F.col("org_id"), F.lit(":yesterday")))
-        Redis.dispatchDataFrame("lhp_learningHours", yesterday_org_df, "redis_key", "learning_hours",
-                                replace=False, conf=config)
+        with profiling.phase(JOB_NAME, "redis_write", "yesterday_org_df", spark=spark):
+            Redis.dispatchDataFrame("lhp_learningHours", yesterday_org_df, "redis_key", "learning_hours",
+                                    replace=False, conf=config)
 
         # ----------------------------------------------------------
         # Dispatch today (always fresh)
@@ -725,19 +742,22 @@ class NationalLearningWeekLeaderboardModel:
             [("across:today", today_cert_str)],
             ["across:today", "cert_count_str"]
         )
-        Redis.dispatchDataFrame("lhp_certifications", cert_today_df, "across:today", "cert_count_str",
-                                replace=False, conf=config)
+        with profiling.phase(JOB_NAME, "redis_write", "cert_today_df", spark=spark):
+            Redis.dispatchDataFrame("lhp_certifications", cert_today_df, "across:today", "cert_count_str",
+                                    replace=False, conf=config)
 
         hours_today_df = spark.createDataFrame(
             [("across:today", today_hours_str)],
             ["across:today", "learning_hours_str"]
         )
-        Redis.dispatchDataFrame("lhp_learningHours", hours_today_df, "across:today", "learning_hours_str",
-                                replace=False, conf=config)
+        with profiling.phase(JOB_NAME, "redis_write", "hours_today_df", spark=spark):
+            Redis.dispatchDataFrame("lhp_learningHours", hours_today_df, "across:today", "learning_hours_str",
+                                    replace=False, conf=config)
 
         today_org_df = today_org_df.withColumn("redis_key", F.concat(F.col("org_id"), F.lit(":today")))
-        Redis.dispatchDataFrame("lhp_learningHours", today_org_df, "redis_key", "learning_hours",
-                                replace=False, conf=config)
+        with profiling.phase(JOB_NAME, "redis_write", "today_org_df", spark=spark):
+            Redis.dispatchDataFrame("lhp_learningHours", today_org_df, "redis_key", "learning_hours",
+                                    replace=False, conf=config)
 
         print(f"\n📊 Stats dispatched to Redis:")
         print(f"  across:yesterday certs  = {yesterday_cert_str}")
@@ -777,9 +797,10 @@ def create_spark_session(config):
         "pyspark-shell"
     )
 
+    run_id = profiling.get_run_id()
     return (
         SparkSession.builder
-        .appName("NationalLearningWeekLeaderboardModel")
+        .appName(f'{JOB_NAME}_{run_id}')
         .master("local[*]")
         .config("spark.executor.memory", "20g")
         .config("spark.driver.memory", "18g")
@@ -803,6 +824,9 @@ def create_spark_session(config):
         .config("es.index.auto.create", "false")
         .config("es.nodes.wan.only", "true")
         .config("es.nodes.discovery", "false")
+        .config("spark.eventLog.enabled", "true")
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}")
+        .config("spark.eventLog.compress", "true")
         .getOrCreate()
     )
 
@@ -822,12 +846,19 @@ def main():
     )
 
     model = NationalLearningWeekLeaderboardModel()
-    model.process_data(spark, config)
-
-    end_time = datetime.now()
-    print(f"[END]  NLW Leaderboard completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {end_time - start_time}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END]  NLW Leaderboard completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 
 if __name__ == "__main__":

@@ -23,8 +23,11 @@ from dfutil.content import contentDFUtil
 from dfutil.dfexport import dfexportutil
 from dfutil.utils import utils
 from dfutil.utils.redis import Redis
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+
+JOB_NAME = "odcsRecommendation"
 
 
 class ODCSRecommendationModel:
@@ -36,15 +39,19 @@ class ODCSRecommendationModel:
 
     def process_data(self, spark, config):
         try:
-            all_enrolments_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE).withColumnRenamed("userID", "user_id")
-            content_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE) \
-                .filter(col("content_sub_type").isin("Course", "Program", "Moderated Course", "Moderated Program"))
+            with profiling.phase(JOB_NAME, "read", "all_enrolments_df", spark=spark):
+                all_enrolments_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE).withColumnRenamed("userID", "user_id")
+            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark):
+                content_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE) \
+                    .filter(col("content_sub_type").isin("Course", "Program", "Moderated Course", "Moderated Program"))
             enrolments_df = all_enrolments_df.join(
                 content_df.select("content_id"), ["content_id"], "inner"
             )
 
-            user_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            rating_draft_df = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "user_df", spark=spark):
+                user_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "rating_draft_df", spark=spark):
+                rating_draft_df = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)
 
             completion_df = enrolments_df.groupBy("content_id").agg(count("user_id").alias("total_enrolments"),
                                                                     sum(when(col("user_consumption_status") == lit(
@@ -99,15 +106,17 @@ class ODCSRecommendationModel:
             )
 
             final_df.show(10, truncate=False)
-            Redis.dispatchDataFrame("odcs_course_recomendation", final_df, "mdo_id", "top_15_content_ids", conf=config)
+            with profiling.phase(JOB_NAME, "redis_write", "final_df", spark=spark):
+                Redis.dispatchDataFrame("odcs_course_recomendation", final_df, "mdo_id", "top_15_content_ids", conf=config)
            # Redis.dispatchDataFrame("odcs_course_recomendation_pyspark_test", final_df, "mdo_id", "top_15_content_ids", conf=config)
         except Exception as e:
             print(f"Error occurred during ODCS Recommendation processing: {str(e)}")
             raise
 
 def create_spark_session_with_packages(config):
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("ODCS Recommendation Model - Cached") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "18g") \
         .config("spark.driver.memory", "18g") \
@@ -124,6 +133,9 @@ def create_spark_session_with_packages(config):
         .config("spark.cassandra.connection.keepAliveMS", "60000") \
         .config("spark.cassandra.connection.timeoutMS", '30000') \
         .config("spark.cassandra.read.timeoutMS", '30000') \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     return spark
 
@@ -136,11 +148,18 @@ def main():
     config = create_config(config_dict)
     spark = create_spark_session_with_packages(config)
     model = ODCSRecommendationModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] ODCS Recommendation completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] ODCS Recommendation completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 

@@ -14,6 +14,7 @@ import zipfile
 import shutil
 from confluent_kafka import Producer
 from kafka import KafkaProducer
+from dfutil.utils import profiling
 
 
 def druidDFOption(query: str, host: str, result_format: str = "object", limit: int = 10000,
@@ -108,7 +109,7 @@ def api(method: str, url: str, body: str) -> str:
         return ""
 
 
-def sync_reports(local_path, remote_path, config):
+def sync_reports(local_path, remote_path, config, job_name=None):
     """
     Upload all files from `local_path` to GCS path: gs://<container>/<remote_path> using GCP service account.
 
@@ -119,33 +120,35 @@ def sync_reports(local_path, remote_path, config):
             - conf.container (str): GCS bucket name
             - conf.store (str): Expected to be 'gcs'
             - conf.gcp_service_account_key (str): Path to GCP credentials JSON
+        job_name (str, optional): Calling job's name, for profiling attribution. Defaults to a generic label.
     """
-    print(f"REPORT: Syncing reports from {local_path} to gs://{config.gcpBucket}/{remote_path} ...")
+    with profiling.phase(job_name or "shared_utils", "upload", remote_path):
+        print(f"REPORT: Syncing reports from {local_path} to gs://{config.gcpBucket}/{remote_path} ...")
 
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config.googleServiceAccountFilePath
-    client = storage.Client()
-    bucket = client.bucket(config.gcpBucket)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config.googleServiceAccountFilePath
+        client = storage.Client()
+        bucket = client.bucket(config.gcpBucket)
 
-    if os.path.isfile(local_path):   # single file case
-        filename = os.path.basename(local_path)   # keep whatever CSV name was generated
-        gcs_blob_path = os.path.join(remote_path, filename).replace("\\", "/")
-        blob = bucket.blob(gcs_blob_path)
-        blob.upload_from_filename(local_path)
-        print(f"✅ Synced: {local_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
+        if os.path.isfile(local_path):   # single file case
+            filename = os.path.basename(local_path)   # keep whatever CSV name was generated
+            gcs_blob_path = os.path.join(remote_path, filename).replace("\\", "/")
+            blob = bucket.blob(gcs_blob_path)
+            blob.upload_from_filename(local_path)
+            print(f"✅ Synced: {local_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
 
-    else:   # directory case (unchanged)
-        for root, _, files in os.walk(local_path):
-            for file in files:
-                local_file_path = os.path.join(root, file)
-                relative_path = os.path.relpath(local_file_path, local_path)
-                gcs_blob_path = os.path.join(remote_path, relative_path).replace("\\", "/")
-                blob = bucket.blob(gcs_blob_path)
-                blob.upload_from_filename(local_file_path)
-                print(f"✅ Synced: {local_file_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
+        else:   # directory case (unchanged)
+            for root, _, files in os.walk(local_path):
+                for file in files:
+                    local_file_path = os.path.join(root, file)
+                    relative_path = os.path.relpath(local_file_path, local_path)
+                    gcs_blob_path = os.path.join(remote_path, relative_path).replace("\\", "/")
+                    blob = bucket.blob(gcs_blob_path)
+                    blob.upload_from_filename(local_file_path)
+                    print(f"✅ Synced: {local_file_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
 
-    print(f"REPORT: Finished syncing reports from {local_path} to gs://{config.gcpBucket}/{remote_path}")
+        print(f"REPORT: Finished syncing reports from {local_path} to gs://{config.gcpBucket}/{remote_path}")
 
-def zip_and_sync_reports(complete_path: str, report_path: str,config):
+def zip_and_sync_reports(complete_path: str, report_path: str, config, job_name=None):
     """
     Zip report folder and sync to blob storage.
     Instance method version that can access self.sync_reports
@@ -206,7 +209,7 @@ def zip_and_sync_reports(complete_path: str, report_path: str,config):
         
         # Step 6: Sync to blob storage
         print(f"Syncing to blob storage: {report_path}")
-        sync_reports(complete_path, report_path,config)
+        sync_reports(complete_path, report_path, config, job_name=job_name)
         
         print(f"Successfully zipped and synced: {complete_path}")
         

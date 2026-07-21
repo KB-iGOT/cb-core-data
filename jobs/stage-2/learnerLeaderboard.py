@@ -15,9 +15,12 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 # Reusable imports from userReport structure
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 from pyspark.sql import functions as F
+
+JOB_NAME = "learnerLeaderboard"
 
 
 class LearnerLeaderBoardModel:
@@ -36,13 +39,15 @@ class LearnerLeaderBoardModel:
             month = date_format(add_months(current_date(), -1), "M")
             year  = date_format(add_months(current_date(), -1), "yyyy")
             # Karma points
-            karma_points_df = spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE) \
-                .filter((col("credit_date") >= month_start) & (col("credit_date") <= month_end)) \
-                .groupBy("userid") \
-                .agg(sum("points").alias("total_points"), max("credit_date").alias("last_credit_date")) \
-                .cache()
+            with profiling.phase(JOB_NAME, "read", "karma_points_df", spark=spark):
+                karma_points_df = spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE) \
+                    .filter((col("credit_date") >= month_start) & (col("credit_date") <= month_end)) \
+                    .groupBy("userid") \
+                    .agg(sum("points").alias("total_points"), max("credit_date").alias("last_credit_date")) \
+                    .cache()
 
-            userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
+                userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
 
             # Orgs with more than N users
             orgWithNUsers = userOrgDF.groupBy("userOrgID") \
@@ -76,8 +81,9 @@ class LearnerLeaderBoardModel:
             userLeaderboardDF = userLeaderboardDF.withColumn("row_num", row_number().over(window_spec_row))
 
             # Read previous leaderboard data
-            learnerLeaderboardDF = (spark.read.parquet(ParquetFileConstants.LEARNER_LEADERBOARD_PARQUET_FILE)
-             .select("userid", "rank").alias("l"))
+            with profiling.phase(JOB_NAME, "read", "learnerLeaderboardDF", spark=spark):
+                learnerLeaderboardDF = (spark.read.parquet(ParquetFileConstants.LEARNER_LEADERBOARD_PARQUET_FILE)
+                 .select("userid", "rank").alias("l"))
 
             u = userLeaderboardDF.alias("u")
             finalDF = (u.join(learnerLeaderboardDF, on="userid", how="left")
@@ -91,16 +97,19 @@ class LearnerLeaderBoardModel:
                 F.col("u.year"),
                 F.coalesce(F.col("l.rank"), F.lit(0)).alias("previous_rank")))
             # Write to Cassandra
-            utils.writeToCassandra(finalDF, config.cassandraUserKeyspace, config.cassandraLearnerLeaderBoardTable)
-            utils.writeToCassandra(finalDF.select("userid", "row_num"), config.cassandraUserKeyspace, config.cassandraLearnerLeaderBoardLookupTable)
+            with profiling.phase(JOB_NAME, "db_write", "finalDF", spark=spark):
+                utils.writeToCassandra(finalDF, config.cassandraUserKeyspace, config.cassandraLearnerLeaderBoardTable)
+            with profiling.phase(JOB_NAME, "db_write", "finalDF_lookup", spark=spark):
+                utils.writeToCassandra(finalDF.select("userid", "row_num"), config.cassandraUserKeyspace, config.cassandraLearnerLeaderBoardLookupTable)
         except Exception as e:
             print(f"Error occurred during LearnerLeaderBoardModel processing: {str(e)}")
             raise
 
 def create_spark_session_with_packages(config):
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Learner leaderboard Model - Cached") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "18g") \
         .config("spark.driver.memory", "18g") \
@@ -117,6 +126,9 @@ def create_spark_session_with_packages(config):
         .config("spark.cassandra.connection.keepAliveMS", "60000") \
         .config("spark.cassandra.connection.timeoutMS", '30000') \
         .config("spark.cassandra.read.timeoutMS", '30000') \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     return spark
 
@@ -129,12 +141,19 @@ def main():
     config = create_config(config_dict)
     spark = create_spark_session_with_packages(config)
     model = LearnerLeaderBoardModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Learner leaderboard completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Learner leaderboard completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 
 if __name__ == "__main__":

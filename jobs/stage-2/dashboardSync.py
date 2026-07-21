@@ -53,9 +53,14 @@ from dfutil.enrolment import enrolmentDFUtil
 from constants.QueryConstants import QueryConstants
 from dfutil.assessment import assessmentDFUtil
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
 from dfutil.utils.utils import dispatch_df_to_kafka
+
+JOB_NAME = "dashboardSync"
+
+
 class DashboardDuckDBExecutor:
     """DuckDB Query Executor for optimized SQL queries"""
 
@@ -138,8 +143,10 @@ class DashboardSyncModel:
             # ===== PHASE 4: CBP Top 10 Reviews (Scala line 114) =====
             self.cbp_top_10_reviews(spark, config)
             # ===== PHASE 5: Kafka displatches for druid ingest =====
-            enrolmentWarehouseComputed = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            contentWarehouseComputed = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "enrolmentWarehouseComputed", spark=spark):
+                enrolmentWarehouseComputed = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "contentWarehouseComputed", spark=spark):
+                contentWarehouseComputed = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
             #userDF = spark.read.parquet(ParquetFileConstants.USER_SELECT_PARQUET_FILE)
             #orgDF = spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE)
            # STEP 1: Select only needed columns from each DF to reduce size
@@ -661,7 +668,8 @@ class DashboardSyncModel:
 
         try:
             # Load content with competencies (Scala line 652-654)
-            content_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark):
+                content_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
             content_df = content_df.filter(
                 col("courseStatus").isin("Live", "Retired")
             ).select("courseID", "competencyAreaRefId", "competencyThemeRefId",
@@ -1051,7 +1059,8 @@ class DashboardSyncModel:
                 return
 
             # Courses under 30 mins (Scala lines 1298-1301)
-            content_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark):
+                content_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
             cbps_under_30mins_df = content_df.filter(
                 (col("courseStatus") == "Live") &
                 (col("courseDuration") < 1800) &
@@ -1096,11 +1105,16 @@ class DashboardSyncModel:
 
         try:
             # Load warehouse tables
-            user_org_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-            user_warehouse_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            enrolment_warehouse_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            events_df = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "user_org_df", spark=spark):
+                user_org_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+            with profiling.phase(JOB_NAME, "read", "user_warehouse_df", spark=spark):
+                user_warehouse_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "enrolment_warehouse_df", spark=spark):
+                enrolment_warehouse_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark):
+                content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "events_df", spark=spark):
+                events_df = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
 
             # Create joined enrolment data with userOrgID and courseDuration
             enrolment_df = enrolment_warehouse_df \
@@ -1230,9 +1244,12 @@ class DashboardSyncModel:
 
         try:
             # Load warehouse tables and create joined data
-            user_warehouse_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            enrolment_warehouse_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "user_warehouse_df", spark=spark):
+                user_warehouse_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "enrolment_warehouse_df", spark=spark):
+                enrolment_warehouse_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark):
+                content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
 
             # Create joined enrolment data
             enrolment_df = enrolment_warehouse_df \
@@ -1306,7 +1323,8 @@ class DashboardSyncModel:
             print(f"📝 Redis Key: lhp_certificationsTillYesterday, Value: {total_certs_yesterday}")
 
             # Event certifications (Scala lines 1189-1201)
-            events_df = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "events_df", spark=spark):
+                events_df = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
             nlw_start_date = QueryConstants.NLW_START_DATE.strip("'")
 
             total_event_certs_today = events_df.filter(
@@ -1370,9 +1388,12 @@ class DashboardSyncModel:
 
         try:
             # Load warehouse tables and create joined data
-            user_warehouse_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            enrolment_warehouse_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "user_warehouse_df", spark=spark):
+                user_warehouse_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "enrolment_warehouse_df", spark=spark):
+                enrolment_warehouse_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark):
+                content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
 
             # Create joined enrolment data
             enrolment_df = enrolment_warehouse_df \
@@ -1512,8 +1533,9 @@ class DashboardSyncModel:
 # ============================================================================
 def main():
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-    .appName("DashboardSync") \
+    .appName(f'{JOB_NAME}_{run_id}') \
     .config("spark.executor.memory", "25g") \
     .config("spark.driver.memory", "20g") \
     .config("spark.driver.maxResultSize", "4g") \
@@ -1529,6 +1551,9 @@ def main():
     .config("spark.sql.adaptive.enabled", "true") \
     .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
     .config("spark.sql.adaptive.skewJoin.enabled", "true") \
+    .config("spark.eventLog.enabled", "true") \
+    .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+    .config("spark.eventLog.compress", "true") \
     .getOrCreate()
     spark.sparkContext.setCheckpointDir("/home/analytics/spark-checkpoints")
     # Create model instance
@@ -1538,12 +1563,19 @@ def main():
     config = create_config(config_dict)
     model = DashboardSyncModel()
     timestamp = int(datetime.now().timestamp() * 1000)
-    model.process_data(spark,config, timestamp)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] DashboardSync processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark,config, timestamp)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] DashboardSync processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 if __name__ == "__main__":
     main()

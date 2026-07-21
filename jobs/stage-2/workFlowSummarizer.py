@@ -11,6 +11,13 @@ import json
 from collections import defaultdict
 import hashlib
 import uuid
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from dfutil.utils import profiling
+
+JOB_NAME = "workFlowSummarizer"
 
 # Immutable data classes for type safety
 @dataclass(frozen=True)
@@ -422,94 +429,109 @@ class WorkFlowSummaryModel:
 def main():
     """Main execution function with comprehensive test data"""
     # Initialize Spark Session with optimized settings
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("CompleteWorkflowSummary") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "20g") \
         .config("spark.driver.memory", "12g") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
-    
+
     sc = spark.sparkContext
     sc.setLogLevel("ERROR")  # Reduce log noise
 
     start_time = datetime.now()
     print(f"[START] Complete WorkFlow Summary processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # Comprehensive test data that matches Scala test scenarios
-    input_data = sc.parallelize([
-        ])
+    status, error_msg = "ok", None
+    try:
+        # Comprehensive test data that matches Scala test scenarios
+        input_data = sc.parallelize([
+            ])
 
-    config = {
-        "idleTime": 600,        # 10 minutes idle time threshold
-        "sessionBreakTime": 30,  # 30 minutes session break
-        "parallelization": 20
-    }
+        config = {
+            "idleTime": 600,        # 10 minutes idle time threshold
+            "sessionBreakTime": 30,  # 30 minutes session break
+            "parallelization": 20
+        }
 
-    # Run the complete workflow
-    print("\n[PHASE 1] Pre-processing events...")
-    processed_data = WorkFlowSummaryModel.pre_process(input_data, config, sc)
-    print(f"[INFO] Processed {processed_data.count()} workflow groups")
+        # Run the complete workflow
+        print("\n[PHASE 1] Pre-processing events...")
+        with profiling.phase(JOB_NAME, "process", "pre_process", spark=spark):
+            processed_data = WorkFlowSummaryModel.pre_process(input_data, config, sc)
+            print(f"[INFO] Processed {processed_data.count()} workflow groups")
 
-    print("\n[PHASE 2] Running core algorithm...")
-    result = WorkFlowSummaryModel.algorithm(processed_data, config, sc)
-    print(f"[INFO] Generated {result.count()} session summaries")
+        print("\n[PHASE 2] Running core algorithm...")
+        with profiling.phase(JOB_NAME, "process", "algorithm", spark=spark):
+            result = WorkFlowSummaryModel.algorithm(processed_data, config, sc)
+            print(f"[INFO] Generated {result.count()} session summaries")
 
-    print("\n[PHASE 3] Post-processing...")
-    output = WorkFlowSummaryModel.post_process(result, config, sc)
+        print("\n[PHASE 3] Post-processing...")
+        with profiling.phase(JOB_NAME, "process", "post_process", spark=spark):
+            output = WorkFlowSummaryModel.post_process(result, config, sc)
 
-    # Collect and display results
-    print("\n[RESULTS] Workflow Session Summaries:")
-    print("=" * 80)
-    
-    results = output.collect()
-    for i, summary in enumerate(results, 1):
-        print(f"\n📊 Session Summary {i}:")
-        print(f"   Session ID: {summary.get('edata', {}).get('session_id', 'N/A')}")
-        print(f"   Type: {summary.get('edata', {}).get('type', 'N/A')}")
-        print(f"   Mode: {summary.get('edata', {}).get('mode', 'N/A')}")
-        print(f"   Duration: {summary.get('edata', {}).get('duration', 0):.2f} seconds")
-        print(f"   Events: {summary.get('edata', {}).get('event_count', 0)}")
-        print(f"   Interactions: {summary.get('edata', {}).get('interactions', 0)}")
-        print(f"   Completed: {summary.get('edata', {}).get('is_completed', False)}")
-        print(f"   Parent: {summary.get('edata', {}).get('parent_session_id', 'None')}")
-        print(f"   Engagement: {summary.get('edata', {}).get('engagement_ratio', 0):.2f}")
-        
-        # Show full JSON for detailed analysis
-        if i <= 3:  # Show first 3 in detail
-            print(f"   Full JSON:")
-            print(json.dumpss(summary, indent=4))
-    
-    # Print comprehensive statistics
-    print(f"\n[STATISTICS]")
-    print("=" * 50)
-    print(f"📈 Total Sessions: {len(results)}")
-    
-    completed_sessions = [s for s in results if s.get('edata', {}).get('is_completed', False)]
-    print(f"✅ Completed Sessions: {len(completed_sessions)}")
-    
-    nested_sessions = [s for s in results if s.get('edata', {}).get('parent_session_id')]
-    print(f"🔗 Nested Sessions: {len(nested_sessions)}")
-    
-    session_types = {}
-    for s in results:
-        session_type = s.get('edata', {}).get('type', 'unknown')
-        session_types[session_type] = session_types.get(session_type, 0) + 1
-    
-    print(f"📊 Session Types: {dict(session_types)}")
-    
-    total_duration = sum(s.get('edata', {}).get('duration', 0) for s in results)
-    print(f"⏱️  Total Duration: {total_duration:.2f} seconds ({total_duration/60:.2f} minutes)")
-    
-    avg_engagement = sum(s.get('edata', {}).get('engagement_ratio', 0) for s in results) / len(results) if results else 0
-    print(f"💫 Average Engagement: {avg_engagement:.2f}")
-    
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"\n[COMPLETION]")
-    print("=" * 50)
-    print(f"🏁 Processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"⏰ Total processing time: {duration}")
-    print(f"🚀 Success! Generated {len(results)} session summaries matching Scala behavior")
+            # Collect and display results
+            print("\n[RESULTS] Workflow Session Summaries:")
+            print("=" * 80)
+
+            results = output.collect()
+        for i, summary in enumerate(results, 1):
+            print(f"\n📊 Session Summary {i}:")
+            print(f"   Session ID: {summary.get('edata', {}).get('session_id', 'N/A')}")
+            print(f"   Type: {summary.get('edata', {}).get('type', 'N/A')}")
+            print(f"   Mode: {summary.get('edata', {}).get('mode', 'N/A')}")
+            print(f"   Duration: {summary.get('edata', {}).get('duration', 0):.2f} seconds")
+            print(f"   Events: {summary.get('edata', {}).get('event_count', 0)}")
+            print(f"   Interactions: {summary.get('edata', {}).get('interactions', 0)}")
+            print(f"   Completed: {summary.get('edata', {}).get('is_completed', False)}")
+            print(f"   Parent: {summary.get('edata', {}).get('parent_session_id', 'None')}")
+            print(f"   Engagement: {summary.get('edata', {}).get('engagement_ratio', 0):.2f}")
+
+            # Show full JSON for detailed analysis
+            if i <= 3:  # Show first 3 in detail
+                print(f"   Full JSON:")
+                print(json.dumpss(summary, indent=4))
+
+        # Print comprehensive statistics
+        print(f"\n[STATISTICS]")
+        print("=" * 50)
+        print(f"📈 Total Sessions: {len(results)}")
+
+        completed_sessions = [s for s in results if s.get('edata', {}).get('is_completed', False)]
+        print(f"✅ Completed Sessions: {len(completed_sessions)}")
+
+        nested_sessions = [s for s in results if s.get('edata', {}).get('parent_session_id')]
+        print(f"🔗 Nested Sessions: {len(nested_sessions)}")
+
+        session_types = {}
+        for s in results:
+            session_type = s.get('edata', {}).get('type', 'unknown')
+            session_types[session_type] = session_types.get(session_type, 0) + 1
+
+        print(f"📊 Session Types: {dict(session_types)}")
+
+        total_duration = sum(s.get('edata', {}).get('duration', 0) for s in results)
+        print(f"⏱️  Total Duration: {total_duration:.2f} seconds ({total_duration/60:.2f} minutes)")
+
+        avg_engagement = sum(s.get('edata', {}).get('engagement_ratio', 0) for s in results) / len(results) if results else 0
+        print(f"💫 Average Engagement: {avg_engagement:.2f}")
+
+        completion_time = datetime.now()
+        print(f"\n[COMPLETION]")
+        print("=" * 50)
+        print(f"🏁 Processing completed at: {completion_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"⏰ Total processing time: {completion_time - start_time}")
+        print(f"🚀 Success! Generated {len(results)} session summaries matching Scala behavior")
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
 
     # Stop Spark session
     spark.stop()

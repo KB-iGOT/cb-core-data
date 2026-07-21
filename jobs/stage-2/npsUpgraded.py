@@ -23,8 +23,11 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 # Reusable imports from userReport structure
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+
+JOB_NAME = "npsUpgraded"
 
 
 class NPSUpgradedModel:
@@ -96,8 +99,10 @@ class NPSUpgradedModel:
                 .withColumn("version", lit("v1"))
             )
 
-            utils.writeToCassandra(additional_df, config.cassandraUserFeedKeyspace, config.cassandraUserFeedTable)
-            utils.writeToCassandra(additional_df, "sunbird_notifications", "notification_feed_history")
+            with profiling.phase(JOB_NAME, "db_write", "user_feed_cassandra", spark=spark):
+                utils.writeToCassandra(additional_df, config.cassandraUserFeedKeyspace, config.cassandraUserFeedTable)
+            with profiling.phase(JOB_NAME, "db_write", "notification_feed_history_cassandra", spark=spark):
+                utils.writeToCassandra(additional_df, "sunbird_notifications", "notification_feed_history")
 
             print("[SUCCESS] NpsUpgradeModel completed")
 
@@ -110,18 +115,20 @@ class NPSUpgradedModel:
 
     def userUpgradedFeedFromCassandraDataFrame(self, spark, config):
         """Users already having NPS2 feed in user_feed table (Cassandra)."""
-        df = utils.read_cassandra_table(spark, config.cassandraUserFeedKeyspace, config.cassandraUserFeedTable)\
-            .select(col("userid").alias("userid"))\
-            .where(col("category") == "NPS2")
+        with profiling.phase(JOB_NAME, "read", "cassandra_feed_df", spark=spark):
+            df = utils.read_cassandra_table(spark, config.cassandraUserFeedKeyspace, config.cassandraUserFeedTable)\
+                .select(col("userid").alias("userid"))\
+                .where(col("category") == "NPS2")
         if df is None:
             return spark.createDataFrame([], self.nps_userids_schema())
         return df.na.drop(subset=["userid"])
 
     def npsUpgradedTriggerC1DataFrame(self, spark, config):
         """Users who saw the upgraded NPS popup in last 15 days (from Druid)."""
-        query = """SELECT userID as userid FROM "nps-upgraded-users-data" WHERE __time >= CURRENT_TIMESTAMP - 
+        query = """SELECT userID as userid FROM "nps-upgraded-users-data" WHERE __time >= CURRENT_TIMESTAMP -
         INTERVAL '15' DAY"""
-        df = utils.druidDFOption(query, config.sparkDruidRouterHost, limit=1000000, spark=spark)
+        with profiling.phase(JOB_NAME, "read", "c1_trigger_df", spark=spark):
+            df = utils.druidDFOption(query, config.sparkDruidRouterHost, limit=1000000, spark=spark)
         if df is None:
             return spark.createDataFrame([], self.nps_userids_schema())
         return df.na.drop(subset=["userid"])  # ensure clean ids
@@ -130,10 +137,11 @@ class NPSUpgradedModel:
         """Users enrolled/completed at least 1 course in last 15 days (from Cassandra)."""
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         fifteen_days_ago_start = today_start - timedelta(days=15)
-        enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)\
-            .filter((col("firstCompletedOn").between(lit(fifteen_days_ago_start), lit(today_start)))
-                    | (col("courseEnrolledTimestamp").between(lit(fifteen_days_ago_start), lit(today_start)))
-                    ).select("userid").distinct()
+        with profiling.phase(JOB_NAME, "read", "enrolment_df", spark=spark):
+            enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)\
+                .filter((col("firstCompletedOn").between(lit(fifteen_days_ago_start), lit(today_start)))
+                        | (col("courseEnrolledTimestamp").between(lit(fifteen_days_ago_start), lit(today_start)))
+                        ).select("userid").distinct()
         return enrolment_df
 
     def npsUpgradedTriggerC3DataFrame(self, spark, config):
@@ -148,19 +156,21 @@ class NPSUpgradedModel:
         today_start_ms = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
         fifteen_days_ago_start_ms = int(
             (datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=15)).timestamp() * 1000)
-        ratings_df = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)\
-            .filter(col("createdon").isNotNull())\
-            .withColumn("rated_on", timeuuid_to_millis_udf(col("createdon")))\
-            .where((col("rated_on") >= lit(fifteen_days_ago_start_ms)) & (col("rated_on") < lit(today_start_ms)))\
-            .select("userid")\
-            .distinct()
+        with profiling.phase(JOB_NAME, "read", "ratings_df", spark=spark):
+            ratings_df = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)\
+                .filter(col("createdon").isNotNull())\
+                .withColumn("rated_on", timeuuid_to_millis_udf(col("createdon")))\
+                .where((col("rated_on") >= lit(fifteen_days_ago_start_ms)) & (col("rated_on") < lit(today_start_ms)))\
+                .select("userid")\
+                .distinct()
 
         return ratings_df
 
 def create_spark_session_with_packages(config):
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("NPS Upgraded Model - Cached") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "18g") \
         .config("spark.driver.memory", "18g") \
@@ -178,6 +188,9 @@ def create_spark_session_with_packages(config):
         .config("spark.cassandra.connection.keepAliveMS", "60000") \
         .config("spark.cassandra.connection.timeoutMS", '30000') \
         .config("spark.cassandra.read.timeoutMS", '30000') \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     return spark
 
@@ -190,11 +203,18 @@ def main():
     config = create_config(config_dict)
     spark = create_spark_session_with_packages(config)
     model = NPSUpgradedModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] NPS completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] NPS completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 

@@ -15,6 +15,7 @@ from dfutil.content import contentDFUtil
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.dfexport import dfexportutil
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from util import schemas
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
@@ -22,7 +23,9 @@ from jobs.default_config import create_config
 
 from constants.ParquetFileConstants import ParquetFileConstants
 
-class CourseReportModel:    
+JOB_NAME = "courseReport"
+
+class CourseReportModel:
     def __init__(self):
         self.class_name = "org.ekstep.analytics.dashboard.report.CourseReportModel"
         
@@ -57,9 +60,12 @@ class CourseReportModel:
             course_categories= config.courseCategoriesToSelect
 
             
-            allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("courseCategory").isin(course_categories))
-            contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
-            enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
+            with profiling.phase(JOB_NAME, "read", "allCourseProgramDetailsDF", spark=spark):
+                allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("courseCategory").isin(course_categories))
+            with profiling.phase(JOB_NAME, "read", "contentHierarchyDF", spark=spark):
+                contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
+            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark):
+                enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
 
             getContentResourceWithCategoryDF = contentHierarchyDF \
                 .join(allCourseProgramDetailsDF, ["courseID"], "inner") \
@@ -127,7 +133,8 @@ class CourseReportModel:
             report_path=f"{config.localReportDir}/{config.courseReportPath}/{today}"
 
             # Write to warehouse - single coalesce operation
-            distinctDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwContentResourceTable}")
+            with profiling.phase(JOB_NAME, "write", "distinctDF", spark=spark):
+                distinctDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwContentResourceTable}")
 
             courseResCountDF = allCourseProgramDetailsDF.select("courseID", "courseResourceCount")
             userEnrolmentDF=enrolmentDF.join(
@@ -154,7 +161,8 @@ class CourseReportModel:
 
             allCBPAndAggDF = allCourseProgramDetailsDF.join(aggregatedDF, ["courseID"], "left")
 
-            courseBatchDF=spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE) 
+            with profiling.phase(JOB_NAME, "read", "courseBatchDF", spark=spark):
+                courseBatchDF=spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE)
 
             curatedCourseDataDFWithBatchInfo = allCBPAndAggDF \
             .join(
@@ -178,21 +186,23 @@ class CourseReportModel:
             .withColumn("ArchivedOn", when(col("courseStatus") == "Retired", to_date(col("lastStatusChangedOn"), ParquetFileConstants.DATE_FORMAT))) \
             .withColumn("Report_Last_Generated_On", currentDateTime)
 
-            marketPlaceEnrolmentsDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE) \
-            .withColumn("issuedCertificateCountPerContent", 
-                        when(size(col("issued_certificates")) > 0, lit(1)).otherwise(lit(0))) \
-            .groupBy("content_id") \
-            .agg(
-                F_count(lit(1)).alias("enrolledUserCount"),
-                F_sum(when(col("status") == 1, 1).otherwise(0)).alias("inProgressCount"),
-                F_sum(when(col("status") == 0, 1).otherwise(0)).alias("notStartedCount"),
-                F_sum(when(col("status") == 2, 1).otherwise(0)).alias("completedCount"),
-                F_sum(col("issuedCertificateCountPerContent")).alias("totalCertificatesIssued"),
-                F_min("completedon").alias("earliestCompletedOn"),
-                F_max("completedon").alias("latestCompletedOn")
-            ) 
+            with profiling.phase(JOB_NAME, "read", "marketPlaceEnrolmentsDF", spark=spark):
+                marketPlaceEnrolmentsDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE) \
+                .withColumn("issuedCertificateCountPerContent",
+                            when(size(col("issued_certificates")) > 0, lit(1)).otherwise(lit(0))) \
+                .groupBy("content_id") \
+                .agg(
+                    F_count(lit(1)).alias("enrolledUserCount"),
+                    F_sum(when(col("status") == 1, 1).otherwise(0)).alias("inProgressCount"),
+                    F_sum(when(col("status") == 0, 1).otherwise(0)).alias("notStartedCount"),
+                    F_sum(when(col("status") == 2, 1).otherwise(0)).alias("completedCount"),
+                    F_sum(col("issuedCertificateCountPerContent")).alias("totalCertificatesIssued"),
+                    F_min("completedon").alias("earliestCompletedOn"),
+                    F_max("completedon").alias("latestCompletedOn")
+                )
 
-            marketPlaceContentsDF= spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "marketPlaceContentsDF", spark=spark):
+                marketPlaceContentsDF= spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
             
             marketPlaceContentWithEnrolmentsDF = contentDFUtil.duration_format(marketPlaceContentsDF, "courseDuration") \
                 .join(marketPlaceEnrolmentsDF, ["content_id"], "outer") \
@@ -311,12 +321,13 @@ class CourseReportModel:
 
             print("📝 Writing CSV reports...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
-                mdoReportDF, 
+                mdoReportDF,
                 report_path,
                 'mdoid',
                 f"{config.localReportDir}/temp/course_report/{today}",
                 orgid_list,
-                csv_filename=config.courseReport
+                csv_filename=config.courseReport,
+                job_name=JOB_NAME
             )
             contentHierarchyExploded = contentHierarchyDF.withColumn("hierarchy", from_json(col("hierarchy"), schemas.hierarchySchema))
 
@@ -366,10 +377,12 @@ class CourseReportModel:
                     col('difficultyLevel').alias('difficulty_level'),
                     col("data_last_generated_on")
                 )
-            orgComputedDF = spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE) \
-                .select(col("orgId").alias("content_provider_id"), 
-                        col("orgName").alias("content_provider_name"))
-            es_final_assessment_df = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "orgComputedDF", spark=spark):
+                orgComputedDF = spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE) \
+                    .select(col("orgId").alias("content_provider_id"),
+                            col("orgName").alias("content_provider_name"))
+            with profiling.phase(JOB_NAME, "read", "es_final_assessment_df", spark=spark):
+                es_final_assessment_df = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
             es_final_assessment_df = es_final_assessment_df.select(
                 col("Identifier").alias("content_id"),
                 col("createdFor").getItem(0).alias("content_provider_id"),
@@ -403,7 +416,8 @@ class CourseReportModel:
             platformContentWarehouseDF = platformContentWarehouseDF.unionByName(es_final_assessment_df)
 
             df_warehouse = platformContentWarehouseDF.union(marketPlaceContentWarehouseDF)
-            df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
+            with profiling.phase(JOB_NAME, "write", "df_warehouse", spark=spark):
+                df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
 
         except Exception as e:
             print(f"❌ Error occurred during CourseReportModel processing: {str(e)}")
@@ -414,11 +428,12 @@ def main():
     config_dict = get_environment_config()
     config = create_config(config_dict)
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0 pyspark-shell'
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Course Report Model") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "30g") \
-        .config("spark.driver.memory", "25g") \
+        .config("spark.executor.memory", "4g") \
+        .config("spark.driver.memory", "8g") \
         .config("spark.executor.memoryFraction", "0.7") \
         .config("spark.storage.memoryFraction", "0.2") \
         .config("spark.storage.unrollFraction", "0.1") \
@@ -431,16 +446,26 @@ def main():
         .config("es.index.auto.create", "false") \
         .config("es.nodes.wan.only", "true") \
         .config("es.nodes.discovery", "false") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
-    
+
     start_time = datetime.now()
     print(f"[START] CourseReportModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = CourseReportModel()
-    model.process_data(spark,config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] CourseReportModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark,config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] CourseReportModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 if __name__ == "__main__":
    main()

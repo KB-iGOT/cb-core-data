@@ -13,10 +13,13 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.utils import utils
+from dfutil.utils import profiling
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
 
-class InAppReviewModel:    
+JOB_NAME = "inappReview"
+
+class InAppReviewModel:
     def __init__(self):
         self.class_name = "org.ekstep.analytics.dashboard.report.InAppReviewModel"
         
@@ -34,8 +37,9 @@ class InAppReviewModel:
     def process_data(self, spark,conf):
         try:
             today = self.get_date()
-            
-            weeklyClapsDF = spark.read.parquet(ParquetFileConstants.CLAPS_PARQUET_FILE)
+
+            with profiling.phase(JOB_NAME, "read", "weeklyClapsDF", spark=spark):
+                weeklyClapsDF = spark.read.parquet(ParquetFileConstants.CLAPS_PARQUET_FILE)
             
             # calculate end of the week to set an expiry date for the feeds
             def endOfWeek(today_date):
@@ -83,8 +87,9 @@ class InAppReviewModel:
                 .withColumn("updatedon", lit(None).cast("date")) \
                 .withColumn("version", lit("v1"))
             
-            utils.writeToCassandra(result_df,conf.cassandraUserFeedKeyspace,conf.cassandraUserFeedTable)
-                
+            with profiling.phase(JOB_NAME, "write", "result_df", spark=spark):
+                utils.writeToCassandra(result_df,conf.cassandraUserFeedKeyspace,conf.cassandraUserFeedTable)
+
         except Exception as e:
             print(f"Error occurred during InAppReviewModel processing: {str(e)}")
             import sys
@@ -95,8 +100,9 @@ def main():
     config_dict = get_environment_config()
     config = create_config(config_dict)
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("In App Review Report Model") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "15g") \
         .config("spark.driver.memory", "10g") \
@@ -113,18 +119,32 @@ def main():
         .config("spark.cassandra.connection.keepAliveMS", "60000") \
         .config("spark.cassandra.connection.timeoutMS", '30000') \
         .config("spark.cassandra.read.timeoutMS", '30000') \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
-    
+
     # Create model instance
     start_time = datetime.now()
     print(f"[START] InAppReviewModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = InAppReviewModel()
-    model.process_data(spark,config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] InAppReviewModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "error", None
+    try:
+        model.process_data(spark,config)
+        status = "ok"
+    except SystemExit as e:
+        error_msg = f"SystemExit: {e}"
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] InAppReviewModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 if __name__ == "__main__":
    main()

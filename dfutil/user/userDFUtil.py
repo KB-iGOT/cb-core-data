@@ -11,6 +11,7 @@ from pyspark.sql.types import LongType
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from util import schemas
 from constants.ParquetFileConstants import ParquetFileConstants
+from dfutil.utils import profiling
 
 
 def preComputeUser(spark: SparkSession) -> DataFrame:
@@ -215,12 +216,15 @@ def appendEventDurationCompletionForEachUser(spark: SparkSession, user_enrolment
     return user_enrolment_df
 
 
-def exportDFToParquet(df: DataFrame, outputFile: str):
+def exportDFToParquet(df: DataFrame, outputFile: str, job_name: str = None, stage_name: str = None):
     """
     Writes the DataFrame to Parquet file using snappy compression.
     """
-    df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
-    df.unpersist(blocking=True)
+    job_name = job_name or "stage1_dfutil"
+    stage_name = stage_name or Path(outputFile).name
+    with profiling.phase(job_name, "write", stage_name):
+        df.write.mode("overwrite").option("compression", "snappy").parquet(outputFile)
+        df.unpersist(blocking=True)
 
 
 def timestampStringToLong(df: DataFrame, column_names: list, format: str = "yyyy-MM-dd HH:mm:ss:SSSZ") -> DataFrame:
@@ -244,13 +248,14 @@ def preComputeUserWarehouseData(spark):
 
         print("Loading and processing user warehouse data...")
 
-        user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-        user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-        content_duration_df = (
-            spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
-            .filter((col("courseCategory") == "Course"))
-            .select(col("courseID").alias("content_id"), col("courseDuration").cast("double"), col("category"))
-        )
+        with profiling.phase("stage1_dfutil", "read", "user_warehouse_reads", spark=spark):
+            user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+            user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            content_duration_df = (
+                spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+                .filter((col("courseCategory") == "Course"))
+                .select(col("courseID").alias("content_id"), col("courseDuration").cast("double"), col("category"))
+            )
 
         # Process data pipeline
         user_complete_data = (
@@ -301,7 +306,8 @@ def preComputeUserWarehouseData(spark):
         )
 
         # Write warehouse data
-        exportDFToParquet(warehouseDF.coalesce(1), ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
+        exportDFToParquet(warehouseDF.coalesce(1), ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE,
+                           job_name="stage1_dfutil", stage_name="user_warehouse_write")
         print(f"User warehouse data generation completed")
         return warehouseDF
 

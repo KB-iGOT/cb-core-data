@@ -12,8 +12,11 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 # Reusable imports from userReport structure
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 from jobs.default_config import create_config
 from jobs.config import KAFKA_CONFIG, get_environment_config
+
+JOB_NAME = "gamificationNotificationProducer"
 
 class GamificationNotificationProducer:
     def __init__(self,spark: SparkSession, config):
@@ -56,7 +59,8 @@ class GamificationNotificationProducer:
     def send_notification(self):
         try:
             print("Step 1: Reading Gamification Data...")
-            gamificationUsersDF = self.spark.read.parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE).filter((col("dbCompletionStatus") == 1) & (col("badge_earning_date").isNotNull()))
+            with profiling.phase(JOB_NAME, "read", "gamificationUsersDF", spark=self.spark):
+                gamificationUsersDF = self.spark.read.parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE).filter((col("dbCompletionStatus") == 1) & (col("badge_earning_date").isNotNull()))
             print("✅ Step 1 Complete")
 
             print("Step 2: Calculating Notification Eligible Dates...")
@@ -72,7 +76,8 @@ class GamificationNotificationProducer:
             print("✅ Step 3 Complete")
 
             print("Step 4: Reading Course Reminder States...")
-            notification_queue = self.read_postgres_table(self.config.dwnotificationQueue).select(col("notification_id"))
+            with profiling.phase(JOB_NAME, "read", "notification_queue", spark=self.spark):
+                notification_queue = self.read_postgres_table(self.config.dwnotificationQueue).select(col("notification_id"))
             print("✅ Step 4 Complete")
 
             print("Step 5: Joining with State Data...")
@@ -116,7 +121,8 @@ class GamificationNotificationProducer:
                 )).alias("payload"),
                 current_timestamp().alias("created_at")) \
                 .select("user_id", "event_type", "content_id", "course_name" ,"payload", "notification_id", "created_at")
-            self.write_postgres_table(notificationDF, self.config.dwnotificationQueue, mode="append")
+            with profiling.phase(JOB_NAME, "db_write", "notificationDF", spark=self.spark):
+                self.write_postgres_table(notificationDF, self.config.dwnotificationQueue, mode="append")
             print("✅ Step 6 Complete")
 
             print("Processing Complete. Notifications have been saved to the database and state has been updated.")
@@ -129,8 +135,9 @@ def main():
     os.environ[
         'PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Gamification Notification Producer Model") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "18g") \
         .config("spark.driver.memory", "18g") \
@@ -142,6 +149,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
     start_time = datetime.now()
@@ -149,12 +159,19 @@ def main():
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = GamificationNotificationProducer(spark, config)
-    model.send_notification()
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Gamification Notification Producer completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.send_notification()
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Gamification Notification Producer completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 if __name__ == "__main__":
     main()

@@ -17,6 +17,9 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 # Reusable imports from userReport structure
 from jobs.default_config import create_config
 from jobs.config import KAFKA_CONFIG, get_environment_config
+from dfutil.utils import profiling
+
+JOB_NAME = "peerValidationNotificationSender"
 
 class PeerValidationNotificationSender:
     def __init__(self,spark: SparkSession, config):
@@ -99,8 +102,9 @@ class PeerValidationNotificationSender:
 
     def send_notification(self):
         try:
-            pendingNotificationDF = self.read_postgres_table(self.config.dwpeerValidationNotificationQueue) \
-            .filter(col("status") == "PENDING")
+            with profiling.phase(JOB_NAME, "read", "pendingNotificationDF", spark=self.spark):
+                pendingNotificationDF = self.read_postgres_table(self.config.dwpeerValidationNotificationQueue) \
+                .filter(col("status") == "PENDING")
 
             if pendingNotificationDF.count() == 0:
                 print("[INFO] No pending notifications.")
@@ -193,17 +197,19 @@ class PeerValidationNotificationSender:
                     StructField("updated_at", TimestampType(), True),
                 ])
                 resultsDF = self.spark.createDataFrame(results, schema=schema)
-                
+
                 # Update only status and error_message columns for existing rows
-                self.update_notification_status(resultsDF)
-                
+                with profiling.phase(JOB_NAME, "db_write", "notification_status_update", spark=self.spark):
+                    self.update_notification_status(resultsDF)
+
                 successDF = resultsDF.filter(col("status") == "SENT")
                 sent_count = successDF.count()
                 if sent_count > 0:
                     latestProcessedDF = successDF.groupBy("form_id") \
                     .agg(max("first_trigger_end").alias("last_processed_date"))
 
-                    existingFormStateDF = self.read_postgres_table(self.config.dwpeerValidationFormStateTable)
+                    with profiling.phase(JOB_NAME, "read", "existingFormStateDF", spark=self.spark):
+                        existingFormStateDF = self.read_postgres_table(self.config.dwpeerValidationFormStateTable)
                     formsToUpdateDF = existingFormStateDF.join(
                         latestProcessedDF,
                         existingFormStateDF["form_id"] == latestProcessedDF["form_id"],
@@ -212,7 +218,8 @@ class PeerValidationNotificationSender:
                     finalFormStateDF = formsToUpdateDF.union(
                     latestProcessedDF.withColumn("data_generated_at", current_timestamp())
                     )
-                    self.write_postgres_table(finalFormStateDF, self.config.dwpeerValidationFormStateTable, mode="overwrite")
+                    with profiling.phase(JOB_NAME, "db_write", "finalFormStateDF", spark=self.spark):
+                        self.write_postgres_table(finalFormStateDF, self.config.dwpeerValidationFormStateTable, mode="overwrite")
 
                     kafkaDF = successDF.groupBy("form_id").count() \
                         .withColumnRenamed("count", "incrementBy") \
@@ -225,7 +232,8 @@ class PeerValidationNotificationSender:
                         col("timestamp")
                     )
                     from dfutil.utils.utils import dispatch_df_to_kafka
-                    dispatch_df_to_kafka(kafkaDF, self.config.peerValidationKafkaTopic, broker_list=self.config.kpBrokerList)
+                    with profiling.phase(JOB_NAME, "write", "kafkaDF", spark=self.spark):
+                        dispatch_df_to_kafka(kafkaDF, self.config.peerValidationKafkaTopic, broker_list=self.config.kpBrokerList)
 
                     print(f"[INFO] {sent_count} notifications sent successfully")
 
@@ -238,8 +246,9 @@ def main():
     os.environ[
         'PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Peer Validation Notification Sender Model") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "18g") \
         .config("spark.driver.memory", "18g") \
@@ -251,6 +260,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
     start_time = datetime.now()
@@ -258,11 +270,18 @@ def main():
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = PeerValidationNotificationSender(spark, config)
-    model.send_notification()
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Peer Validation Notification Sender completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.send_notification()
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Peer Validation Notification Sender completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 if __name__ == "__main__":

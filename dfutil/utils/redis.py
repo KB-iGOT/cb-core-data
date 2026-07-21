@@ -3,6 +3,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import StructType, Row
 from typing import Dict, Optional, Any
 import json
+from dfutil.utils import profiling
 
 class Redis:
     
@@ -370,7 +371,7 @@ class Redis:
         else:
             raise ValueError("Either conf or host/port/db must be provided")
 
-    def bulk_update(self, key_value_map: dict, conf=None, db: int = None, host: str = None, port: int = None):
+    def bulk_update(self, key_value_map: dict, conf=None, db: int = None, host: str = None, port: int = None, job_name: str = None):
         """
         Bulk update key-value pairs in Redis using pipeline.
         Follows same signature pattern as update().
@@ -380,22 +381,24 @@ class Redis:
             key_value_map : dict of {redis_key: value}
             conf          : config object with redisHost, redisPort, redisDB (optional)
             db            : Redis DB index (optional)
-            host          : Redis host (optional) 
+            host          : Redis host (optional)
             port          : Redis port (optional)
+            job_name      : calling job's name, for profiling attribution (optional)
         """
         src_host = host if host is not None else getattr(conf, 'redisHost', None)
         src_port = port if port is not None else getattr(conf, 'redisPort', None)
         print(f"[Redis] bulk_update called; host={src_host}, port={src_port}, db={db}, keys={len(key_value_map)}")
-        if conf is not None and db is not None:
-            self.bulk_update_with_params(conf.redisHost, conf.redisPort, db, key_value_map)
-        elif conf is not None:
-            self.bulk_update_with_params(conf.redisHost, conf.redisPort, conf.redisDB, key_value_map)
-        elif all(param is not None for param in [host, port, db]):
-            self.bulk_update_with_params(host, port, db, key_value_map)
-        else:
-            raise ValueError("Either conf or host/port/db must be provided")
+        with profiling.phase(job_name or "shared_utils", "redis_write", "bulk_update"):
+            if conf is not None and db is not None:
+                self.bulk_update_with_params(conf.redisHost, conf.redisPort, db, key_value_map)
+            elif conf is not None:
+                self.bulk_update_with_params(conf.redisHost, conf.redisPort, conf.redisDB, key_value_map)
+            elif all(param is not None for param in [host, port, db]):
+                self.bulk_update_with_params(host, port, db, key_value_map)
+            else:
+                raise ValueError("Either conf or host/port/db must be provided")
 
-    def bulk_update_in_batches(self, key_value_map: dict, batch_size: int = 1000, conf=None, db: int = None, host: str = None, port: int = None):
+    def bulk_update_in_batches(self, key_value_map: dict, batch_size: int = 1000, conf=None, db: int = None, host: str = None, port: int = None, job_name: str = None):
         """
         Bulk update key-value pairs in Redis in batches using pipeline.
 
@@ -406,6 +409,7 @@ class Redis:
             db            : Redis DB index (optional)
             host          : Redis host (optional)
             port          : Redis port (optional)
+            job_name      : calling job's name, for profiling attribution (optional)
         """
         src_host = host if host is not None else getattr(conf, 'redisHost', None)
         src_port = port if port is not None else getattr(conf, 'redisPort', None)
@@ -413,14 +417,15 @@ class Redis:
         if batch_size is None or batch_size <= 0:
             raise ValueError("batch_size must be a positive integer")
 
-        if conf is not None and db is not None:
-            self.bulk_update_in_batches_with_params(conf.redisHost, conf.redisPort, db, key_value_map, batch_size)
-        elif conf is not None:
-            self.bulk_update_in_batches_with_params(conf.redisHost, conf.redisPort, conf.redisDB, key_value_map, batch_size)
-        elif all(param is not None for param in [host, port, db]):
-            self.bulk_update_in_batches_with_params(host, port, db, key_value_map, batch_size)
-        else:
-            raise ValueError("Either conf or host/port/db must be provided")
+        with profiling.phase(job_name or "shared_utils", "redis_write", "bulk_update_in_batches"):
+            if conf is not None and db is not None:
+                self.bulk_update_in_batches_with_params(conf.redisHost, conf.redisPort, db, key_value_map, batch_size)
+            elif conf is not None:
+                self.bulk_update_in_batches_with_params(conf.redisHost, conf.redisPort, conf.redisDB, key_value_map, batch_size)
+            elif all(param is not None for param in [host, port, db]):
+                self.bulk_update_in_batches_with_params(host, port, db, key_value_map, batch_size)
+            else:
+                raise ValueError("Either conf or host/port/db must be provided")
 
     def bulk_update_in_batches_with_params(self, host: str, port: int, db: int, key_value_map: dict, batch_size: int = 1000):
         """Bulk update in batches with retry logic."""

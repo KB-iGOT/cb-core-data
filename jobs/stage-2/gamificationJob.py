@@ -26,17 +26,23 @@ from jobs.default_config import create_config
 from jobs.config import get_environment_config
 from dfutil.utils.redis import Redis
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 
+JOB_NAME = "gamificationJob"
 
 # Initialize Spark
+run_id = profiling.get_run_id()
 spark = SparkSession.builder \
-    .appName("GamificationJob") \
+    .appName(f'{JOB_NAME}_{run_id}') \
     .config("spark.executor.memory", "90g") \
     .config("spark.driver.memory", "120g") \
     .config("spark.sql.caseSensitive", "true") \
     .config("spark.sql.shuffle.partitions", "64") \
     .config("spark.sql.adaptive.enabled", "true") \
     .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+    .config("spark.eventLog.enabled", "true") \
+    .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+    .config("spark.eventLog.compress", "true") \
     .getOrCreate()
 
 print("✅ Spark Session initialized")
@@ -73,7 +79,8 @@ def processGamificationJob(config):
 
         # Step 1: Load Enrolment Data
         print("📚 Step 1: Loading Enrolment Data...")
-        enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
+        with profiling.phase(JOB_NAME, "read", "enrolment_df", spark=spark):
+            enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
 
         user_enrolment_df = (enrolment_df
                              .withColumn("badge_details", explode_outer("issued_badges"))
@@ -83,44 +90,47 @@ def processGamificationJob(config):
                                      col("badge_details")["issuedOn"].alias("badge_issued_on"))
                              .withColumn("badge_issued_ts", to_date(to_timestamp(col("badge_issued_on"), "yyyy-MM-dd'T'HH:mm:ss.SSSZ")))
                              )
-        external_enrolment_df = (spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
-                                 .withColumn("badge_details", explode_outer("issued_badges"))
-                                 .withColumn("certificateID",
-                                             when(col("issued_certificates").isNull(), "")
-                                             .otherwise(col("issued_certificates")[size(col("issued_certificates")) - 1]["identifier"]))
-                                 .withColumnRenamed("content_id", "courseID")
-                                 .withColumnRenamed("userid", "userID")
-                                 .withColumnRenamed("status", "dbCompletionStatus")
-                                 .select("userID","courseID", "dbCompletionStatus", "certificateID",
-                                         col("badge_details.badgeId").alias("badge_id"),
-                                         col("badge_details.criteria").alias("badge_criteria_enrolment"),
-                                         col("badge_details.issuedOn").alias("badge_issued_on"))
-                                 .withColumn("badge_issued_ts", to_date(to_timestamp(col("badge_issued_on"), "yyyy-MM-dd'T'HH:mm:ss.SSSZ"))))
+        with profiling.phase(JOB_NAME, "read", "external_enrolment_df", spark=spark):
+            external_enrolment_df = (spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
+                                     .withColumn("badge_details", explode_outer("issued_badges"))
+                                     .withColumn("certificateID",
+                                                 when(col("issued_certificates").isNull(), "")
+                                                 .otherwise(col("issued_certificates")[size(col("issued_certificates")) - 1]["identifier"]))
+                                     .withColumnRenamed("content_id", "courseID")
+                                     .withColumnRenamed("userid", "userID")
+                                     .withColumnRenamed("status", "dbCompletionStatus")
+                                     .select("userID","courseID", "dbCompletionStatus", "certificateID",
+                                             col("badge_details.badgeId").alias("badge_id"),
+                                             col("badge_details.criteria").alias("badge_criteria_enrolment"),
+                                             col("badge_details.issuedOn").alias("badge_issued_on"))
+                                     .withColumn("badge_issued_ts", to_date(to_timestamp(col("badge_issued_on"), "yyyy-MM-dd'T'HH:mm:ss.SSSZ"))))
         enrolment_complete_data = user_enrolment_df.unionByName(external_enrolment_df)
         print("✅ Step 1 Complete")
 
         # Step 2: Load External Content Data
         print("📚 Step 2: Loading External Content Data...")
-        external_content_data = (spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
-                                 .filter(col("badge").isNotNull())
-                                 #.withColumn("parsed", from_json(col("cios_data"), schema))
-                                 .withColumn("badge", explode_outer(col("badge")))
-                                 .withColumn("badge_earning_date_time", when(col("badge.badgeEarningDateEnabled") == True,
-                                                                             from_unixtime(col("badge.badgeEarningDateTime")/1000)).otherwise(lit(None)))
-                                 .withColumn("is_badge_active", when(col("badge.badgeEarningDateEnabled") == False, True)
-                                             .when((col("badge.badgeEarningDateEnabled") == True) & (col("badge_earning_date_time").isNotNull()) &
-                                                   (col("badge_earning_date_time") >= current_timestamp()), True).otherwise(False))
-                                 .select("content_id","is_badge_active", col("badge.badgeId").alias("badge_id"),
-                                         col("badge.criteria").alias("badge_criteria_content"),col("courseStatus").alias("courseReviewStatus"),
-                                         col("badge.badgeTitle").alias("badge_title"),col("courseName"),col("category"),
-                                         to_date(to_timestamp(col("badge.createdOn"), "yyyy-MM-dd'T'HH:mm:ss.SSSX")).alias("badge_created_date_time"),
-                                         col("badge.badgeSubTitle").alias("badge_sub_title"), col("badge.badgeEarningDateTime").alias("badge_earning_date"))
-                                 )
+        with profiling.phase(JOB_NAME, "read", "external_content_data", spark=spark):
+            external_content_data = (spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+                                     .filter(col("badge").isNotNull())
+                                     #.withColumn("parsed", from_json(col("cios_data"), schema))
+                                     .withColumn("badge", explode_outer(col("badge")))
+                                     .withColumn("badge_earning_date_time", when(col("badge.badgeEarningDateEnabled") == True,
+                                                                                 from_unixtime(col("badge.badgeEarningDateTime")/1000)).otherwise(lit(None)))
+                                     .withColumn("is_badge_active", when(col("badge.badgeEarningDateEnabled") == False, True)
+                                                 .when((col("badge.badgeEarningDateEnabled") == True) & (col("badge_earning_date_time").isNotNull()) &
+                                                       (col("badge_earning_date_time") >= current_timestamp()), True).otherwise(False))
+                                     .select("content_id","is_badge_active", col("badge.badgeId").alias("badge_id"),
+                                             col("badge.criteria").alias("badge_criteria_content"),col("courseStatus").alias("courseReviewStatus"),
+                                             col("badge.badgeTitle").alias("badge_title"),col("courseName"),col("category"),
+                                             to_date(to_timestamp(col("badge.createdOn"), "yyyy-MM-dd'T'HH:mm:ss.SSSX")).alias("badge_created_date_time"),
+                                             col("badge.badgeSubTitle").alias("badge_sub_title"), col("badge.badgeEarningDateTime").alias("badge_earning_date"))
+                                     )
         print("✅ Step 2 Complete")
 
         # Step 3: Load Content Badges data
         print("🏷️ Step 3: Loading Content Badges data...")
-        es_content_data = spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE)
+        with profiling.phase(JOB_NAME, "read", "es_content_data", spark=spark):
+            es_content_data = spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE)
         badge_data = (es_content_data
                       .filter(col("badgeDetails_v1").isNotNull())
                       .withColumn("badge_details", explode_outer("badgeDetails_v1"))
@@ -147,7 +157,8 @@ def processGamificationJob(config):
                                              .join(broadcast(content_badge_complete_data), on="content_id", how="left"))
         enrolment_content_with_badge_data.cache()
         enrolment_content_with_badge_data.count()
-        enrolment_content_with_badge_data.write.mode("overwrite").option("compression", "snappy").parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE)
+        with profiling.phase(JOB_NAME, "write", "enrolment_content_with_badge_data", spark=spark):
+            enrolment_content_with_badge_data.write.mode("overwrite").option("compression", "snappy").parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE)
         print("✅ Step 4 Complete")
 
         current_month_start = trunc(current_date(), "month")
@@ -239,7 +250,8 @@ def processGamificationJob(config):
         total_badges_current_month = enrolment_related_metrics["total_badges_current_month"]
         total_badges_metric = build_metric_df(spark, "total_badges", total_badges, total_badges_previous_month, total_badges_current_month)
         print("total badges")
-        Redis.dispatchDataFrameList("dashboard_all_course_badge_count_last_month_diff",total_badges_metric, "metric", ["totalCount", "countRate", "trend"],  conf = config)
+        with profiling.phase(JOB_NAME, "redis_write", "dashboard_all_course_badge_count_last_month_diff", spark=spark):
+            Redis.dispatchDataFrameList("dashboard_all_course_badge_count_last_month_diff",total_badges_metric, "metric", ["totalCount", "countRate", "trend"],  conf = config)
 
         # -------------------------------
         # Total live badges
@@ -249,7 +261,8 @@ def processGamificationJob(config):
         total_live_badges_current_month = enrolment_related_metrics["total_live_badges_current_month"]
         total_live_badges_metric = build_metric_df(spark, "total_live_badges", total_live_badges, total_live_badges_previous_month, total_live_badges_current_month)
         print("total live badges")
-        Redis.dispatchDataFrameList("dashboard_live_course_badge_count_last_month_diff",total_live_badges_metric, "metric", ["totalCount", "countRate", "trend"], conf = config)
+        with profiling.phase(JOB_NAME, "redis_write", "dashboard_live_course_badge_count_last_month_diff", spark=spark):
+            Redis.dispatchDataFrameList("dashboard_live_course_badge_count_last_month_diff",total_live_badges_metric, "metric", ["totalCount", "countRate", "trend"], conf = config)
 
         # -------------------------------
         # Total badges awarded
@@ -259,7 +272,8 @@ def processGamificationJob(config):
         total_badges_awarded_current_month = enrolment_related_metrics["total_badges_awarded_current_month"]
         total_badges_awarded_diff = build_metric_df(spark, "badges_awarded", total_badges_awarded, total_badges_awarded_previous_month, total_badges_awarded_current_month)
         print("total badges awarded")
-        Redis.dispatchDataFrameList("dashboard_total_badge_awarded_count_last_month_diff",total_badges_awarded_diff,"metric",["totalCount", "countRate", "trend"], conf = config)
+        with profiling.phase(JOB_NAME, "redis_write", "dashboard_total_badge_awarded_count_last_month_diff", spark=spark):
+            Redis.dispatchDataFrameList("dashboard_total_badge_awarded_count_last_month_diff",total_badges_awarded_diff,"metric",["totalCount", "countRate", "trend"], conf = config)
 
         # -------------------------------
         # Active Learners
@@ -269,7 +283,8 @@ def processGamificationJob(config):
         active_learners_current_month = enrolment_related_metrics["active_learners_current_month"]
         active_learners_diff = build_metric_df(spark, "active_learners_diff", active_learners, active_learners_previous_month, active_learners_current_month)
         print("active learners")
-        Redis.dispatchDataFrameList("dashboard_active_learners_for_badge_courses_count_last_month_diff",active_learners_diff, "metric", ["totalCount", "countRate", "trend"],conf = config)
+        with profiling.phase(JOB_NAME, "redis_write", "dashboard_active_learners_for_badge_courses_count_last_month_diff", spark=spark):
+            Redis.dispatchDataFrameList("dashboard_active_learners_for_badge_courses_count_last_month_diff",active_learners_diff, "metric", ["totalCount", "countRate", "trend"],conf = config)
 
         # -------------------------------
         # Badge earned learners
@@ -281,7 +296,8 @@ def processGamificationJob(config):
         badge_earning_rate_previous_month = (badge_earned_learners_previous_month / active_learners_previous_month * 100) if active_learners_previous_month > 0 else 0
         badge_earning_rate_current_month = (badge_earned_learners_current_month / active_learners_current_month * 100) if active_learners_current_month > 0 else 0
         badge_earning_rate_diff = build_metric_df(spark, "badge_earned_learners", badge_earning_rate, badge_earning_rate_previous_month, badge_earning_rate_current_month)
-        Redis.dispatchDataFrameList("dashboard_badge_earning_rate_last_month_diff",badge_earning_rate_diff,"metric", ["totalCount", "countRate", "trend"], conf = config)
+        with profiling.phase(JOB_NAME, "redis_write", "dashboard_badge_earning_rate_last_month_diff", spark=spark):
+            Redis.dispatchDataFrameList("dashboard_badge_earning_rate_last_month_diff",badge_earning_rate_diff,"metric", ["totalCount", "countRate", "trend"], conf = config)
         print("badge earning rate")
         print("✅ Step 5 Complete")
 
@@ -290,7 +306,8 @@ def processGamificationJob(config):
         badge_performance_df = enrolment_content_with_badge_data.select("enrolment_badge_id","badge_title","userID").filter(col("enrolment_badge_id").isNotNull()).groupBy("badge_title").agg(F.count("userID").alias("user_count"))
         window_spec = Window.orderBy(col("user_count").desc())
         badge_performance = badge_performance_df.withColumn("rank", dense_rank().over(window_spec))
-        Redis.dispatchDataFrameList("dashboard_badge_performance_rate", badge_performance, "badge_title", ["rank","user_count"], conf = config)
+        with profiling.phase(JOB_NAME, "redis_write", "dashboard_badge_performance_rate", spark=spark):
+            Redis.dispatchDataFrameList("dashboard_badge_performance_rate", badge_performance, "badge_title", ["rank","user_count"], conf = config)
         print("✅ Step 6 Complete")
 
         # Step 7: Add Content Completion Rate Metric
@@ -315,14 +332,16 @@ def processGamificationJob(config):
             ).otherwise(F.col("total_completions_with_badge"))
         ).orderBy(F.col("sort_col").desc()).limit(10).drop("sort_col"))
         print("content_data")
-        Redis.dispatchDataFrameList("dashboard_content_completion_rate",content_data,"content_name", ["total_enrolments", "total_completions_with_badge"],conf = config)
+        with profiling.phase(JOB_NAME, "redis_write", "dashboard_content_completion_rate", spark=spark):
+            Redis.dispatchDataFrameList("dashboard_content_completion_rate",content_data,"content_name", ["total_enrolments", "total_completions_with_badge"],conf = config)
         print("✅ Step 7 Complete")
 
         # Step 8: Add Gamification MDO report
         print("🔍 Step 8: Adding Gamification MDO report...")
-        user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE).select(
-            "userID",col("fullName").alias("Learner Name"), col("ministry_name").alias("Ministry"),
-            col("dept_name").alias("Department"), col("userOrgID").alias("Organization ID"), col("employmentDetails.employeeCode").alias("Employee_Id"))
+        with profiling.phase(JOB_NAME, "read", "user_master_df", spark=spark):
+            user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE).select(
+                "userID",col("fullName").alias("Learner Name"), col("ministry_name").alias("Ministry"),
+                col("dept_name").alias("Department"), col("userOrgID").alias("Organization ID"), col("employmentDetails.employeeCode").alias("Employee_Id"))
         reporting_data = (enrolment_content_with_badge_data.filter(col("badge_id").isNotNull()).select(
             col("userID"),
             col("enrolment_badge_id").alias("Badge ID"),
@@ -352,7 +371,8 @@ def processGamificationJob(config):
             f"{config.localReportDir}/{config.gamificationReportPath}/{today}",
             'mdoid',
             f"{config.localReportDir}/temp/gamificationReport/{today}",
-            csv_filename="GamificationReport.csv"
+            csv_filename="GamificationReport.csv",
+            job_name=JOB_NAME
         )
         reporting_data.unpersist()
         enrolment_content_with_badge_data.unpersist(blocking=True)
@@ -368,12 +388,19 @@ def main():
     config = create_config(config_dict)
     start_time = datetime.now()
     print(f"[START] Gamification processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    processGamificationJob(config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] Gamification completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        processGamificationJob(config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] Gamification completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 if __name__ == "__main__":
     main()

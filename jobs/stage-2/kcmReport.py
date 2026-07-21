@@ -12,8 +12,11 @@ import time
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from dfutil.content import contentDFUtil
 from constants.ParquetFileConstants import ParquetFileConstants
+from dfutil.utils import profiling
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
+
+JOB_NAME = "kcmReport"
 
 
 class KCMModel:
@@ -51,10 +54,11 @@ class KCMModel:
 
             # Content - Competency Mapping data
             categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Standalone Assessment", "Curated Program"]
-            initial_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)\
-                .filter(F.col("category").isin(categories))\
-                .where("courseStatus IN ('Live', 'Retired')")\
-                .select("courseID", "competencyAreaRefId", "competencyThemeRefId", "competencySubThemeRefId", "courseName")
+            with profiling.phase(JOB_NAME, "read", "initial_df", spark=spark):
+                initial_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)\
+                    .filter(F.col("category").isin(categories))\
+                    .where("courseStatus IN ('Live', 'Retired')")\
+                    .select("courseID", "competencyAreaRefId", "competencyThemeRefId", "competencySubThemeRefId", "courseName")
             
             schema = initial_df.schema
             competency_area_type = None
@@ -141,10 +145,12 @@ class KCMModel:
                     F.col("data_last_generated_on")
                 )
 
-            content_mapping_df.distinct().coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}/")
+            with profiling.phase(JOB_NAME, "write", "content_mapping_df", spark=spark):
+                content_mapping_df.distinct().coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}/")
 
             # Load KCM v6 data
-            kcmv6 = spark.read.parquet(ParquetFileConstants.KCMV6_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "kcmv6", spark=spark):
+                kcmv6 = spark.read.parquet(ParquetFileConstants.KCMV6_PARQUET_FILE)
 
             # Define the schema
             hierarchy_schema = """
@@ -258,7 +264,8 @@ class KCMModel:
                 F.lit(self.current_date_time()).alias("data_last_generated_on")
             ).distinct()
 
-            competency_details_df.distinct().write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
+            with profiling.phase(JOB_NAME, "write", "competency_details_df", spark=spark):
+                competency_details_df.distinct().write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
 
             # Competency reporting
             competency_reporting = competency_content_mapping_df \
@@ -279,10 +286,11 @@ class KCMModel:
                 .distinct()
             
             temp_dir = f"{report_path_content_competency_mapping}/{file_name}_temp"
-            competency_reporting.coalesce(1).write \
-                .mode("overwrite") \
-                .option("header", "true") \
-                .csv(temp_dir)
+            with profiling.phase(JOB_NAME, "write", "competency_reporting", spark=spark):
+                competency_reporting.coalesce(1).write \
+                    .mode("overwrite") \
+                    .option("header", "true") \
+                    .csv(temp_dir)
             
             # Move the part file to the desired filename
             import os
@@ -344,20 +352,37 @@ class KCMModel:
         ])
     
 def main():
-    spark = SparkSession.builder.appName("KCM Model").getOrCreate()
-    
+    run_id = profiling.get_run_id()
+    spark = SparkSession.builder \
+        .appName(f'{JOB_NAME}_{run_id}') \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
+        .getOrCreate()
+
     # Create model instance
     start_time = datetime.now()
     print(f"[START] KCMModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = KCMModel()
-    model.process_data(spark,config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] KCMModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "error", None
+    try:
+        model.process_data(spark,config)
+        status = "ok"
+    except SystemExit as e:
+        error_msg = f"SystemExit: {e}"
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] KCMModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 if __name__ == "__main__":
     main()

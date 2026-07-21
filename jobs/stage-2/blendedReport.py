@@ -24,9 +24,13 @@ from dfutil.user import userDFUtil
 from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
 from util import schemas
+
+JOB_NAME = "blendedReport"
+
 
 class BlendedModel:
     def __init__(self):
@@ -66,33 +70,35 @@ class BlendedModel:
             spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", "true")
             spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
 
-            userOrgHierarchyDataDF = (spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-                         .select("userID", "fullName", "userGender", "userCategory", "maskedPhone",
-                                 "maskedEmail", "userPrimaryEmail", "userMobile", "userStatus",
-                                 "designation", "group", "Tag", "ministry_name", "dept_name",
-                                 "userOrgID", "userOrgName", col("employmentDetails.employeeCode").alias("Employee_Id"))
-                         ).cache()
-            
-            bpWithOrgDF = (spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
-                 .filter(col("category").isin(primary_categories))
-                 .where(expr("courseStatus IN ('Live', 'Retired')"))
-                 .where(col("courseLastPublishedOn").isNotNull())
-                 .select(
-                     col("courseID").alias("bpID"),
-                     col("category").alias("bpCategory"),
-                     col("courseName").alias("bpName"),
-                     col("courseStatus").alias("bpStatus"),
-                     col("courseReviewStatus").alias("bpReviewStatus"),
-                     col("courseChannel").alias("bpChannel"),
-                     col("courseLastPublishedOn").alias("bpLastPublishedOn"),
-                     col("courseDuration").cast(FloatType()).alias("bpDuration"),
-                     col("courseResourceCount").alias("bpResourceCount"),
-                     col("lastStatusChangedOn").alias("bpLastStatusChangedOn"),
-                     col("programDirectorName").alias("bpProgramDirectorName"),
-                     col("courseOrgID").alias("bpOrgID"),
-                     col("courseOrgName").alias("bpOrgName"),
-                 )
-                 ).cache()
+            with profiling.phase(JOB_NAME, "read", "userOrgHierarchyDataDF", spark=spark):
+                userOrgHierarchyDataDF = (spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+                             .select("userID", "fullName", "userGender", "userCategory", "maskedPhone",
+                                     "maskedEmail", "userPrimaryEmail", "userMobile", "userStatus",
+                                     "designation", "group", "Tag", "ministry_name", "dept_name",
+                                     "userOrgID", "userOrgName", col("employmentDetails.employeeCode").alias("Employee_Id"))
+                             ).cache()
+
+            with profiling.phase(JOB_NAME, "read", "bpWithOrgDF", spark=spark):
+                bpWithOrgDF = (spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+                     .filter(col("category").isin(primary_categories))
+                     .where(expr("courseStatus IN ('Live', 'Retired')"))
+                     .where(col("courseLastPublishedOn").isNotNull())
+                     .select(
+                         col("courseID").alias("bpID"),
+                         col("category").alias("bpCategory"),
+                         col("courseName").alias("bpName"),
+                         col("courseStatus").alias("bpStatus"),
+                         col("courseReviewStatus").alias("bpReviewStatus"),
+                         col("courseChannel").alias("bpChannel"),
+                         col("courseLastPublishedOn").alias("bpLastPublishedOn"),
+                         col("courseDuration").cast(FloatType()).alias("bpDuration"),
+                         col("courseResourceCount").alias("bpResourceCount"),
+                         col("lastStatusChangedOn").alias("bpLastStatusChangedOn"),
+                         col("programDirectorName").alias("bpProgramDirectorName"),
+                         col("courseOrgID").alias("bpOrgID"),
+                         col("courseOrgName").alias("bpOrgName"),
+                     )
+                     ).cache()
 
 
             bpBatchDF, bpBatchSessionDF = bpBatchDataframe(spark)
@@ -107,7 +113,8 @@ class BlendedModel:
                 .join(batchCreatedByDF, on=["bpBatchCreatedBy"], how="left")
             
 
-            userEnrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled').cache()
+            with profiling.phase(JOB_NAME, "read", "userEnrolmentDF", spark=spark):
+                userEnrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled').cache()
 
             bpUserEnrolmentDF = userEnrolmentDF \
                            .select(
@@ -138,7 +145,8 @@ class BlendedModel:
             bpCompletionWithUserDetailsDF = userOrgHierarchyDataDF.join(bpCompletionDF, ["userID"], "right")
             bpCompletionDF.unpersist(blocking=True)
 
-            hierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "hierarchyDF", spark=spark):
+                hierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
             parsedHierarchyDF = hierarchyDF.withColumn("data", from_json(col("hierarchy"), schemas.get_hierarchy_schema())) \
                 .select("identifier", "data.*")
             bpChildDF = bpChildDataFrame(bpWithOrgDF, hierarchyDF, parsedHierarchyDF,spark)
@@ -310,11 +318,12 @@ class BlendedModel:
 
             print("📝 Writing MDO reports...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
-                mdoReportDF, 
-                f"{config.localReportDir}/{config.blendedReportPath}-mdo/{today}", 
+                mdoReportDF,
+                f"{config.localReportDir}/{config.blendedReportPath}-mdo/{today}",
                 'mdoid',
                 f"{config.localReportDir}/temp/blended_mdo_report/{today}",
-                csv_filename=config.blendedProgramReport
+                csv_filename=config.blendedProgramReport,
+                job_name=JOB_NAME
             )
 
             # Create CBP Report DataFrame
@@ -360,11 +369,12 @@ class BlendedModel:
 
             print("📝 Writing CBP reports...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
-                cbpReportDF, 
-                f"{config.localReportDir}/{config.blendedReportPath}-cbp/{today}", 
+                cbpReportDF,
+                f"{config.localReportDir}/{config.blendedReportPath}-cbp/{today}",
                 'mdoid',
                 f"{config.localReportDir}/temp/blended_cbp_report/{today}",
-                csv_filename=config.blendedProgramReport
+                csv_filename=config.blendedProgramReport,
+                job_name=JOB_NAME
             )
 
             # Create warehouse DataFrame with snake_case column names
@@ -396,7 +406,8 @@ class BlendedModel:
             fullDF.unpersist(blocking=True)
 
             warehouseDF = df_warehouse.coalesce(1).distinct()
-            warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwBPEnrollmentsTable}")
+            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+                warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwBPEnrollmentsTable}")
 
             print("✅ Warehouse DataFrame created")
 
@@ -485,8 +496,10 @@ def bpChildDataFrame(blendedProgramESDF: DataFrame, hierarchyDF: DataFrame, pars
     
     return resultDF
 def bpBatchDataframe(spark):
-    batch_df = spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE) \
-        
+    with profiling.phase(JOB_NAME, "read", "batch_df", spark=spark):
+        batch_df = spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE) \
+
+
     bp_batch_df = batch_df.select(
         col("courseID").alias("bpID"),
         col("batchID").alias("bpBatchID"),
@@ -517,8 +530,9 @@ def bpBatchDataframe(spark):
     
 def main():
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("Blended Program Report") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.executor.memory", "25g") \
         .config("spark.driver.memory", "20g") \
         .config("spark.driver.maxResultSize", "4g") \
@@ -529,6 +543,9 @@ def main():
         .config("spark.shuffle.io.connectionTimeout", "300s") \
         .config("spark.shuffle.io.maxRetries", "20") \
         .config("spark.shuffle.io.retryWait", "10s") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
     start_time = datetime.now()
@@ -536,11 +553,18 @@ def main():
     config_dict = get_environment_config()
     config = create_config(config_dict)
     model = BlendedModel()
-    model.process_data(spark,config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] BlendedModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark,config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] BlendedModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 if __name__ == "__main__":

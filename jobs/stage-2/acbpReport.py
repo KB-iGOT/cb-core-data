@@ -22,10 +22,13 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from dfutil.content import contentDFUtil
 
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
 
 from constants.ParquetFileConstants import ParquetFileConstants
+
+JOB_NAME = "acbpReport"
 
 
 class ACBPModel:
@@ -46,7 +49,8 @@ class ACBPModel:
             primary_categories = ["Course", "Program", "Blended Program", "Curated Program", "Standalone Assessment"]
 
             print("📥 Reading source data...")
-            userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE).select("userID",
+            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
+                userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE).select("userID",
                                                                                                "fullName",
                                                                                                "userStatus",
                                                                                                "userPrimaryEmail",
@@ -59,18 +63,22 @@ class ACBPModel:
                                                                                                "additionalProperties.externalSystem",
                                                                                                "additionalProperties.externalSystemId")
 
-            contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
-            allCourseProgramESDF = spark.read.parquet(
-                ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE).filter(
-                col("category").isin(primary_categories))
+            with profiling.phase(JOB_NAME, "read", "contentHierarchyDF", spark=spark):
+                contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "allCourseProgramESDF", spark=spark):
+                allCourseProgramESDF = spark.read.parquet(
+                    ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE).filter(
+                    col("category").isin(primary_categories))
 
             allCourseProgramDetailsDF = contentDFUtil.allCourseProgramDetailsWithCompetenciesJsonDataFrame(
                 allCourseProgramESDF, contentHierarchyDF,
                 spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE)).drop("competenciesJson")
 
-            enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
+            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark):
+                enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
 
-            acbpAllEnrolDF = spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
+            with profiling.phase(JOB_NAME, "read", "acbpAllEnrolDF", spark=spark):
+                acbpAllEnrolDF = spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
             #acbpAllEnrolDF.printSchema()
 
             acbpAllEnrolmentDF = (acbpAllEnrolDF \
@@ -110,23 +118,24 @@ class ACBPModel:
              .withColumn("assignmentType", array_join(F.transform(
                 split(col("assignmentType"), "\\|"), 
                 lambda x: mapping_expr[trim(x)]),"|"))'''
-            acbpSelectEnrolmentDF = spark.read.parquet(ParquetFileConstants.ACBP_SELECT_FILE) \
-                .withColumn("courseID", explode(col("acbpCourseIDList"))) \
-                .join(allCourseProgramDetailsDF, ["courseID"], "left") \
-                .drop("acbpCourseIDList") \
-                .withColumn("assignmentTypeInfo",
-                            # Each pipe-segment is a JSON array string — parse and re-join with quoted values
-                            # e.g. ["deputy director (research, statistics and analysis)","deputy director"]
-                            # becomes "deputy director (research, statistics and analysis)", "deputy director"
-                            array_join(
-                                F.transform(
-                                    split(col("assignmentTypeInfo"), "\\|"),
-                                    lambda seg: array_join(
-                                        F.transform(
-                                            from_json(seg, ArrayType(StringType())),
-                                            lambda v: F.concat(lit('"'), v, lit('"'))),", ")), "|")) \
-                .withColumn("assignmentTypeInfo", when(col("assignmentType") == "alluser", lit("AllUser")).otherwise(col("assignmentTypeInfo"))) \
-                .withColumn("assignmentType", array_join(F.transform(split(col("assignmentType"), "\\|"), lambda x: mapping_expr[trim(x)]), "|"))
+            with profiling.phase(JOB_NAME, "read", "acbpSelectEnrolmentDF", spark=spark):
+                acbpSelectEnrolmentDF = spark.read.parquet(ParquetFileConstants.ACBP_SELECT_FILE) \
+                    .withColumn("courseID", explode(col("acbpCourseIDList"))) \
+                    .join(allCourseProgramDetailsDF, ["courseID"], "left") \
+                    .drop("acbpCourseIDList") \
+                    .withColumn("assignmentTypeInfo",
+                                # Each pipe-segment is a JSON array string — parse and re-join with quoted values
+                                # e.g. ["deputy director (research, statistics and analysis)","deputy director"]
+                                # becomes "deputy director (research, statistics and analysis)", "deputy director"
+                                array_join(
+                                    F.transform(
+                                        split(col("assignmentTypeInfo"), "\\|"),
+                                        lambda seg: array_join(
+                                            F.transform(
+                                                from_json(seg, ArrayType(StringType())),
+                                                lambda v: F.concat(lit('"'), v, lit('"'))),", ")), "|")) \
+                    .withColumn("assignmentTypeInfo", when(col("assignmentType") == "alluser", lit("AllUser")).otherwise(col("assignmentTypeInfo"))) \
+                    .withColumn("assignmentType", array_join(F.transform(split(col("assignmentType"), "\\|"), lambda x: mapping_expr[trim(x)]), "|"))
 
             # Write to warehouse with mapped names
             cbPlanWarehouseDF = acbpSelectEnrolmentDF \
@@ -239,15 +248,17 @@ class ACBPModel:
                 .fillna("")
 
             print("📝 Writing combined CSV reports for enrollment...")
-            dfexportutil.write_csv_combined(
-                df=enrolmentReportDF,
-                single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/{config.cbpEnrolmentReport}",
-                partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoEnrolmentReportPath}/{today}",
-                partition_column='mdoid',
-                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-enrolment-report/{today}",
-                csv_filename=config.cbpEnrolmentReport)
-            enrolmentReportDF.write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{config.warehouseReportDir}/cbp_enrollments")
+            with profiling.phase(JOB_NAME, "write", "enrolmentReportDF_csv", spark=spark):
+                dfexportutil.write_csv_combined(
+                    df=enrolmentReportDF,
+                    single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/{config.cbpEnrolmentReport}",
+                    partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoEnrolmentReportPath}/{today}",
+                    partition_column='mdoid',
+                    parquet_tmp_path=f"{config.localReportDir}/temp/cbp-enrolment-report/{today}",
+                    csv_filename=config.cbpEnrolmentReport)
+            with profiling.phase(JOB_NAME, "write", "enrolmentReportDF", spark=spark):
+                enrolmentReportDF.write.mode("overwrite").option("compression", "snappy").parquet(
+                    f"{config.warehouseReportDir}/cbp_enrollments")
 
             ######################################################
             # creating data for apar enrollment report for sahil
@@ -256,8 +267,10 @@ class ACBPModel:
             print("📝 Start Apar enrollment report data...")
 
             #getting KCM dataframes
-            kcmDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
-            kcmMappingDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}")
+            with profiling.phase(JOB_NAME, "read", "kcmDF", spark=spark):
+                kcmDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
+            with profiling.phase(JOB_NAME, "read", "kcmMappingDF", spark=spark):
+                kcmMappingDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}")
 
             # kcm dictionary dataframe
             kcmMappingDF = kcmMappingDF.join(kcmDF, kcmDF.competency_area_id == kcmMappingDF.competency_area_id, "left").select(
@@ -419,24 +432,27 @@ class ACBPModel:
             )
 
             print("📝 Writing combined CSV reports for user summary...")
-            dfexportutil.write_csv_combined(
-                df=userSummaryReportDF,
-                single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/{config.cbpSummaryReport}",
-                partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoSummaryReportPath}/{today}",
-                partition_column='mdoid',
-                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-summary-report/{today}",
-                csv_filename=config.cbpSummaryReport
-            )
+            with profiling.phase(JOB_NAME, "write", "userSummaryReportDF", spark=spark):
+                dfexportutil.write_csv_combined(
+                    df=userSummaryReportDF,
+                    single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/{config.cbpSummaryReport}",
+                    partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoSummaryReportPath}/{today}",
+                    partition_column='mdoid',
+                    parquet_tmp_path=f"{config.localReportDir}/temp/cbp-summary-report/{today}",
+                    csv_filename=config.cbpSummaryReport
+                )
 
             print("📦 Writing warehouse data...")
-            cbPlanWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
+            with profiling.phase(JOB_NAME, "write", "cbPlanWarehouseDF", spark=spark):
+                cbPlanWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+                    f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
             print("✅ Processing completed successfully!")
 
             # apar enrollment report for Sahil
             print("📝 Writing Apar enrollment parquet report for warehouse...")
-            aparEnrolmentData.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{config.warehouseReportDir}/{config.dwAparCBPEnrollmentTable}")
+            with profiling.phase(JOB_NAME, "write", "aparEnrolmentData", spark=spark):
+                aparEnrolmentData.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+                    f"{config.warehouseReportDir}/{config.dwAparCBPEnrollmentTable}")
             print("✅ Apar enrollment parquet report written successfully!")
 
         except Exception as e:
@@ -447,8 +463,9 @@ class ACBPModel:
 
 def main():
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("ACBP Report") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "240") \
         .config("spark.executor.memory", "30g") \
         .config("spark.driver.memory", "128g") \
@@ -460,6 +477,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
 
@@ -469,11 +489,18 @@ def main():
     start_time = datetime.now()
     print(f"[START] ACBPModel processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = ACBPModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] ACBPModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] ACBPModel processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
     spark.stop()
 
 

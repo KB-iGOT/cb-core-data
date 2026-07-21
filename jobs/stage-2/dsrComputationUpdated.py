@@ -21,10 +21,13 @@ from dfutil.utils import utils
 from dfutil.utils.redis import Redis
 from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
+from dfutil.utils import profiling
 
 from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.default_config import create_config
 from jobs.config import get_environment_config
+
+JOB_NAME = "dsrComputationUpdated"
 
 
 class DSRComputationUpdatedModel:
@@ -46,18 +49,22 @@ class DSRComputationUpdatedModel:
     def process_data(self, spark, config):
         try:
             # Active users from user parquet
-            activeUsersDF = spark.read.option("recursiveFileLookup", "true").parquet(ParquetFileConstants.USER_PARQUET_FILE) \
-        .withColumnRenamed("id", "user_id") \
-                .withColumnRenamed("rootorgid", "mdo_id") \
-                .withColumn("userCreatedTimestamp", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ").cast("long")) \
-                .filter(col("status") == 1)
-            contentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE)
-            externalContentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE)
-            contentDF = spark.read.parquet(ParquetFileConstants.ESCONTENT_PARQUET_FILE) \
-                .withColumnRenamed("identifier", "content_id") \
-                .withColumnRenamed("primaryCategory", "content_type") \
-                .withColumnRenamed("status", "content_status") \
-                .withColumnRenamed("courseCategory", "content_sub_type")
+            with profiling.phase(JOB_NAME, "read", "activeUsersDF", spark=spark):
+                activeUsersDF = spark.read.option("recursiveFileLookup", "true").parquet(ParquetFileConstants.USER_PARQUET_FILE) \
+                    .withColumnRenamed("id", "user_id") \
+                    .withColumnRenamed("rootorgid", "mdo_id") \
+                    .withColumn("userCreatedTimestamp", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ").cast("long")) \
+                    .filter(col("status") == 1)
+            with profiling.phase(JOB_NAME, "read", "contentEnrolmentDataDF", spark=spark):
+                contentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "externalContentEnrolmentDataDF", spark=spark):
+                externalContentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE)
+            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
+                contentDF = spark.read.parquet(ParquetFileConstants.ESCONTENT_PARQUET_FILE) \
+                    .withColumnRenamed("identifier", "content_id") \
+                    .withColumnRenamed("primaryCategory", "content_type") \
+                    .withColumnRenamed("status", "content_status") \
+                    .withColumnRenamed("courseCategory", "content_sub_type")
 
 
             ist_offset = timezone(timedelta(hours=5, minutes=30))
@@ -101,15 +108,16 @@ class DSRComputationUpdatedModel:
                 "orderBy": "duration",
                 "orderDirection": "desc"}
 
-            try:
-                response = requests.post(api_url, headers=headers, json=payload)
-                response.raise_for_status()
-                api_data = response.json()
-                external_course_count = api_data.get("totalCount", 0)
-                print(f"External course count from API: {external_course_count}")
-            except Exception as e:
-                print(f"Error fetching external courses: {e}")
-                external_course_count = 0
+            with profiling.phase(JOB_NAME, "read", "external_course_count_api", spark=spark):
+                try:
+                    response = requests.post(api_url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    api_data = response.json()
+                    external_course_count = api_data.get("totalCount", 0)
+                    print(f"External course count from API: {external_course_count}")
+                except Exception as e:
+                    print(f"Error fetching external courses: {e}")
+                    external_course_count = 0
 
             overall_live_course_count = internal_live_course_count + external_course_count
 
@@ -218,8 +226,9 @@ class DSRComputationUpdatedModel:
 
 def main():
     # Initialize Spark Session with optimized settings for caching
+    run_id = profiling.get_run_id()
     spark = SparkSession.builder \
-        .appName("DSR computation updated Model") \
+        .appName(f'{JOB_NAME}_{run_id}') \
         .config("spark.sql.shuffle.partitions", "200") \
         .config("spark.executor.memory", "15g") \
         .config("spark.driver.memory", "15g") \
@@ -230,6 +239,9 @@ def main():
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.eventLog.enabled", "true") \
+        .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
+        .config("spark.eventLog.compress", "true") \
         .getOrCreate()
     # Create model instance
 
@@ -238,12 +250,19 @@ def main():
     start_time = datetime.now()
     print(f"[START] DSR computation updated processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     model = DSRComputationUpdatedModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] DSR computation updated processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    status, error_msg = "ok", None
+    try:
+        model.process_data(spark, config)
+    except Exception as e:
+        status, error_msg = "error", str(e)
+        raise
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] DSR computation updated processing completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+        profiling.write_summary(JOB_NAME, duration.total_seconds(), status=status, error_msg=error_msg)
+        spark.stop()
 
 
 # Example usage:
