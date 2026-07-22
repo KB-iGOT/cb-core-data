@@ -42,7 +42,7 @@ spark = SparkSession.builder \
     .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
     .config("spark.eventLog.enabled", "true") \
     .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
-    .config("spark.eventLog.compress", "true") \
+    .config("spark.eventLog.compress", profiling.event_log_compress()) \
     .getOrCreate()
 
 print("✅ Spark Session initialized")

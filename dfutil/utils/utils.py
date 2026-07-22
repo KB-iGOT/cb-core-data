@@ -122,18 +122,22 @@ def sync_reports(local_path, remote_path, config, job_name=None):
             - conf.gcp_service_account_key (str): Path to GCP credentials JSON
         job_name (str, optional): Calling job's name, for profiling attribution. Defaults to a generic label.
     """
-    with profiling.phase(job_name or "shared_utils", "upload", remote_path):
+    with profiling.phase(job_name or "shared_utils", "upload", remote_path) as metrics:
         print(f"REPORT: Syncing reports from {local_path} to gs://{config.gcpBucket}/{remote_path} ...")
+
+        metrics["output_mb"] = profiling.dir_size_mb(local_path)
 
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config.googleServiceAccountFilePath
         client = storage.Client()
         bucket = client.bucket(config.gcpBucket)
 
+        file_count = 0
         if os.path.isfile(local_path):   # single file case
             filename = os.path.basename(local_path)   # keep whatever CSV name was generated
             gcs_blob_path = os.path.join(remote_path, filename).replace("\\", "/")
             blob = bucket.blob(gcs_blob_path)
             blob.upload_from_filename(local_path)
+            file_count = 1
             print(f"✅ Synced: {local_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
 
         else:   # directory case (unchanged)
@@ -144,8 +148,10 @@ def sync_reports(local_path, remote_path, config, job_name=None):
                     gcs_blob_path = os.path.join(remote_path, relative_path).replace("\\", "/")
                     blob = bucket.blob(gcs_blob_path)
                     blob.upload_from_filename(local_file_path)
+                    file_count += 1
                     print(f"✅ Synced: {local_file_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
 
+        metrics["record_count"] = file_count
         print(f"REPORT: Finished syncing reports from {local_path} to gs://{config.gcpBucket}/{remote_path}")
 
 def zip_and_sync_reports(complete_path: str, report_path: str, config, job_name=None):

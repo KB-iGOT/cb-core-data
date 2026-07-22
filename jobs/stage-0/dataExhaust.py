@@ -78,7 +78,7 @@ class DataExhaustModel:
             .option("driver", "org.postgresql.Driver") \
             .load()
 
-    def write_parquet(self, df: "DataFrame", path: str, partition_cols: list = None, mode: str = "overwrite"):
+    def write_parquet(self, df: "DataFrame", path: str, partition_cols: list = None, mode: str = "overwrite", metrics: dict = None):
         """Write DataFrame to Parquet with optimization"""
         writer = df.coalesce(16)
 
@@ -90,6 +90,9 @@ class DataExhaustModel:
         writer.mode(mode) \
             .option("compression", "snappy") \
             .parquet(path)
+
+        if metrics is not None:
+            metrics["output_mb"] = profiling.dir_size_mb(path)
 
     def duration_format_udf(self, duration_col: str) -> col:
         return when(col(duration_col).isNotNull(),
@@ -182,8 +185,8 @@ class DataExhaustModel:
                     self.config.cassandraUserEnrolmentsTable
                 )
 
-            with profiling.phase(JOB_NAME, "write", "enrolment_data", spark=self.spark):
-                self.write_parquet(enrolment_df, f"{output_base_path}/enrolment")
+            with profiling.phase(JOB_NAME, "write", "enrolment_data", spark=self.spark) as m:
+                self.write_parquet(enrolment_df, f"{output_base_path}/enrolment", metrics=m)
             enrolment_df.unpersist()
 
             # Process batch data
@@ -194,8 +197,8 @@ class DataExhaustModel:
                     self.config.cassandraCourseBatchTable
                 )
 
-            with profiling.phase(JOB_NAME, "write", "batch_data", spark=self.spark):
-                self.write_parquet(batch_df, f"{output_base_path}/batch")
+            with profiling.phase(JOB_NAME, "write", "batch_data", spark=self.spark) as m:
+                self.write_parquet(batch_df, f"{output_base_path}/batch", metrics=m)
             batch_df.unpersist()
 
             # Process KCM V6 hierarchy
@@ -206,8 +209,8 @@ class DataExhaustModel:
                     self.config.cassandraFrameworkHierarchyTable
                 ).filter(col("identifier") == "kcmfinal_fw")
 
-            with profiling.phase(JOB_NAME, "write", "kcm_v6_hierarchy", spark=self.spark):
-                self.write_parquet(kcm_v6_hierarchy, f"{output_base_path}/kcmV6")
+            with profiling.phase(JOB_NAME, "write", "kcm_v6_hierarchy", spark=self.spark) as m:
+                self.write_parquet(kcm_v6_hierarchy, f"{output_base_path}/kcmV6", metrics=m)
             kcm_v6_hierarchy.unpersist()
 
             # Process questionset hierarchy
@@ -232,8 +235,8 @@ class DataExhaustModel:
                 col("hierarchy.scoreCutoffType").alias("scoreCutoffType")
             )
             # write questionset hierarchy data to parquet
-            with profiling.phase(JOB_NAME, "write", "questionset_hierarchy", spark=self.spark):
-                self.write_parquet(questionset_hierarchy_df, f"{output_base_path}/questionsetHierarchy")
+            with profiling.phase(JOB_NAME, "write", "questionset_hierarchy", spark=self.spark) as m:
+                self.write_parquet(questionset_hierarchy_df, f"{output_base_path}/questionsetHierarchy", metrics=m)
             questionset_hierarchy_df.unpersist()
 
             # Process user assessment data (complex transformation)
@@ -255,8 +258,8 @@ class DataExhaustModel:
                 ).fillna("{}", subset=["submitassessmentresponse", "submitassessmentrequest"]) \
 
             # write user assessment data to parquet
-            with profiling.phase(JOB_NAME, "write", "user_assessment_data", spark=self.spark):
-                self.write_parquet(user_assessment_df, f"{output_base_path}/userAssessmentRaw")
+            with profiling.phase(JOB_NAME, "write", "user_assessment_data", spark=self.spark) as m:
+                self.write_parquet(user_assessment_df, f"{output_base_path}/userAssessmentRaw", metrics=m)
             user_assessment_df.unpersist()
             self.logger.info("User assessment processing completed successfully!")
 
@@ -268,8 +271,8 @@ class DataExhaustModel:
                     self.config.cassandraContentHierarchyTable
                 )
 
-            with profiling.phase(JOB_NAME, "write", "content_hierarchy", spark=self.spark):
-                self.write_parquet(hierarchy_df, f"{output_base_path}/hierarchy")
+            with profiling.phase(JOB_NAME, "write", "content_hierarchy", spark=self.spark) as m:
+                self.write_parquet(hierarchy_df, f"{output_base_path}/hierarchy", metrics=m)
             hierarchy_df.unpersist()
 
             # Process rating summary
@@ -280,8 +283,8 @@ class DataExhaustModel:
                     self.config.cassandraRatingSummaryTable
                 )
 
-            with profiling.phase(JOB_NAME, "write", "rating_summary", spark=self.spark):
-                self.write_parquet(rating_summary_df, f"{output_base_path}/ratingSummary")
+            with profiling.phase(JOB_NAME, "write", "rating_summary", spark=self.spark) as m:
+                self.write_parquet(rating_summary_df, f"{output_base_path}/ratingSummary", metrics=m)
             rating_summary_df.unpersist()
 
             # Process ACBP data
@@ -292,8 +295,8 @@ class DataExhaustModel:
                     self.config.cassandraAcbpTable
                 )
 
-            with profiling.phase(JOB_NAME, "write", "acbp", spark=self.spark):
-                self.write_parquet(acbp_df, f"{output_base_path}/acbp")
+            with profiling.phase(JOB_NAME, "write", "acbp", spark=self.spark) as m:
+                self.write_parquet(acbp_df, f"{output_base_path}/acbp", metrics=m)
             acbp_df.unpersist()
 
             # Process ratings
@@ -304,8 +307,8 @@ class DataExhaustModel:
                     self.config.cassandraRatingsTable
                 )
 
-            with profiling.phase(JOB_NAME, "write", "ratings", spark=self.spark):
-                self.write_parquet(rating_df, f"{output_base_path}/rating")
+            with profiling.phase(JOB_NAME, "write", "ratings", spark=self.spark) as m:
+                self.write_parquet(rating_df, f"{output_base_path}/rating", metrics=m)
             rating_df.unpersist()
 
             # Process user roles
@@ -316,8 +319,8 @@ class DataExhaustModel:
                     self.config.cassandraUserRolesTable
                 )
 
-            with profiling.phase(JOB_NAME, "write", "user_roles", spark=self.spark):
-                self.write_parquet(role_df, f"{output_base_path}/role")
+            with profiling.phase(JOB_NAME, "write", "user_roles", spark=self.spark) as m:
+                self.write_parquet(role_df, f"{output_base_path}/role", metrics=m)
             role_df.unpersist()
 
             # Process Elasticsearch content data
@@ -343,8 +346,8 @@ class DataExhaustModel:
                     fields,
                     array_fields
                 )
-            with profiling.phase(JOB_NAME, "write", "es_content_data", spark=self.spark):
-                self.write_parquet(es_content_df, f"{output_base_path}/esContent")
+            with profiling.phase(JOB_NAME, "write", "es_content_data", spark=self.spark) as m:
+                self.write_parquet(es_content_df, f"{output_base_path}/esContent", metrics=m)
             es_content_df.unpersist()
 
             # Process organization data with hierarchy
@@ -355,8 +358,8 @@ class DataExhaustModel:
                     self.config.cassandraOrgTable
                 )
 
-            with profiling.phase(JOB_NAME, "write", "org_data", spark=self.spark):
-                self.write_parquet(org_df, f"{output_base_path}/org")
+            with profiling.phase(JOB_NAME, "write", "org_data", spark=self.spark) as m:
+                self.write_parquet(org_df, f"{output_base_path}/org", metrics=m)
 
             appPostgresUrl = f"jdbc:postgresql://{self.config.appPostgresHost}/{self.config.appPostgresSchema}"
             with profiling.phase(JOB_NAME, "read", "org_postgres_hierarchy", spark=self.spark):
@@ -412,10 +415,10 @@ class DataExhaustModel:
                     "data_last_generated_on", current_timestamp()
                 ).distinct().dropDuplicates(["mdo_id"]).repartition(16)
 
-            with profiling.phase(JOB_NAME, "write", "org_hierarchy", spark=self.spark):
-                self.write_parquet(org_hierarchy_df, f"{output_base_path}/orgHierarchy")
-            with profiling.phase(JOB_NAME, "write", "org_complete_hierarchy", spark=self.spark):
-                self.write_parquet(org_postgres_df, f"{output_base_path}/orgCompleteHierarchy")
+            with profiling.phase(JOB_NAME, "write", "org_hierarchy", spark=self.spark) as m:
+                self.write_parquet(org_hierarchy_df, f"{output_base_path}/orgHierarchy", metrics=m)
+            with profiling.phase(JOB_NAME, "write", "org_complete_hierarchy", spark=self.spark) as m:
+                self.write_parquet(org_postgres_df, f"{output_base_path}/orgCompleteHierarchy", metrics=m)
 
             org_df.unpersist()
             org_postgres_df.unpersist()
@@ -429,8 +432,8 @@ class DataExhaustModel:
                     self.config.appPostgresUsername,
                     self.config.appPostgresCredential
                 )
-            with profiling.phase(JOB_NAME, "write", "weekly_claps", spark=self.spark):
-                self.write_parquet(weekly_claps_df, f"{output_base_path}/weeklyClaps")
+            with profiling.phase(JOB_NAME, "write", "weekly_claps", spark=self.spark) as m:
+                self.write_parquet(weekly_claps_df, f"{output_base_path}/weeklyClaps", metrics=m)
             # Process marketplace content
             self.logger.info("Processing marketplace content...")
             with profiling.phase(JOB_NAME, "read", "marketplace_content", spark=self.spark):
@@ -441,8 +444,8 @@ class DataExhaustModel:
                     self.config.appPostgresCredential
                 )
 
-            with profiling.phase(JOB_NAME, "write", "marketplace_content", spark=self.spark):
-                self.write_parquet(marketplace_content_df, f"{output_base_path}/externalContent")
+            with profiling.phase(JOB_NAME, "write", "marketplace_content", spark=self.spark) as m:
+                self.write_parquet(marketplace_content_df, f"{output_base_path}/externalContent", metrics=m)
             marketplace_content_df.unpersist()
 
             # Process marketplace enrolments
@@ -453,8 +456,8 @@ class DataExhaustModel:
                     "user_external_enrolments"
                 )
 
-            with profiling.phase(JOB_NAME, "write", "marketplace_enrolments", spark=self.spark):
-                self.write_parquet(marketplace_enrolments_df, f"{output_base_path}/externalCourseEnrolments")
+            with profiling.phase(JOB_NAME, "write", "marketplace_enrolments", spark=self.spark) as m:
+                self.write_parquet(marketplace_enrolments_df, f"{output_base_path}/externalCourseEnrolments", metrics=m)
             marketplace_enrolments_df.unpersist()
 
             # audit table for unenrolled users
@@ -464,8 +467,8 @@ class DataExhaustModel:
                     "enrollment_history_by_action"
                 )
 
-            with profiling.phase(JOB_NAME, "write", "unenrolled_user_audit", spark=self.spark):
-                self.write_parquet(unenrolled_user_audit_df, f"{output_base_path}/unenrolledUserAudit")
+            with profiling.phase(JOB_NAME, "write", "unenrolled_user_audit", spark=self.spark) as m:
+                self.write_parquet(unenrolled_user_audit_df, f"{output_base_path}/unenrolledUserAudit", metrics=m)
             unenrolled_user_audit_df.unpersist()
 
             self.logger.info("Processing old assessments...")
@@ -475,8 +478,8 @@ class DataExhaustModel:
                     self.config.cassandraOldAssesmentTable
                 )
 
-            with profiling.phase(JOB_NAME, "write", "old_assessments", spark=self.spark):
-                self.write_parquet(old_assessments_df, f"{output_base_path}/oldAssessmentDetails")
+            with profiling.phase(JOB_NAME, "write", "old_assessments", spark=self.spark) as m:
+                self.write_parquet(old_assessments_df, f"{output_base_path}/oldAssessmentDetails", metrics=m)
             old_assessments_df.unpersist()
             # Process remaining tables efficiently
             tables_to_process = [
@@ -491,8 +494,8 @@ class DataExhaustModel:
                 self.logger.info(f"Processing {table_name}...")
                 with profiling.phase(JOB_NAME, "read", table_name, spark=self.spark):
                     df = self.read_cassandra_table(keyspace, table)
-                with profiling.phase(JOB_NAME, "write", table_name, spark=self.spark):
-                    self.write_parquet(df, f"{output_base_path}/{table_name}")
+                with profiling.phase(JOB_NAME, "write", table_name, spark=self.spark) as m:
+                    self.write_parquet(df, f"{output_base_path}/{table_name}", metrics=m)
                 df.unpersist()
 
             # # Process event data (NLW)
@@ -586,8 +589,8 @@ class DataExhaustModel:
 
             # event_details_df.show(15, truncate=False)
 
-            with profiling.phase(JOB_NAME, "write", "event_data", spark=self.spark):
-                self.write_parquet(event_details_df, f"{output_base_path}/eventDetails")
+            with profiling.phase(JOB_NAME, "write", "event_data", spark=self.spark) as m:
+                self.write_parquet(event_details_df, f"{output_base_path}/eventDetails", metrics=m)
 
             # Process event enrolments
             self.logger.info("Processing event enrolments...")
@@ -656,17 +659,17 @@ class DataExhaustModel:
             events_enrolment_with_duration_df = self.duration_format(events_enrolment_with_duration_df,
                                                                      "progress_duration")
 
-            with profiling.phase(JOB_NAME, "write", "event_enrolments", spark=self.spark):
+            with profiling.phase(JOB_NAME, "write", "event_enrolments", spark=self.spark) as m:
                 self.write_parquet(events_enrolment_with_duration_df.coalesce(1),
-                                   f"{output_base_path}/eventEnrolmentDetails")
+                                   f"{output_base_path}/eventEnrolmentDetails", metrics=m)
             event_details_df.unpersist()
             events_enrolment_df.unpersist()
 
             with profiling.phase(JOB_NAME, "read", "user_extended_profile", spark=self.spark):
                 userExtendedProfileDF = self.read_cassandra_table(self.config.cassandraUserKeyspace,
                                                                   self.config.cassandraUserExtendedProfileTable)
-            with profiling.phase(JOB_NAME, "write", "user_extended_profile", spark=self.spark):
-                self.write_parquet(userExtendedProfileDF, f"{output_base_path}/userExtendedProfile")
+            with profiling.phase(JOB_NAME, "write", "user_extended_profile", spark=self.spark) as m:
+                self.write_parquet(userExtendedProfileDF, f"{output_base_path}/userExtendedProfile", metrics=m)
             userExtendedProfileDF.unpersist()
 
             # Process Elasticsearch assessment data
@@ -694,8 +697,8 @@ class DataExhaustModel:
                     fields,
                     array_fields
                 )
-            with profiling.phase(JOB_NAME, "write", "final_assessment_es_content", spark=self.spark):
-                self.write_parquet(es_final_assessment_df, f"{output_base_path}/esFinalAssessment")
+            with profiling.phase(JOB_NAME, "write", "final_assessment_es_content", spark=self.spark) as m:
+                self.write_parquet(es_final_assessment_df, f"{output_base_path}/esFinalAssessment", metrics=m)
             es_final_assessment_df.unpersist()
 
             # Process course assessment data
@@ -717,8 +720,8 @@ class DataExhaustModel:
                     fields,
                     array_fields
                 )
-            with profiling.phase(JOB_NAME, "write", "assessment_es_content", spark=self.spark):
-                self.write_parquet(es_course_assessment_df, f"{output_base_path}/esCourseAssessment")
+            with profiling.phase(JOB_NAME, "write", "assessment_es_content", spark=self.spark) as m:
+                self.write_parquet(es_course_assessment_df, f"{output_base_path}/esCourseAssessment", metrics=m)
             es_course_assessment_df.unpersist()
 
             self.logger.info("ES course assessment data processing completed.")
@@ -728,8 +731,8 @@ class DataExhaustModel:
             with profiling.phase(JOB_NAME, "read", "access_control_settings_cap", spark=self.spark):
                 access_control_settings_df = self.read_cassandra_table("sunbird_courses", "access_setting_rules_v2")
 
-            with profiling.phase(JOB_NAME, "write", "access_control_settings_cap", spark=self.spark):
-                self.write_parquet(access_control_settings_df, f"{output_base_path}/accessControlSettings")
+            with profiling.phase(JOB_NAME, "write", "access_control_settings_cap", spark=self.spark) as m:
+                self.write_parquet(access_control_settings_df, f"{output_base_path}/accessControlSettings", metrics=m)
             access_control_settings_df.unpersist()
 
             # Process Elasticsearch course completion data
@@ -749,8 +752,8 @@ class DataExhaustModel:
                     fields,
                     array_fields
                 )
-            with profiling.phase(JOB_NAME, "write", "course_completion_survey", spark=self.spark):
-                self.write_parquet(course_completion_survey_df, f"{output_base_path}/courseCompletionSurvey")
+            with profiling.phase(JOB_NAME, "write", "course_completion_survey", spark=self.spark) as m:
+                self.write_parquet(course_completion_survey_df, f"{output_base_path}/courseCompletionSurvey", metrics=m)
             course_completion_survey_df.unpersist()
             self.logger.info("course completion survey data processing completed.")
             
@@ -796,7 +799,7 @@ def create_spark_session_with_packages(config):
         .config("es.nodes.discovery", "false") \
         .config("spark.eventLog.enabled", "true") \
         .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
-        .config("spark.eventLog.compress", "true") \
+        .config("spark.eventLog.compress", profiling.event_log_compress()) \
         .getOrCreate()
 
     return spark

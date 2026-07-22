@@ -448,7 +448,7 @@ def main():
         .config("es.nodes.discovery", "false") \
         .config("spark.eventLog.enabled", "true") \
         .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
-        .config("spark.eventLog.compress", "true") \
+        .config("spark.eventLog.compress", profiling.event_log_compress()) \
         .getOrCreate()
 
     start_time = datetime.now()
