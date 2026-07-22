@@ -20,6 +20,11 @@ from pathlib import Path
 
 import psutil
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
 PHASE_TYPES = frozenset({"read", "process", "write", "db_write", "upload", "redis_write"})
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -27,18 +32,82 @@ PROFILING_OUTPUT_DIR = BASE_DIR / "profiling_output"
 SPARK_EVENT_LOG_DIR = BASE_DIR / "spark-events"
 
 _RUN_ID_ENV_VAR = "PROFILING_RUN_ID"
+_RUN_ID_MARKER_PATH = PROFILING_OUTPUT_DIR / ".current_run_id"
+_RUN_ID_LOCK_PATH = PROFILING_OUTPUT_DIR / ".current_run_id.lock"
+RUN_ID_MARKER_MAX_AGE_HOURS = 20
+
+
+def _read_marker():
+    try:
+        age_hours = (time.time() - _RUN_ID_MARKER_PATH.stat().st_mtime) / 3600
+        if age_hours > RUN_ID_MARKER_MAX_AGE_HOURS:
+            return None
+        run_id = _RUN_ID_MARKER_PATH.read_text().strip()
+        return run_id or None
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def _write_marker(run_id: str) -> None:
+    tmp_path = _RUN_ID_MARKER_PATH.with_suffix(".tmp")
+    tmp_path.write_text(run_id)
+    os.replace(tmp_path, _RUN_ID_MARKER_PATH)
+
+
+def _resolve_shared_run_id() -> str:
+    """
+    Rendezvous point for sharing one run id across independent OS processes
+    (e.g. one Airflow task per job) that don't inherit each other's
+    environment variables but do share this filesystem. Reuses the marker
+    file's run id if it's fresh (within RUN_ID_MARKER_MAX_AGE_HOURS, which
+    comfortably spans one nightly pipeline run but expires before the next),
+    otherwise mints a new run id and becomes the marker for subsequent
+    processes. A flock on a sentinel file (best-effort - degrades to
+    last-writer-wins if fcntl is unavailable) avoids two processes starting
+    within the same instant each minting a different run id.
+    """
+    PROFILING_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    if fcntl is None:
+        run_id = _read_marker()
+        if run_id:
+            return run_id
+        run_id = time.strftime("%Y%m%d_%H%M%S")
+        _write_marker(run_id)
+        return run_id
+
+    with open(_RUN_ID_LOCK_PATH, "w") as lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        except OSError:
+            pass
+        try:
+            run_id = _read_marker()
+            if run_id:
+                return run_id
+            run_id = time.strftime("%Y%m%d_%H%M%S")
+            _write_marker(run_id)
+            return run_id
+        finally:
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+            except OSError:
+                pass
 
 
 def get_run_id() -> str:
     """
-    Returns the shared run id for this pipeline run (set once by jobs/main.py
-    via PROFILING_RUN_ID so every job/SparkSession in the same run correlates).
-    Falls back to a per-process timestamp for standalone job runs.
+    Returns the shared run id for this pipeline run. Checks PROFILING_RUN_ID
+    first (an explicit override, or set once by jobs/main.py when a whole
+    pipeline run happens inside a single process). Otherwise rendezvous with
+    other independent processes (e.g. separate Airflow tasks, one per job)
+    via a shared marker file under profiling_output/ - see
+    _resolve_shared_run_id().
     """
     run_id = os.environ.get(_RUN_ID_ENV_VAR)
     if run_id:
         return run_id
-    run_id = time.strftime("%Y%m%d_%H%M%S")
+    run_id = _resolve_shared_run_id()
     os.environ[_RUN_ID_ENV_VAR] = run_id
     return run_id
 

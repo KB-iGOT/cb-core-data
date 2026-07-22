@@ -1,11 +1,18 @@
 """
-Aggregates one pipeline run's profiling_output/{run_id}/*.jsonl phase/summary
-records, correlated (best-effort) against spark-events/{run_id}/* Spark event
-logs, into a ranked Markdown report + raw CSV for an architect discussion.
+Aggregates one or more pipeline runs' profiling_output/{run_id}/*.jsonl
+phase/summary records, correlated (best-effort) against
+spark-events/{run_id}/* Spark event logs, into a ranked Markdown report +
+raw CSV for an architect discussion.
 
 Usage:
     python3 jobs/analysis/aggregate_profiling.py --run-id 20260720_143000
     python3 jobs/analysis/aggregate_profiling.py   # uses the most recent run
+
+    # Merge several runs into one report (e.g. runs scattered across
+    # separate run_id directories before the shared-marker-file fix, or
+    # several standalone job invocations you want combined):
+    python3 jobs/analysis/aggregate_profiling.py --run-ids 20260721_181628,20260721_182329
+    python3 jobs/analysis/aggregate_profiling.py --date 20260721   # every run_id starting with that date
 
 See jobs/analysis/README.md for how to run a profiled pipeline and how to
 read the generated report.md / aggregate.csv.
@@ -26,16 +33,53 @@ TOP_N_SLOWEST = 25
 
 
 def latest_run_id():
-    runs = sorted(p.name for p in PROFILING_DIR.iterdir() if p.is_dir()) if PROFILING_DIR.exists() else []
+    runs = sorted(p.name for p in PROFILING_DIR.iterdir() if p.is_dir() and not p.name.startswith(".") and not p.name.startswith("merged_")) if PROFILING_DIR.exists() else []
     if not runs:
         sys.exit(f"No runs found under {PROFILING_DIR}")
     return runs[-1]
 
 
-def load_records(run_id):
+def discover_run_ids_for_date(date_str):
+    if not PROFILING_DIR.exists():
+        sys.exit(f"No runs found under {PROFILING_DIR}")
+    runs = sorted(
+        p.name for p in PROFILING_DIR.iterdir()
+        if p.is_dir() and p.name.startswith(date_str)
+    )
+    if not runs:
+        sys.exit(f"No run_id directories starting with '{date_str}' found under {PROFILING_DIR}")
+    return runs
+
+
+def resolve_run_ids(args):
+    provided = [name for name, val in (("--run-id", args.run_id), ("--run-ids", args.run_ids), ("--date", args.date)) if val]
+    if len(provided) > 1:
+        sys.exit(f"Pass only one of --run-id / --run-ids / --date, not {provided}")
+
+    if args.run_id:
+        return [args.run_id]
+    if args.run_ids:
+        run_ids = [r.strip() for r in args.run_ids.split(",") if r.strip()]
+        if not run_ids:
+            sys.exit("--run-ids was given but contained no run ids")
+        return run_ids
+    if args.date:
+        return discover_run_ids_for_date(args.date)
+    return [latest_run_id()]
+
+
+def merged_output_dir(run_ids, date):
+    if len(run_ids) == 1:
+        return PROFILING_DIR / run_ids[0]
+    label = date if date else f"{run_ids[0]}_plus{len(run_ids) - 1}"
+    return PROFILING_DIR / f"merged_{label}"
+
+
+def _load_records_for_run(run_id):
     run_dir = PROFILING_DIR / run_id
     if not run_dir.exists():
-        sys.exit(f"No profiling output found for run_id={run_id} at {run_dir}")
+        print(f"WARNING: no profiling output found for run_id={run_id} at {run_dir}, skipping")
+        return [], []
 
     phases, summaries = [], []
     for jsonl_file in sorted(run_dir.glob("*.jsonl")):
@@ -56,7 +100,18 @@ def load_records(run_id):
     return phases, summaries
 
 
-def load_spark_task_events(run_id):
+def load_records(run_ids):
+    all_phases, all_summaries = [], []
+    for run_id in run_ids:
+        phases, summaries = _load_records_for_run(run_id)
+        all_phases.extend(phases)
+        all_summaries.extend(summaries)
+    if not all_phases and not all_summaries:
+        sys.exit(f"No profiling output found for any of {run_ids}")
+    return all_phases, all_summaries
+
+
+def _load_spark_task_events_for_run(run_id):
     """
     Best-effort parse of Spark event logs for SparkListenerTaskEnd events.
     Event logs are one-JSON-object-per-line when uncompressed. If
@@ -67,7 +122,7 @@ def load_spark_task_events(run_id):
     """
     run_dir = EVENT_LOG_DIR / run_id
     if not run_dir.exists():
-        print(f"INFO: no Spark event logs found at {run_dir}, skipping shuffle/spill/GC correlation")
+        print(f"INFO: no Spark event logs found at {run_dir}, skipping shuffle/spill/GC correlation for this run")
         return []
 
     task_events = []
@@ -96,6 +151,13 @@ def load_spark_task_events(run_id):
         suffix = "..." if len(skipped) > 5 else ""
         print(f"WARNING: skipped {len(skipped)} unreadable/compressed event log file(s): {preview}{suffix}")
     return task_events
+
+
+def load_spark_task_events(run_ids):
+    all_events = []
+    for run_id in run_ids:
+        all_events.extend(_load_spark_task_events_for_run(run_id))
+    return all_events
 
 
 def extract_task_metrics(event):
@@ -134,11 +196,15 @@ def correlate_phase_with_tasks(phase_row, task_metrics):
     }
 
 
-def build_report(run_id, phases, summaries, task_metrics):
+def build_report(run_ids, phases, summaries, task_metrics):
     phases_df = pd.DataFrame(phases)
     summaries_df = pd.DataFrame(summaries)
 
-    lines = [f"# Profiling Report - run_id {run_id}", ""]
+    if len(run_ids) == 1:
+        title = f"# Profiling Report - run_id {run_ids[0]}"
+    else:
+        title = f"# Profiling Report - merged from {len(run_ids)} runs: {', '.join(run_ids)}"
+    lines = [title, ""]
 
     if summaries_df.empty and phases_df.empty:
         lines.append("No profiling records found for this run.")
@@ -205,22 +271,24 @@ def build_report(run_id, phases, summaries, task_metrics):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--run-id", default=None, help="Run id to aggregate (default: most recent under profiling_output/)")
+    parser.add_argument("--run-id", default=None, help="Single run id to aggregate (default: most recent under profiling_output/)")
+    parser.add_argument("--run-ids", default=None, help="Comma-separated run ids to merge into one report")
+    parser.add_argument("--date", default=None, help="YYYYMMDD - merge every run_id directory starting with this date prefix")
     args = parser.parse_args()
 
-    run_id = args.run_id or latest_run_id()
-    print(f"Aggregating profiling data for run_id={run_id}")
+    run_ids = resolve_run_ids(args)
+    print(f"Aggregating profiling data for {len(run_ids)} run(s): {run_ids}")
 
-    phases, summaries = load_records(run_id)
+    phases, summaries = load_records(run_ids)
     print(f"Loaded {len(phases)} phase records and {len(summaries)} job summaries")
 
-    task_events = load_spark_task_events(run_id)
+    task_events = load_spark_task_events(run_ids)
     task_metrics = [extract_task_metrics(e) for e in task_events]
     print(f"Loaded {len(task_metrics)} Spark task-end events for correlation")
 
-    report_md, phases_df = build_report(run_id, phases, summaries, task_metrics)
+    report_md, phases_df = build_report(run_ids, phases, summaries, task_metrics)
 
-    out_dir = PROFILING_DIR / run_id
+    out_dir = merged_output_dir(run_ids, args.date)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     report_path = out_dir / "report.md"
