@@ -121,7 +121,7 @@ def main():
         .config("spark.cassandra.read.timeoutMS", '30000') \
         .config("spark.eventLog.enabled", "true") \
         .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
-        .config("spark.eventLog.compress", "true") \
+        .config("spark.eventLog.compress", profiling.event_log_compress()) \
         .getOrCreate()
 
     # Create model instance

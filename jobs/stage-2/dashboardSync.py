@@ -1553,7 +1553,7 @@ def main():
     .config("spark.sql.adaptive.skewJoin.enabled", "true") \
     .config("spark.eventLog.enabled", "true") \
     .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
-    .config("spark.eventLog.compress", "true") \
+    .config("spark.eventLog.compress", profiling.event_log_compress()) \
     .getOrCreate()
     spark.sparkContext.setCheckpointDir("/home/analytics/spark-checkpoints")
     # Create model instance

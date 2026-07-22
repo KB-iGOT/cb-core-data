@@ -998,7 +998,7 @@ def main():
         .config("spark.cassandra.input.consistency.level", "LOCAL_ONE") \
         .config("spark.eventLog.enabled", "true") \
         .config("spark.eventLog.dir", f"file://{profiling.event_log_dir()}") \
-        .config("spark.eventLog.compress", "true") \
+        .config("spark.eventLog.compress", profiling.event_log_compress()) \
         .getOrCreate()
 
     start_time = datetime.now()
