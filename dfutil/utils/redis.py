@@ -388,7 +388,8 @@ class Redis:
         src_host = host if host is not None else getattr(conf, 'redisHost', None)
         src_port = port if port is not None else getattr(conf, 'redisPort', None)
         print(f"[Redis] bulk_update called; host={src_host}, port={src_port}, db={db}, keys={len(key_value_map)}")
-        with profiling.phase(job_name or "shared_utils", "redis_write", "bulk_update"):
+        with profiling.phase(job_name or "shared_utils", "redis_write", "bulk_update") as metrics:
+            metrics["record_count"] = len(key_value_map)
             if conf is not None and db is not None:
                 self.bulk_update_with_params(conf.redisHost, conf.redisPort, db, key_value_map)
             elif conf is not None:
@@ -417,7 +418,8 @@ class Redis:
         if batch_size is None or batch_size <= 0:
             raise ValueError("batch_size must be a positive integer")
 
-        with profiling.phase(job_name or "shared_utils", "redis_write", "bulk_update_in_batches"):
+        with profiling.phase(job_name or "shared_utils", "redis_write", "bulk_update_in_batches") as metrics:
+            metrics["record_count"] = len(key_value_map)
             if conf is not None and db is not None:
                 self.bulk_update_in_batches_with_params(conf.redisHost, conf.redisPort, db, key_value_map, batch_size)
             elif conf is not None:

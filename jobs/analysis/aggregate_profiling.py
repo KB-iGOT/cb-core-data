@@ -165,6 +165,8 @@ def extract_task_metrics(event):
     task_info = event.get("Task Info", {}) or {}
     shuffle_read_m = tm.get("Shuffle Read Metrics", {}) or {}
     shuffle_write_m = tm.get("Shuffle Write Metrics", {}) or {}
+    input_m = tm.get("Input Metrics", {}) or {}
+    output_m = tm.get("Output Metrics", {}) or {}
     shuffle_read = shuffle_read_m.get("Remote Bytes Read", 0) + shuffle_read_m.get("Local Bytes Read", 0)
     shuffle_write = shuffle_write_m.get("Shuffle Bytes Written", 0)
     spill = tm.get("Memory Bytes Spilled", 0) + tm.get("Disk Bytes Spilled", 0)
@@ -176,6 +178,10 @@ def extract_task_metrics(event):
         "shuffle_write_bytes": shuffle_write,
         "spilled_bytes": spill,
         "gc_time_ms": gc_time,
+        "input_bytes": input_m.get("Bytes Read", 0),
+        "input_records": input_m.get("Records Read", 0),
+        "output_bytes": output_m.get("Bytes Written", 0),
+        "output_records": output_m.get("Records Written", 0),
     }
 
 
@@ -188,6 +194,10 @@ def correlate_phase_with_tasks(phase_row, task_metrics):
     if not matched:
         return {}
     return {
+        "read_mb": round(sum(t["input_bytes"] for t in matched) / (1024 * 1024), 1),
+        "write_mb": round(sum(t["output_bytes"] for t in matched) / (1024 * 1024), 1),
+        "records_read": sum(t["input_records"] for t in matched),
+        "records_written": sum(t["output_records"] for t in matched),
         "shuffle_read_mb": round(sum(t["shuffle_read_bytes"] for t in matched) / (1024 * 1024), 1),
         "shuffle_write_mb": round(sum(t["shuffle_write_bytes"] for t in matched) / (1024 * 1024), 1),
         "spilled_mb": round(sum(t["spilled_bytes"] for t in matched) / (1024 * 1024), 1),
@@ -227,11 +237,12 @@ def build_report(run_ids, phases, summaries, task_metrics):
         job_phase_totals = phases_df.groupby("job_name")["duration_s"].sum().rename("job_phase_total_s")
         phases_df = phases_df.merge(job_phase_totals, on="job_name")
         phases_df["pct_of_job"] = (phases_df["duration_s"] / phases_df["job_phase_total_s"] * 100).round(1)
+        live_cols = [c for c in ["input_mb", "output_mb", "record_count", "throughput_mbps"] if c in phases_df.columns]
         for job_name, group in phases_df.groupby("job_name"):
             lines.append(f"### {job_name}")
             table = group.sort_values("duration_s", ascending=False)[
-                ["stage_name", "phase_type", "duration_s", "pct_of_job", "rss_jvm_delta_mb", "status"]
-            ]
+                ["stage_name", "phase_type", "duration_s", "pct_of_job", "rss_jvm_delta_mb", *live_cols, "status"]
+            ].fillna("-")
             lines.append(table.to_markdown(index=False))
             lines.append("")
     else:
@@ -244,14 +255,22 @@ def build_report(run_ids, phases, summaries, task_metrics):
         slowest = phases_df.sort_values("duration_s", ascending=False).head(TOP_N_SLOWEST).reset_index(drop=True)
         correlations = [correlate_phase_with_tasks(row, task_metrics) for _, row in slowest.iterrows()]
         corr_df = pd.DataFrame(correlations).fillna("-")
-        display_cols = ["job_name", "stage_name", "phase_type", "duration_s", "rss_jvm_delta_mb"]
-        combined = pd.concat([slowest[display_cols], corr_df], axis=1)
+        live_cols = [c for c in ["input_mb", "output_mb", "record_count", "throughput_mbps"] if c in slowest.columns]
+        display_cols = ["job_name", "stage_name", "phase_type", "duration_s", "rss_jvm_delta_mb", *live_cols]
+        combined = pd.concat([slowest[display_cols].fillna("-"), corr_df], axis=1)
         lines.append(combined.to_markdown(index=False))
+        lines.append("")
+        lines.append(
+            "_`input_mb`/`output_mb`/`record_count`/`throughput_mbps` are captured live by the job itself "
+            "(only populated for phase types wired up to report them - see jobs/analysis/README.md); "
+            "`read_mb`/`write_mb`/`records_read`/`records_written`/`shuffle_*`/`spilled_mb`/`gc_time_s` are "
+            "best-effort, correlated post-hoc from the Spark event log by wall-clock time window._"
+        )
         if not task_metrics:
             lines.append("")
             lines.append(
                 "_No Spark event log task metrics available for correlation "
-                "(see warnings above) - showing wall time and RSS only._"
+                "(see warnings above) - showing wall time, RSS, and any live-captured metrics only._"
             )
     else:
         lines.append("_No phase records found._")
