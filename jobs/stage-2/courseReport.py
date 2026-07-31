@@ -59,7 +59,7 @@ class CourseReportModel:
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             course_categories= config.courseCategoriesToSelect
 
-            
+            # read start
             with profiling.phase(JOB_NAME, "read", "allCourseProgramDetailsDF", spark=spark):
                 allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("courseCategory").isin(course_categories))
             with profiling.phase(JOB_NAME, "read", "contentHierarchyDF", spark=spark):
@@ -67,6 +67,8 @@ class CourseReportModel:
             with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark):
                 enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
 
+            # read end
+            # ETL start
             getContentResourceWithCategoryDF = contentHierarchyDF \
                 .join(allCourseProgramDetailsDF, ["courseID"], "inner") \
                 .select(
@@ -319,6 +321,9 @@ class CourseReportModel:
 
             orgid_list = [row.mdoid for row in distinct_orgids]
 
+            # ETL end
+
+            # Write start
             print("📝 Writing CSV reports...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 mdoReportDF,
@@ -419,6 +424,8 @@ class CourseReportModel:
             with profiling.phase(JOB_NAME, "write", "df_warehouse", spark=spark):
                 df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
 
+            # Write End
+            print(f"✅ {JOB_NAME} job completed")
         except Exception as e:
             print(f"❌ Error occurred during CourseReportModel processing: {str(e)}")
             raise e
