@@ -151,14 +151,20 @@ class BharatKalpReport:
             bharatKalpEventTagsDF = self.read_bharat_kalp_events(api_response)
         event_tags = [row.event_tag for row in bharatKalpEventTagsDF.collect()]
 
-        with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=self.spark):
+        with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=self.spark) as m:
             enrolmentDF = self.read_warehouse_data(self.config.dwEnrollmentsTable)
-        with profiling.phase(JOB_NAME, "read", "eventsDF", spark=self.spark):
+            m["materialize"] = enrolmentDF
+        with profiling.phase(JOB_NAME, "read", "eventsDF", spark=self.spark) as m:
             eventsDF = self.read_warehouse_data("event_details").filter(col("event_tag").isin(event_tags))
-        with profiling.phase(JOB_NAME, "read", "eventEnrolmentsDF", spark=self.spark):
+            m["materialize"] = eventsDF
+        with profiling.phase(JOB_NAME, "read", "eventEnrolmentsDF", spark=self.spark) as m:
             eventEnrolmentsDF = self.read_warehouse_data("event_enrolment_details")
-        with profiling.phase(JOB_NAME, "read", "userDF", spark=self.spark):
-            userDF = self.spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE).filter(col("isBharatKalpMember") == True).select(col("userID").alias("user_id")).distinct()
+            m["materialize"] = eventEnrolmentsDF
+        userDF_path = ParquetFileConstants.USER_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "userDF", spark=self.spark) as m:
+            userDF = self.spark.read.parquet(userDF_path).filter(col("isBharatKalpMember") == True).select(col("userID").alias("user_id")).distinct()
+            m["materialize"] = userDF
+            m["input_mb"] = profiling.dir_size_mb(userDF_path)
         print("Step 1: Complete")
         print("Step 2: Processing Bharat Kalp Events with Event Enrolments")
         eventWarehouseDF = self.build_event_report(eventsDF, eventEnrolmentsDF, userDF)
@@ -169,10 +175,29 @@ class BharatKalpReport:
         print("Step 4: Writing Bharat Kalp Report to Warehouse")
         courseWarehouseDF = courseWarehouseDF.withColumn("data_last_generated_on", currentDateTime)
         eventWarehouseDF = eventWarehouseDF.withColumn("data_last_generated_on", currentDateTime)
-        with profiling.phase(JOB_NAME, "write", "courseWarehouseDF", spark=self.spark):
-            courseWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{self.config.warehouseReportDir}/{self.config.dwBharatKalpCoursesTable}")
-        with profiling.phase(JOB_NAME, "write", "eventWarehouseDF", spark=self.spark):
-            eventWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{self.config.warehouseReportDir}/{self.config.dwBharatKalpEventsTable}")
+
+        # courseWarehouseDF's lineage covers build_course_report's two joins (enrolmentDF with
+        # userDF, then that result with bharatKalpCoursesDF) plus this withColumn. None of that
+        # executes until forced - materializing it here splits that real process cost apart
+        # from the write phase below.
+        with profiling.phase(JOB_NAME, "process", "courseWarehouseDF", spark=self.spark) as m:
+            m["materialize"] = courseWarehouseDF
+
+        courseWarehouseDF_output_path = f"{self.config.warehouseReportDir}/{self.config.dwBharatKalpCoursesTable}"
+        with profiling.phase(JOB_NAME, "write", "courseWarehouseDF", spark=self.spark) as m:
+            courseWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(courseWarehouseDF_output_path)
+            m["output_mb"] = profiling.dir_size_mb(courseWarehouseDF_output_path)
+
+        # eventWarehouseDF's lineage covers build_event_report's two joins (eventEnrolmentsDF
+        # with userDF, then that result with eventsDF) plus this withColumn. Materializing it
+        # here splits that real process cost apart from the write phase below.
+        with profiling.phase(JOB_NAME, "process", "eventWarehouseDF", spark=self.spark) as m:
+            m["materialize"] = eventWarehouseDF
+
+        eventWarehouseDF_output_path = f"{self.config.warehouseReportDir}/{self.config.dwBharatKalpEventsTable}"
+        with profiling.phase(JOB_NAME, "write", "eventWarehouseDF", spark=self.spark) as m:
+            eventWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(eventWarehouseDF_output_path)
+            m["output_mb"] = profiling.dir_size_mb(eventWarehouseDF_output_path)
         print("Step 4: Complete")
 def main():
     os.environ[

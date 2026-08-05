@@ -59,8 +59,11 @@ class GamificationNotificationProducer:
     def send_notification(self):
         try:
             print("Step 1: Reading Gamification Data...")
-            with profiling.phase(JOB_NAME, "read", "gamificationUsersDF", spark=self.spark):
-                gamificationUsersDF = self.spark.read.parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE).filter((col("dbCompletionStatus") == 1) & (col("badge_earning_date").isNotNull()))
+            gamificationUsersDF_path = ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "gamificationUsersDF", spark=self.spark) as m:
+                gamificationUsersDF = self.spark.read.parquet(gamificationUsersDF_path).filter((col("dbCompletionStatus") == 1) & (col("badge_earning_date").isNotNull()))
+                m["materialize"] = gamificationUsersDF
+                m["input_mb"] = profiling.dir_size_mb(gamificationUsersDF_path)
             print("✅ Step 1 Complete")
 
             print("Step 2: Calculating Notification Eligible Dates...")
@@ -76,8 +79,9 @@ class GamificationNotificationProducer:
             print("✅ Step 3 Complete")
 
             print("Step 4: Reading Course Reminder States...")
-            with profiling.phase(JOB_NAME, "read", "notification_queue", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "notification_queue", spark=self.spark) as m:
                 notification_queue = self.read_postgres_table(self.config.dwnotificationQueue).select(col("notification_id"))
+                m["materialize"] = notification_queue
             print("✅ Step 4 Complete")
 
             print("Step 5: Joining with State Data...")
@@ -121,6 +125,17 @@ class GamificationNotificationProducer:
                 )).alias("payload"),
                 current_timestamp().alias("created_at")) \
                 .select("user_id", "event_type", "content_id", "course_name" ,"payload", "notification_id", "created_at")
+
+            # notificationDF's lineage covers everything since the notification_queue
+            # read above: the badge_date/target_date filtering, the notification_id
+            # withColumn, the left_anti join with notification_queue, and this large
+            # nested struct/array/to_json payload select. None of that executes
+            # until forced - this phase's materialize is what makes that real cost
+            # visible as "process" time instead of silently landing inside the
+            # db_write phase below.
+            with profiling.phase(JOB_NAME, "process", "notificationDF", spark=self.spark) as m:
+                m["materialize"] = notificationDF
+
             with profiling.phase(JOB_NAME, "db_write", "notificationDF", spark=self.spark):
                 self.write_postgres_table(notificationDF, self.config.dwnotificationQueue, mode="append")
             print("✅ Step 6 Complete")

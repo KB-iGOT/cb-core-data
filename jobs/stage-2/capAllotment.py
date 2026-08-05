@@ -82,12 +82,18 @@ class CAPAccessControlModel:
             print(f"  Temp directory: {temp_dir}")
 
             # Read content parquet
-            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark):
-                content_df = spark.read.parquet(f"{warehouse_path}/{conf.dwCourseTable}")
+            content_df_path = f"{warehouse_path}/{conf.dwCourseTable}"
+            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark) as m:
+                content_df = spark.read.parquet(content_df_path)
+                m["materialize"] = content_df
+                m["input_mb"] = profiling.dir_size_mb(content_df_path)
 
             # Read access settings from cache
-            with profiling.phase(JOB_NAME, "read", "access_settings_df", spark=spark):
-                access_settings_df = spark.read.parquet(f"{output_path}/accessControlSettings")
+            access_settings_df_path = f"{output_path}/accessControlSettings"
+            with profiling.phase(JOB_NAME, "read", "access_settings_df", spark=spark) as m:
+                access_settings_df = spark.read.parquet(access_settings_df_path)
+                m["materialize"] = access_settings_df
+                m["input_mb"] = profiling.dir_size_mb(access_settings_df_path)
 
             # Filter Live CAPs from content
             cap_df = content_df.filter(
@@ -156,6 +162,18 @@ class CAPAccessControlModel:
             )
             )
 
+            # cap_allocation_df's lineage covers everything since the content_df/
+            # access_settings_df reads above: the cap_df filter/select (plus its
+            # un-instrumented .count() a few lines up), the cap_access_df filter +
+            # inner join (plus its own un-instrumented .count()), the criteriaValue
+            # regex rewrite, and the from_json/explode/transform chain that builds
+            # cap_allocation_df. None of that executes until forced - this phase's
+            # materialize is what makes that real cost visible as "process" time
+            # instead of silently landing inside the cap_allocation_df write phase
+            # below.
+            with profiling.phase(JOB_NAME, "process", "cap_allocation_df", spark=spark) as m:
+                m["materialize"] = cap_allocation_df
+
             allocation_count = cap_allocation_df.count()
             print(f"  CAP allocations (userGroups): {allocation_count:,}")
 
@@ -164,9 +182,11 @@ class CAPAccessControlModel:
             meta_cap_count = meta_distinct_caps.count()
             print(f"  Distinct CAPs in meta: {meta_cap_count:,}")
 
-            with profiling.phase(JOB_NAME, "write", "cap_allocation_df", spark=spark):
+            cap_allocation_df_output_path = f"{conf.warehouseReportDir}/cap_allocation_meta"
+            with profiling.phase(JOB_NAME, "write", "cap_allocation_df", spark=spark) as m:
                 cap_allocation_df.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                    f"{conf.warehouseReportDir}/cap_allocation_meta")
+                    cap_allocation_df_output_path)
+                m["output_mb"] = profiling.dir_size_mb(cap_allocation_df_output_path)
             print(f"\nCAP allocation meta data written to warehouse folder")
 
             print("\n[2/5] Exploding criteria with userGroup tracking...")
@@ -195,10 +215,21 @@ class CAPAccessControlModel:
                                      .withColumn("criteria_value_clean", lower(trim(col("criteria_value_raw"))))
                                      )
 
+            # cap_criteria_exploded's lineage covers everything since the
+            # cap_allocation_df materialize above: the user_group_id assignment,
+            # the criteria_type/criteria_value splitting, the criteria_idx
+            # sequence + explode, and the final select/withColumn. Materializing
+            # it here (rather than letting the write below be the first real
+            # action to touch any of this) is what makes that real cost visible
+            # as "process" time instead of "write" time.
+            with profiling.phase(JOB_NAME, "process", "cap_criteria_exploded", spark=spark) as m:
+                m["materialize"] = cap_criteria_exploded
+
             # Write to temp parquet
             cap_criteria_path = f"{temp_dir}/cap_criteria.parquet"
-            with profiling.phase(JOB_NAME, "write", "cap_criteria_exploded", spark=spark):
+            with profiling.phase(JOB_NAME, "write", "cap_criteria_exploded", spark=spark) as m:
                 cap_criteria_exploded.write.mode("overwrite").parquet(cap_criteria_path)
+                m["output_mb"] = profiling.dir_size_mb(cap_criteria_path)
 
             print(f"  Exploded criteria written to temp")
 
@@ -590,13 +621,17 @@ class CAPAccessControlModel:
             print("=" * 80 + "\n")
 
             # Read back to Spark
-            with profiling.phase(JOB_NAME, "read", "final_df", spark=spark):
+            with profiling.phase(JOB_NAME, "read", "final_df", spark=spark) as m:
                 final_df = spark.read.parquet(output_file)
+                m["materialize"] = final_df
+                m["input_mb"] = profiling.dir_size_mb(output_file)
             final_df_cap_count = final_df.select("cap_id").distinct().count()
             print(f"\n[VERIFICATION] Distinct CAPs in user wise df: {final_df_cap_count:,}")
-            with profiling.phase(JOB_NAME, "write", "final_df", spark=spark):
+            final_df_output_path = f"{conf.warehouseReportDir}/cap_allocation_user_wise"
+            with profiling.phase(JOB_NAME, "write", "final_df", spark=spark) as m:
                 final_df.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                    f"{conf.warehouseReportDir}/cap_allocation_user_wise")
+                    final_df_output_path)
+                m["output_mb"] = profiling.dir_size_mb(final_df_output_path)
             print(f"\nUser wise allocation parquet written to warehouse folder")
 
             # Cleanup

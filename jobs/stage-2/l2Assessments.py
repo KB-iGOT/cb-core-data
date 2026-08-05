@@ -61,27 +61,57 @@ class L2AssessmentReport:
 
             # Load dataframes
             print("Loading base dataframes...")
-            with profiling.phase(JOB_NAME, "read", "kcmDF", spark=spark):
-                kcmDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
-            with profiling.phase(JOB_NAME, "read", "kcmMappingDF", spark=spark):
-                kcmMappingDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}")
-            with profiling.phase(JOB_NAME, "read", "dwEnrolmentDF", spark=spark):
-                dwEnrolmentDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
-            with profiling.phase(JOB_NAME, "read", "acbpAllEnrolDF", spark=spark):
-                acbpAllEnrolDF = spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
-            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
-                contentDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
-            with profiling.phase(JOB_NAME, "read", "assessmentDetailDF", spark=spark):
-                assessmentDetailDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwAssessmentTable}")
-            with profiling.phase(JOB_NAME, "read", "dwOrgDF", spark=spark):
-                dwOrgDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwOrgTable}")
-            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark):
-                userDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwUserTable}")
+            kcmDF_path = f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}"
+            with profiling.phase(JOB_NAME, "read", "kcmDF", spark=spark) as m:
+                kcmDF = spark.read.parquet(kcmDF_path)
+                m["materialize"] = kcmDF
+                m["input_mb"] = profiling.dir_size_mb(kcmDF_path)
+            kcmMappingDF_path = f"{config.warehouseReportDir}/{config.dwKcmContentTable}"
+            with profiling.phase(JOB_NAME, "read", "kcmMappingDF", spark=spark) as m:
+                kcmMappingDF = spark.read.parquet(kcmMappingDF_path)
+                m["materialize"] = kcmMappingDF
+                m["input_mb"] = profiling.dir_size_mb(kcmMappingDF_path)
+            dwEnrolmentDF_path = f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}"
+            with profiling.phase(JOB_NAME, "read", "dwEnrolmentDF", spark=spark) as m:
+                dwEnrolmentDF = spark.read.parquet(dwEnrolmentDF_path)
+                m["materialize"] = dwEnrolmentDF
+                m["input_mb"] = profiling.dir_size_mb(dwEnrolmentDF_path)
+            acbpAllEnrolDF_path = ParquetFileConstants.ACBP_COMPUTED_FILE
+            with profiling.phase(JOB_NAME, "read", "acbpAllEnrolDF", spark=spark) as m:
+                acbpAllEnrolDF = spark.read.parquet(acbpAllEnrolDF_path)
+                m["materialize"] = acbpAllEnrolDF
+                m["input_mb"] = profiling.dir_size_mb(acbpAllEnrolDF_path)
+            contentDF_path = f"{config.warehouseReportDir}/{config.dwCourseTable}"
+            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark) as m:
+                contentDF = spark.read.parquet(contentDF_path)
+                m["materialize"] = contentDF
+                m["input_mb"] = profiling.dir_size_mb(contentDF_path)
+            assessmentDetailDF_path = f"{config.warehouseReportDir}/{config.dwAssessmentTable}"
+            with profiling.phase(JOB_NAME, "read", "assessmentDetailDF", spark=spark) as m:
+                assessmentDetailDF = spark.read.parquet(assessmentDetailDF_path)
+                m["materialize"] = assessmentDetailDF
+                m["input_mb"] = profiling.dir_size_mb(assessmentDetailDF_path)
+            dwOrgDF_path = f"{config.warehouseReportDir}/{config.dwOrgTable}"
+            with profiling.phase(JOB_NAME, "read", "dwOrgDF", spark=spark) as m:
+                dwOrgDF = spark.read.parquet(dwOrgDF_path)
+                m["materialize"] = dwOrgDF
+                m["input_mb"] = profiling.dir_size_mb(dwOrgDF_path)
+            userDF_path = f"{config.warehouseReportDir}/{config.dwUserTable}"
+            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark) as m:
+                userDF = spark.read.parquet(userDF_path)
+                m["materialize"] = userDF
+                m["input_mb"] = profiling.dir_size_mb(userDF_path)
             userDF = userDF.join(dwOrgDF.select("mdo_id", "mdo_name"), "mdo_id", "left")
-            with profiling.phase(JOB_NAME, "read", "dwcbPlanDF", spark=spark):
-                dwcbPlanDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
-            with profiling.phase(JOB_NAME, "read", "assessmentMinPassDF", spark=spark):
-                assessmentMinPassDF = spark.read.parquet(f"{config.baseCachePath}/esCourseAssessment")
+            dwcbPlanDF_path = f"{config.warehouseReportDir}/{config.dwCBPlanTable}"
+            with profiling.phase(JOB_NAME, "read", "dwcbPlanDF", spark=spark) as m:
+                dwcbPlanDF = spark.read.parquet(dwcbPlanDF_path)
+                m["materialize"] = dwcbPlanDF
+                m["input_mb"] = profiling.dir_size_mb(dwcbPlanDF_path)
+            assessmentMinPassDF_path = f"{config.baseCachePath}/esCourseAssessment"
+            with profiling.phase(JOB_NAME, "read", "assessmentMinPassDF", spark=spark) as m:
+                assessmentMinPassDF = spark.read.parquet(assessmentMinPassDF_path)
+                m["materialize"] = assessmentMinPassDF
+                m["input_mb"] = profiling.dir_size_mb(assessmentMinPassDF_path)
 
             # assessment Minimum Pass DF
             assessmentMinPassDF.printSchema()
@@ -108,9 +138,26 @@ class L2AssessmentReport:
                 .otherwise(col("cut_off_percentage"))
             )
 
+            # assessmentDetailDF's lineage covers everything since the assessmentDetailDF/
+            # assessmentMinPassDF reads above: assessMinPassDF's filter/select (plus its own
+            # un-instrumented .show() a few lines up), the join with assessMinPassDF, and this
+            # cut_off_percentage withColumn. Materializing it here (right before the existing,
+            # un-instrumented "before dropping count" .count() below) is what makes that real
+            # cost visible as "process" time, and lets that .count() run against cached data.
+            with profiling.phase(JOB_NAME, "process", "assessmentDetailDF", spark=spark) as m:
+                m["materialize"] = assessmentDetailDF
+
             # ── Added from temp: dedup assessmentDetailDF ─────────────────────
             print("before dropping count - ", assessmentDetailDF.count())
             assessmentDetailDF = assessmentDetailDF.dropDuplicates(["user_id", "content_id", "assessment_id"])
+
+            # assessmentDetailDF_dedup's lineage is just the dropDuplicates shuffle above.
+            # Materializing it here (right before the existing, un-instrumented "after
+            # dropping count" .count() below) is what makes that real cost visible as
+            # "process" time instead of an invisible ad-hoc action.
+            with profiling.phase(JOB_NAME, "process", "assessmentDetailDF_dedup", spark=spark) as m:
+                m["materialize"] = assessmentDetailDF
+
             print("after dropping count - ", assessmentDetailDF.count())
 
             kcmCourseDF = kcmDF.join(kcmMappingDF, kcmDF.competency_area_id == kcmMappingDF.competency_area_id, "inner") \
@@ -353,6 +400,16 @@ class L2AssessmentReport:
                 .filter(col("enrol_user_consumption_status").isin("in-progress", "completed")) \
                 .dropDuplicates()
 
+            # validAparConsumptionDF's lineage covers the entire PART 1 APAR chain since the
+            # acbpAllEnrolDF/dwEnrolmentDF/contentDF/userDF/dwcbPlanDF/resultDF reads/builds
+            # above: apar_plans_exploded's explode, and the five successive joins/selects
+            # (apar_with_consumption -> apar_with_content -> apar_with_user -> apar_with_cbplan
+            # -> apar_final) down to this filter/dropDuplicates. None of that executes until
+            # forced - materializing here is what makes that real cost visible as "process"
+            # time, and lets the later union with cap_unified_deduped reuse it from cache.
+            with profiling.phase(JOB_NAME, "process", "validAparConsumptionDF", spark=spark) as m:
+                m["materialize"] = validAparConsumptionDF
+
             print("PART 2: PROCESSING CAP (COMPREHENSIVE ASSESSMENT PROGRAM) DATA")
 
             # ==================== CAP ASSESSMENT PROCESSING ====================
@@ -394,6 +451,17 @@ class L2AssessmentReport:
                 col("user_consumption_status").alias("cap_enrol_user_consumption_status")
             ) \
                 .dropDuplicates()
+
+            # cap_with_enrolment's lineage covers everything since the contentDF/
+            # dwEnrolmentDF reads above: capContentDF's filter/select, the join with
+            # dwEnrolmentDF (filtered to in-progress/completed), and this select/
+            # dropDuplicates. Materializing it here (right before the existing,
+            # un-instrumented "CAP with enrolment count" .count() below) is what makes
+            # that real cost visible as "process" time, and lets that .count() run
+            # against cached data.
+            with profiling.phase(JOB_NAME, "process", "cap_with_enrolment", spark=spark) as m:
+                m["materialize"] = cap_with_enrolment
+
             print(f"CAP with enrolment count: {cap_with_enrolment.count()}")
 
             # Step 3: Join with assessment details (left join - in-progress may not have assessment data)
@@ -429,6 +497,14 @@ class L2AssessmentReport:
                 col("pass").alias("assess_pass")
             ) \
                 .dropDuplicates()
+
+            # cap_with_assessment's lineage covers everything since assessmentDetailDF's
+            # dedup above: the join with assessmentDetailDF and this select/dropDuplicates.
+            # Materializing it here (right before the existing, un-instrumented "CAP with
+            # assessment count" .count() below) is what makes that real cost visible as
+            # "process" time, and lets that .count() run against cached data.
+            with profiling.phase(JOB_NAME, "process", "cap_with_assessment", spark=spark) as m:
+                m["materialize"] = cap_with_assessment
 
             print(f"CAP with assessment count: {cap_with_assessment.count()}")
             print("\nStage 4: Joining with user data...")
@@ -609,6 +685,17 @@ class L2AssessmentReport:
 
             masterFinalDF = apar_unified.unionByName(cap_unified_deduped)
 
+            # masterFinalDF's lineage covers everything since validAparConsumptionDF/
+            # cap_with_assessment were cached above: validL2AssessmentConsumptionDF's join
+            # with userDF plus assess_pass normalization, the apar_unified/cap_unified column
+            # mappings, cap_unified_deduped's score/status dedup window, and this final union.
+            # Materializing it here (before the existing, un-instrumented
+            # groupBy(...).count().show() diagnostic below, and before the write phase
+            # further down) is what makes that real cost visible as "process" time instead
+            # of landing invisibly inside either of those.
+            with profiling.phase(JOB_NAME, "process", "masterFinalDF", spark=spark) as m:
+                m["materialize"] = masterFinalDF
+
             # Print schema and sample data
             print("\nFinal Schema:")
             masterFinalDF.printSchema()
@@ -617,9 +704,10 @@ class L2AssessmentReport:
             print("\nReport generation completed successfully!")
 
             # Export report
-            with profiling.phase(JOB_NAME, "write", "masterFinalDF", spark=spark):
+            with profiling.phase(JOB_NAME, "write", "masterFinalDF", spark=spark) as m:
                 masterFinalDF.coalesce(1).write.mode("overwrite").parquet(
                     "/mount/data/analytics/igot-reports/assessment-report-apar/parquet")
+                m["output_mb"] = profiling.dir_size_mb("/mount/data/analytics/igot-reports/assessment-report-apar/parquet")
             # csv
             # apar_assessment_data.coalesce(1).write.mode("overwrite").option("header", "true").csv("/home/analytics/shishir/assessment-report-apar/csv")
 

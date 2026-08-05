@@ -39,8 +39,11 @@ class CourseCompletionSurveyReport:
             today = self.get_date()
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             print("Stage 1: Loading course completion survey data...")
-            with profiling.phase(JOB_NAME, "read", "courseCompletionSurveyDF", spark=spark):
-                courseCompletionSurveyDF = spark.read.parquet(ParquetFileConstants.COURSE_COMPLETION_SURVEY_PARQUET_FILE).filter(col("formId").isin(config.completionSurveyFormIds))
+            courseCompletionSurveyDF_path = ParquetFileConstants.COURSE_COMPLETION_SURVEY_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "courseCompletionSurveyDF", spark=spark) as m:
+                courseCompletionSurveyDF = spark.read.parquet(courseCompletionSurveyDF_path).filter(col("formId").isin(config.completionSurveyFormIds))
+                m["materialize"] = courseCompletionSurveyDF
+                m["input_mb"] = profiling.dir_size_mb(courseCompletionSurveyDF_path)
             print("Stage 1: Complete")
             # Stage 2: Exploding of Array
             print("Stage 2: Exploding the response Array")
@@ -71,7 +74,17 @@ class CourseCompletionSurveyReport:
             reportDF = reportDF.withColumn("contextName", encode("contextName", "UTF-8"))
 
             print("Stage 3: Complete")
-            #writing warehouse file 
+
+            # reportDF's lineage covers everything since the courseCompletionSurveyDF
+            # read above: the response array explode/select, and the groupBy+pivot+
+            # agg that builds reportDF (plus the contextName encode). None of that
+            # executes until forced - this phase's materialize is what makes that
+            # real cost visible as "process" time instead of silently landing inside
+            # the warehouseDF write phase below.
+            with profiling.phase(JOB_NAME, "process", "reportDF", spark=spark) as m:
+                m["materialize"] = reportDF
+
+            #writing warehouse file
             print("Stage 4: Writing Warehouse file")
             warehouseDF = reportDF.filter(col("formId").isin(config.contentEndSurveyFormid)).withColumn("data_last_generated_on", currentDateTime)\
                 .select(
@@ -96,12 +109,14 @@ class CourseCompletionSurveyReport:
                    col("version").alias("survey_version"),
                    col("data_last_generated_on"))
 
-            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+            warehouseDF_output_path = f"{config.warehouseReportDir}/{config.dwCourseCompletionSurveryTable}"
+            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark) as m:
                 (warehouseDF.coalesce(1)
                    .write
                    .mode("overwrite")
                    .option("compression", "snappy")
-                   .parquet(f"{config.warehouseReportDir}/{config.dwCourseCompletionSurveryTable}"))
+                   .parquet(warehouseDF_output_path))
+                m["output_mb"] = profiling.dir_size_mb(warehouseDF_output_path)
 
             print("Stage4 : Complete")
 

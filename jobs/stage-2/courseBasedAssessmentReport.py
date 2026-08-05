@@ -46,14 +46,23 @@ class CourseBasedAssessmentModel:
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
 
             print("Stage 1: Loading assessment data...")
-            with profiling.phase(JOB_NAME, "read", "assessmentDF", spark=spark):
-                assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE) \
+            assessmentDF_path = ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "assessmentDF", spark=spark) as m:
+                assessmentDF = spark.read.parquet(assessmentDF_path) \
                     .filter(
                     col("assessCategory").isin("Course", "Standalone Assessment", "Blended Program", "Curated Program"))
-            with profiling.phase(JOB_NAME, "read", "hierarchyDF", spark=spark):
-                hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "organizationDF", spark=spark):
-                organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
+                m["materialize"] = assessmentDF
+                m["input_mb"] = profiling.dir_size_mb(assessmentDF_path)
+            hierarchyDF_path = ParquetFileConstants.HIERARCHY_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "hierarchyDF", spark=spark) as m:
+                hierarchyDF = spark.read.parquet(hierarchyDF_path)
+                m["materialize"] = hierarchyDF
+                m["input_mb"] = profiling.dir_size_mb(hierarchyDF_path)
+            organizationDF_path = ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "organizationDF", spark=spark) as m:
+                organizationDF = spark.read.parquet(organizationDF_path)
+                m["materialize"] = organizationDF
+                m["input_mb"] = profiling.dir_size_mb(organizationDF_path)
 
             print("Stage 1: Complete")
 
@@ -79,11 +88,14 @@ class CourseBasedAssessmentModel:
 
             print("Stage 4: Complete")
             print("Stage 5: Processing user assessment data...")
-            with profiling.phase(JOB_NAME, "read", "userAssessmentDF", spark=spark):
-                userAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE) \
+            userAssessmentDF_path = ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "userAssessmentDF", spark=spark) as m:
+                userAssessmentDF = spark.read.parquet(userAssessmentDF_path) \
                     .filter(col("assessUserStatus") == "SUBMITTED") \
                     .withColumn("assessStartTime", col("assessStartTimestamp").cast("long")) \
                     .withColumn("assessEndTime", col("assessEndTimestamp").cast("long"))
+                m["materialize"] = userAssessmentDF
+                m["input_mb"] = profiling.dir_size_mb(userAssessmentDF_path)
             # Window for basic assessment — rank by highest assessPassPercentageOriginal
             windowBasic = Window.partitionBy("userID", "assessChildID") \
                 .orderBy(col("assessOverallResult").desc())
@@ -213,8 +225,21 @@ class CourseBasedAssessmentModel:
                 col("userOrgID").alias("mdoid"),
                 col("Report_Last_Generated_On"))
 
-            with profiling.phase(JOB_NAME, "read", "oldAssessmentDetailsDF", spark=spark):
-                oldAssessmentDetailsDF = spark.read.parquet(ParquetFileConstants.OLD_ASSESSMENT_COMPUTED_PARQUET_FILE)
+            # fullReportNewDF's lineage covers everything since the userAssessmentDF
+            # read above: the basic/sectional dedup windows, user_assessment_children_*
+            # joins (including their own inline reads of CONTENT_COMPUTED_PARQUET_FILE/
+            # RATING_SUMMARY_COMPUTED_PARQUET_FILE/USER_ORG_COMPUTED_FILE), the retakes
+            # groupBy, and the final select. None of that executes until forced - this
+            # phase's materialize is what makes that real cost visible as "process"
+            # time instead of silently landing inside a later read/write phase.
+            with profiling.phase(JOB_NAME, "process", "fullReportNewDF", spark=spark) as m:
+                m["materialize"] = fullReportNewDF
+
+            oldAssessmentDetailsDF_path = ParquetFileConstants.OLD_ASSESSMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "oldAssessmentDetailsDF", spark=spark) as m:
+                oldAssessmentDetailsDF = spark.read.parquet(oldAssessmentDetailsDF_path)
+                m["materialize"] = oldAssessmentDetailsDF
+                m["input_mb"] = profiling.dir_size_mb(oldAssessmentDetailsDF_path)
 
             fullReportOldDF = oldAssessmentDetailsDF \
                 .withColumn("MDO_Name", col("userOrgName")) \
@@ -315,6 +340,15 @@ class CourseBasedAssessmentModel:
                 ).otherwise(lit(False))
             ).cache()
 
+            # mdoReportDF's lineage covers everything since the oldAssessmentDetailsDF
+            # read above: fullReportOldDF's transforms, the fullReportNewDF/
+            # fullReportOldDF union + dropDuplicates, and this select/filter/withColumn.
+            # Materializing it here (rather than letting the un-instrumented
+            # .collect() calls below trigger it for the first time) is what makes
+            # that real cost visible as "process" time.
+            with profiling.phase(JOB_NAME, "process", "mdoReportDF", spark=spark) as m:
+                m["materialize"] = mdoReportDF
+
             govt_part_df = mdoReportDF.filter(~col("is_non_govt_user")).drop("is_non_govt_user", "Roles")
             non_govt_part_df = mdoReportDF.filter(col("is_non_govt_user")).drop("is_non_govt_user", "Roles")
 
@@ -341,8 +375,11 @@ class CourseBasedAssessmentModel:
                 .otherwise(col("mdoid"))
             )
 
-            with profiling.phase(JOB_NAME, "read", "finalAssessmentDF", spark=spark):
-                finalAssessmentDF = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
+            finalAssessmentDF_path = ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "finalAssessmentDF", spark=spark) as m:
+                finalAssessmentDF = spark.read.parquet(finalAssessmentDF_path)
+                m["materialize"] = finalAssessmentDF
+                m["input_mb"] = profiling.dir_size_mb(finalAssessmentDF_path)
             finalAssessmentDF = finalAssessmentDF.join(userAssessmentDF,
                                                        finalAssessmentDF["Identifier"] == userAssessmentDF[
                                                            "assessChildID"], "inner") \
@@ -396,8 +433,11 @@ class CourseBasedAssessmentModel:
             warehouseDF = warehouseDF.unionByName(finalAssessmentDF)
             # request from anshu to replace assesment_type 'Course Assessment' with 'Comprehensive Assessment Progam'
             # when course sub type is 'Comprehensive Assessment Program'
-            with profiling.phase(JOB_NAME, "read", "assessmentMinPassDF", spark=spark):
-                assessmentMinPassDF = spark.read.parquet(f"{config.baseCachePath}/esCourseAssessment")
+            assessmentMinPassDF_path = f"{config.baseCachePath}/esCourseAssessment"
+            with profiling.phase(JOB_NAME, "read", "assessmentMinPassDF", spark=spark) as m:
+                assessmentMinPassDF = spark.read.parquet(assessmentMinPassDF_path)
+                m["materialize"] = assessmentMinPassDF
+                m["input_mb"] = profiling.dir_size_mb(assessmentMinPassDF_path)
 
             # assessment Minimum Pass DF
             assessMinPassDF = assessmentMinPassDF.filter(
@@ -450,6 +490,15 @@ class CourseBasedAssessmentModel:
 
             warehouseDF = (warehouseDF.withColumn("rn", row_number().over(w)).filter(col("rn") == 1).drop("rn"))
 
+            # warehouseDF's lineage covers everything since the assessmentMinPassDF
+            # read above: the assessMinPassDF filter/select (plus its un-instrumented
+            # .show() a few lines up), the join with assessMinPassDF, the join with
+            # assessmentDF, and this final dedup window. Materializing it here (before
+            # the write phase, which would otherwise be the first real action to touch
+            # any of this) is what makes that real cost visible as "process" time.
+            with profiling.phase(JOB_NAME, "process", "warehouseDF", spark=spark) as m:
+                m["materialize"] = warehouseDF
+
             cba_out_path = f"{config.localReportDir}/{config.cbaReportPath}/{today}"
 
             # dfexportutil.write_csv_per_mdo_id_duckdb throws a KeyError on
@@ -481,12 +530,14 @@ class CourseBasedAssessmentModel:
             else:
                 print("ℹ️  No Non-Govt (VOLUNTEER) users found in this run — skipping Non-Govt CSV write.")
 
-            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+            warehouseDF_out_path = f"{config.warehouseReportDir}/{config.dwAssessmentTable}"
+            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark) as m:
                 (warehouseDF.coalesce(1)
                  .write
                  .mode("overwrite")
                  .option("compression", "snappy")
-                 .parquet(f"{config.warehouseReportDir}/{config.dwAssessmentTable}"))
+                 .parquet(warehouseDF_out_path))
+                m["output_mb"] = profiling.dir_size_mb(warehouseDF_out_path)
 
             mdoReportDF.unpersist()
 

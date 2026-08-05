@@ -181,6 +181,47 @@ def event_log_compress() -> str:
     )
 
 
+_FORCE_MATERIALIZE_ENV_VAR = "PROFILING_FORCE_MATERIALIZE"
+_FORCE_MATERIALIZE_MARKER_PATH = PROFILING_OUTPUT_DIR / ".current_force_materialize"
+_FORCE_MATERIALIZE_LOCK_PATH = PROFILING_OUTPUT_DIR / ".current_force_materialize.lock"
+
+
+def force_materialize() -> bool:
+    """
+    Whether profiling.phase() should force real Spark execution (cache +
+    count) on the DataFrame a caller registers via metrics["materialize"] =
+    df, instead of only timing however long Python takes to build the lazy
+    plan. Spark transformations (including .read.parquet(...).withColumn(...))
+    don't execute anything by themselves - they just extend a logical plan -
+    so without this, a "read" phase's duration/RSS reflect plan-building
+    only, and the real read+transform cost lands wherever the next action
+    (often a later "write"/"db_write" phase) happens to fire. Forcing
+    materialization here makes phase boundaries match real Spark execution,
+    at the cost of one extra pass over that phase's data (the .count()
+    itself) - see jobs/analysis/README.md. Off by default so a routine
+    production run's performance is unaffected; turn on deliberately for a
+    profiling run that needs a true read/process/write time split.
+
+    Resolution mirrors event_log_compress() (see its docstring for why a
+    plain env var isn't enough across independent per-job Airflow
+    processes): PROFILING_FORCE_MATERIALIZE env var on this process wins and
+    becomes the marker for the rest of the run; otherwise reuse another
+    job's marker from this run, if any; default "false".
+    """
+    env_value = os.environ.get(_FORCE_MATERIALIZE_ENV_VAR)
+    if env_value is not None:
+        value = env_value.strip().lower()
+        PROFILING_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        _write_marker(_FORCE_MATERIALIZE_MARKER_PATH, value)
+        return value == "true"
+
+    value = _rendezvous(
+        _FORCE_MATERIALIZE_MARKER_PATH, _FORCE_MATERIALIZE_LOCK_PATH, RUN_ID_MARKER_MAX_AGE_HOURS,
+        mint_value=lambda: "false",
+    )
+    return value == "true"
+
+
 def _jvm_rss_mb() -> float:
     """
     Sums RSS across java child processes of the current process. In local[N]
@@ -254,6 +295,26 @@ def phase(job_name: str, phase_type: str, stage_name: str, spark=None):
     are recorded as null. See jobs/analysis/README.md for which phase types
     populate these today vs. rely on best-effort Spark event log correlation
     in aggregate_profiling.py instead.
+
+    A "read" or "process" phase can additionally opt into a true wall-time
+    split instead of just timing how long Python takes to build a lazy plan:
+        with profiling.phase(JOB_NAME, "read", "userDetailsDF", spark=spark) as m:
+            userDetailsDF = spark.read.parquet(path).withColumn(...)
+            m["materialize"] = userDetailsDF
+            m["input_mb"] = dir_size_mb(path)
+    When force_materialize() is on, phase() calls .cache() + .count() on
+    whatever DataFrame is registered as "materialize" before the phase ends
+    - forcing Spark to actually execute this phase's plan now, so
+    duration_s/rss_jvm_delta_mb reflect real execution instead of ~0. Because
+    .cache() mutates the DataFrame in place, the same object used later in a
+    "write"/"db_write" phase is served from memory instead of re-reading the
+    source, so that later phase's duration becomes real write-only time. Off
+    by default (see force_materialize()'s docstring) - with it off, a
+    registered "materialize" DataFrame is simply ignored, so existing call
+    sites that add this hook see no behavior change until the run opts in.
+    "record_count" is set from the forced count if the caller didn't already
+    set one. Errors during the forced count are recorded as a failure of
+    *this* phase (correctly - if materialization fails, this phase failed).
     """
     if phase_type not in PHASE_TYPES:
         raise ValueError(f"Unknown phase_type '{phase_type}', expected one of {sorted(PHASE_TYPES)}")
@@ -264,9 +325,16 @@ def phase(job_name: str, phase_type: str, stage_name: str, spark=None):
     status = "ok"
     error_msg = None
     metrics = {}
+    forced_materialization = False
 
     try:
         yield metrics
+        materialize_df = metrics.pop("materialize", None)
+        if materialize_df is not None and force_materialize():
+            materialize_df.cache()
+            forced_count = materialize_df.count()
+            metrics.setdefault("record_count", forced_count)
+            forced_materialization = True
     except Exception as e:
         status = "error"
         error_msg = f"{type(e).__name__}: {e}"
@@ -300,6 +368,7 @@ def phase(job_name: str, phase_type: str, stage_name: str, spark=None):
             "output_mb": output_mb,
             "record_count": metrics.get("record_count"),
             "throughput_mbps": throughput_mbps,
+            "forced_materialization": forced_materialization,
             "status": status,
             "error_msg": error_msg,
             "pid": os.getpid(),

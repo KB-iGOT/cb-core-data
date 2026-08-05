@@ -58,26 +58,36 @@ def processUserReport(config):
 
         # Step 1: Load User Master Data
         print("📊 Step 1: Loading User Master Data...")
-        with profiling.phase(JOB_NAME, "read", "user_master_df", spark=spark):
-            user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+        user_master_df_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+        with profiling.phase(JOB_NAME, "read", "user_master_df", spark=spark) as m:
+            user_master_df = spark.read.parquet(user_master_df_path)
+            m["materialize"] = user_master_df
+            m["input_mb"] = profiling.dir_size_mb(user_master_df_path)
         print("✅ Step 1 Complete")
 
         # Step 2: Load Enrolment Data
         print("📚 Step 2: Loading Enrolment Data...")
-        with profiling.phase(JOB_NAME, "read", "user_enrolment_df", spark=spark):
-            user_enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+        user_enrolment_df_path = ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "user_enrolment_df", spark=spark) as m:
+            user_enrolment_df = spark.read.parquet(user_enrolment_df_path)
+            m["materialize"] = user_enrolment_df
+            m["input_mb"] = profiling.dir_size_mb(user_enrolment_df_path)
 
-        with profiling.phase(JOB_NAME, "read", "user_badges", spark=spark):
-            user_badges = (spark.read.parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE)
+        user_badges_path = ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "user_badges", spark=spark) as m:
+            user_badges = (spark.read.parquet(user_badges_path)
                            .select(col("userID").alias("user_id"), "badge_id")
                            .groupBy("user_id").agg(expr("count(distinct badge_id)").alias("total_badges_earned")))
+            m["materialize"] = user_badges
+            m["input_mb"] = profiling.dir_size_mb(user_badges_path)
         print("✅ Step 2 Complete")
 
         # Step 3: Load Content Duration
         print("📖 Step 3: Loading Content Duration Data...")
-        with profiling.phase(JOB_NAME, "read", "content_duration_df", spark=spark):
+        content_duration_df_path = ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "content_duration_df", spark=spark) as m:
             content_duration_df = (
-                spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+                spark.read.parquet(content_duration_df_path)
                 .filter((col("courseCategory") == "Course"))
                 .select(
                     col("courseID").alias("content_id"),
@@ -85,6 +95,8 @@ def processUserReport(config):
                     col("category")
                 )
             )
+            m["materialize"] = content_duration_df
+            m["input_mb"] = profiling.dir_size_mb(content_duration_df_path)
         print("✅ Step 3 Complete")
 
         # Step 4: Add User Status Classification
@@ -119,6 +131,16 @@ def processUserReport(config):
                              (col("weekly_claps_day_before_yesterday") == ""),
                              lit(0)).otherwise(col("weekly_claps_day_before_yesterday")))
         print("✅ Step 7 Complete")
+
+        # user_complete_data's lineage covers everything since the content_duration_df
+        # read above: appendContentDurationCompletionForEachUser's and
+        # appendEventDurationCompletionForEachUser's joins/aggregations, plus this
+        # phase's own Tag/Total_Learning_Hours/weekly_claps withColumns. None of that
+        # executes until forced - this phase's materialize is what makes that real
+        # cost visible as "process" time before it forks into the warehouseDF and
+        # mdo_wise_slim branches below.
+        with profiling.phase(JOB_NAME, "process", "user_complete_data", spark=spark) as m:
+            m["materialize"] = user_complete_data
 
         # Step 8: Build Warehouse Data (the mdo-wise CSV "user-report" now lives entirely in Step 11,
         # merged with custom fields, and split into Govt/Non-Govt only where an org actually has both)
@@ -168,22 +190,32 @@ def processUserReport(config):
             col("organised_service").alias("is_from_organised_service_of_govt"),
             col("data_last_generated_on")
         ).join(user_badges, on="user_id", how="left").fillna(0, subset=["total_badges_earned"])
+
+        # warehouseDF's lineage covers the withColumn/select projection off
+        # user_complete_data (already materialized above) plus the join with
+        # user_badges and the fillna. Materializing it here (rather than letting
+        # the write phase below be the first real action to touch any of this) is
+        # what makes that real cost visible as "process" time instead of "write" time.
+        with profiling.phase(JOB_NAME, "process", "warehouseDF", spark=spark) as m:
+            m["materialize"] = warehouseDF
         print("✅ Step 8 Complete")
 
         # Step 9: Export Warehouse Data
         print("📁 Step 9: Exporting Warehouse Data...")
-        with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
-            warehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(
-                f"{config.warehouseReportDir}/{config.dwUserTable}")
+        warehouseDF_out_path = f"{config.warehouseReportDir}/{config.dwUserTable}"
+        with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark) as m:
+            warehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(warehouseDF_out_path)
+            m["output_mb"] = profiling.dir_size_mb(warehouseDF_out_path)
         print("✅ Step 9 Complete")
 
 
         # Step 10: Process User Extended Profile Data
         print("🔍 Step 10: Processing User Extended Profile Data...")
         # Load user extended profile data
-        with profiling.phase(JOB_NAME, "read", "user_extended_profile_df", spark=spark):
+        user_extended_profile_df_path = ParquetFileConstants.USER_EXTENDED_PROFILE
+        with profiling.phase(JOB_NAME, "read", "user_extended_profile_df", spark=spark) as m:
             user_extended_profile_df = (
-                spark.read.parquet(ParquetFileConstants.USER_EXTENDED_PROFILE)
+                spark.read.parquet(user_extended_profile_df_path)
                 .filter(col("contexttype") == "orgAdditionalProperties")
                 .withColumnRenamed("userid", "userID")
                 .withColumn("contextDataArray", from_json(col("contextdata"), ArrayType(schemas.context_data_schema)))
@@ -195,6 +227,8 @@ def processUserReport(config):
                     col("contextData.organisationId").alias("mdo_id")
                 )
             )
+            m["materialize"] = user_extended_profile_df
+            m["input_mb"] = profiling.dir_size_mb(user_extended_profile_df_path)
 
         # Step 1: Explode customFieldValues and handle based on type
         exploded_df_base = (
@@ -247,8 +281,18 @@ def processUserReport(config):
             col("attribute_value").isNotNull()
         )
 
+        # exploded_df's lineage covers everything since the user_extended_profile_df
+        # read above: the customFieldValues explode, the direct-value/masterList
+        # branches, and their union + filter. Materializing it here (rather than
+        # letting the write phase below be the first real action to touch any of
+        # this) is what makes that real cost visible as "process" time instead of
+        # "write" time.
+        with profiling.phase(JOB_NAME, "process", "exploded_df", spark=spark) as m:
+            m["materialize"] = exploded_df
+
         # Write to warehouse tables
-        with profiling.phase(JOB_NAME, "write", "exploded_df", spark=spark):
+        exploded_df_out_path = f"{config.warehouseReportDir}/userCustomFields"
+        with profiling.phase(JOB_NAME, "write", "exploded_df", spark=spark) as m:
             exploded_df \
                 .select(
                 col("userID").alias("user_id"),
@@ -261,8 +305,9 @@ def processUserReport(config):
                 .mode("overwrite") \
                 .option("compression", "snappy") \
                 .parquet(
-                f"{config.warehouseReportDir}/userCustomFields"
+                exploded_df_out_path
             )
+            m["output_mb"] = profiling.dir_size_mb(exploded_df_out_path)
 
         # Cache the exploded data for reuse
         exploded_cached = exploded_df.cache()
@@ -332,6 +377,15 @@ def processUserReport(config):
                 ).otherwise(lit(False))
             )
         ).repartition(col("mdoid")).cache()
+
+        # mdo_wise_slim's lineage covers the filter/select/withColumn projection off
+        # user_complete_data (already materialized above) plus the repartition by
+        # mdoid. Materializing it here (rather than letting whatever action runs
+        # first inside the govt/non-govt split or thread-pooled per-org writes below
+        # be the first real trigger) is what makes that real cost visible as
+        # "process" time.
+        with profiling.phase(JOB_NAME, "process", "mdo_wise_slim", spark=spark) as m:
+            m["materialize"] = mdo_wise_slim
 
         govt_mdo_wise_slim = mdo_wise_slim.filter(~col("is_non_govt_user")).drop("is_non_govt_user").cache()
         non_govt_mdo_wise_slim = mdo_wise_slim.filter(col("is_non_govt_user")).drop("is_non_govt_user").cache()

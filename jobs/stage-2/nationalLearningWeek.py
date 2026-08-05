@@ -129,25 +129,32 @@ class NationalLearningWeekLeaderboardModel:
             # 1. READ SOURCE DATA
             # -----------------------------------------------------------
 
-            with profiling.phase(JOB_NAME, "read", "orgHierDF", spark=spark):
+            orgHierDF_path = f"{config.warehouseReportDir}/{config.dwOrgTable}"
+            with profiling.phase(JOB_NAME, "read", "orgHierDF", spark=spark) as m:
                 orgHierDF = (
-                    spark.read.parquet(f"{config.warehouseReportDir}/{config.dwOrgTable}")
+                    spark.read.parquet(orgHierDF_path)
                     .select("mdo_id", "mdo_name", "ministry_id", "department_id")
                     .dropDuplicates(["mdo_id"])
                 )
+                m["materialize"] = orgHierDF
+                m["input_mb"] = profiling.dir_size_mb(orgHierDF_path)
 
-            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark):
+            userDF_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark) as m:
                 userDF = (
-                    spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+                    spark.read.parquet(userDF_path)
                     .withColumnRenamed("userID", "user_id")
                     .withColumnRenamed("userOrgID", "mdo_id")
                     .select("user_id", "mdo_id", "fullName", "designation", "userProfileImgUrl")
                     .dropDuplicates(["user_id"])
                 )
+                m["materialize"] = userDF
+                m["input_mb"] = profiling.dir_size_mb(userDF_path)
 
-            with profiling.phase(JOB_NAME, "read", "karmaPerUserDF", spark=spark):
+            karmaPerUserDF_path = ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "karmaPerUserDF", spark=spark) as m:
                 karmaPerUserDF = (
-                    spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE)
+                    spark.read.parquet(karmaPerUserDF_path)
                     .filter(
                         (F.col("credit_date") >= F.lit(nlw_start)) &
                         (F.col("credit_date") <= F.lit(nlw_end))
@@ -158,35 +165,48 @@ class NationalLearningWeekLeaderboardModel:
                         F.max("credit_date").alias("last_credit_date")
                     )
                 )
+                m["materialize"] = karmaPerUserDF
+                m["input_mb"] = profiling.dir_size_mb(karmaPerUserDF_path)
             karmaPerUserDF.filter(F.col("user_id") == 'a1a6e5ce-9ca9-4b96-9799-69cac0d1e38b').show()
 
-            with profiling.phase(JOB_NAME, "read", "contentEnrolDF", spark=spark):
+            contentEnrolDF_path = ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentEnrolDF", spark=spark) as m:
                 contentEnrolDF = (
                     spark.read.parquet(
-                        ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+                        contentEnrolDF_path
                     )
                     .withColumnRenamed("userID", "user_id")
                     .withColumnRenamed("certificateID", "certificate_id")
                 )
+                m["materialize"] = contentEnrolDF
+                m["input_mb"] = profiling.dir_size_mb(contentEnrolDF_path)
 
-            with profiling.phase(JOB_NAME, "read", "contentMasterDF", spark=spark):
+            contentMasterDF_path = ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentMasterDF", spark=spark) as m:
                 contentMasterDF = (
                     spark.read.parquet(
-                        ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+                        contentMasterDF_path
                     )
                     .filter(F.col("content_sub_type").isin("Course", "Moderated Course", "External Content"))
                     .select("content_id", "content_duration")
                 )
+                m["materialize"] = contentMasterDF
+                m["input_mb"] = profiling.dir_size_mb(contentMasterDF_path)
 
-            with profiling.phase(JOB_NAME, "read", "eventEnrolDF", spark=spark):
+            with profiling.phase(JOB_NAME, "read", "eventEnrolDF", spark=spark) as m:
                 eventEnrolDF = spark.read.parquet(EVENT_ENROLMENT_PARQUET)
+                m["materialize"] = eventEnrolDF
+                m["input_mb"] = profiling.dir_size_mb(EVENT_ENROLMENT_PARQUET)
 
-            with profiling.phase(JOB_NAME, "read", "eventMasterDF", spark=spark):
+            eventMasterDF_path = ParquetFileConstants.EVENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "eventMasterDF", spark=spark) as m:
                 eventMasterDF = (
-                    spark.read.parquet(ParquetFileConstants.EVENT_PARQUET_FILE)
+                    spark.read.parquet(eventMasterDF_path)
                     .withColumnRenamed("duration", "event_complete_duration")
                     .select("event_id", "event_complete_duration")
                 )
+                m["materialize"] = eventMasterDF
+                m["input_mb"] = profiling.dir_size_mb(eventMasterDF_path)
 
             contentCertDF = (
                 contentEnrolDF
@@ -217,9 +237,10 @@ class NationalLearningWeekLeaderboardModel:
             )
 
             # TODO: badgeDetails_v1 source data issue - fix schema before uncommenting
-            with profiling.phase(JOB_NAME, "read", "badgesDF", spark=spark):
+            badgesDF_path = ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "badgesDF", spark=spark) as m:
                 badgesDF = (
-                    spark.read.parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE)
+                    spark.read.parquet(badgesDF_path)
                     .withColumnRenamed("userID", "user_id")
                     .filter(
                         (F.col("badge_issued_on") >= F.lit(nlw_start)) &
@@ -229,6 +250,8 @@ class NationalLearningWeekLeaderboardModel:
                     .groupBy("user_id")
                     .agg(F.count("enrolment_badge_id").alias("total_badges"))
                 )
+                m["materialize"] = badgesDF
+                m["input_mb"] = profiling.dir_size_mb(badgesDF_path)
             # Temporary: return empty badgesDF with 0 badges for all users
             #badgesDF = spark.createDataFrame([], "user_id STRING, total_badges LONG")
 
@@ -498,6 +521,18 @@ class NationalLearningWeekLeaderboardModel:
             # -----------------------------------------------------------
             finalLeaderboardDF = stateLeaderboardFinalDF.unionByName(centreLeaderboardFinalDF)
 
+            # finalLeaderboardDF's lineage covers everything since the last "read"
+            # phase above (badgesDF): the state leaderboard build (stateOrgMapDF/
+            # childrenDF/stateMdoDF/stateUsersDF/stateStatsDF joins+groupBy, the
+            # per-user learning hours joins/groupBy that feed it, the size-bucket
+            # window+dense_rank), the centre leaderboard build (same pattern), and
+            # this state+centre union. None of that executes until forced - this
+            # phase's materialize is what makes that real cost visible as "process"
+            # time instead of silently landing inside the finalLeaderboardDF.show()/
+            # BqLeaderboardDF write phase below.
+            with profiling.phase(JOB_NAME, "process", "finalLeaderboardDF", spark=spark) as m:
+                m["materialize"] = finalLeaderboardDF
+
             # -----------------------------------------------------------
             # 6. USER-LEVEL STATS
             # -----------------------------------------------------------
@@ -530,14 +565,26 @@ class NationalLearningWeekLeaderboardModel:
                 .withColumn("rank", F.dense_rank().over(wUserRank))
             )
 
+            # userStatsFinalDF's lineage covers the certificate joins/union/groupBy
+            # (contentCertDF/eventCertDF/totalCertificatesDF) plus the user-level
+            # joins (karmaPerUserDF, userLearningHoursDF, totalCertificatesDF,
+            # badgesDF) and the final rank window. Materializing it here (rather
+            # than letting the userStatsFinalDF.show() a few lines down trigger it
+            # for the first time) is what makes that real cost visible as "process"
+            # time.
+            with profiling.phase(JOB_NAME, "process", "userStatsFinalDF", spark=spark) as m:
+                m["materialize"] = userStatsFinalDF
+
             # -----------------------------------------------------------
             # 7. WRITE BOTH TABLES
             # -----------------------------------------------------------
             finalLeaderboardDF.show(15, truncate=False)
             userStatsFinalDF.show(20, truncate=False)
             BqLeaderboardDF = finalLeaderboardDF.select("size", "org_id", "org_name", "total_users", "total_points", "per_capita_kp", "row_num", "is_state")
-            with profiling.phase(JOB_NAME, "write", "BqLeaderboardDF", spark=spark):
-                BqLeaderboardDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/nlw_mdo_leaderboard")
+            BqLeaderboardDF_output_path = f"{config.warehouseReportDir}/nlw_mdo_leaderboard"
+            with profiling.phase(JOB_NAME, "write", "BqLeaderboardDF", spark=spark) as m:
+                BqLeaderboardDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(BqLeaderboardDF_output_path)
+                m["output_mb"] = profiling.dir_size_mb(BqLeaderboardDF_output_path)
 
             with profiling.phase(JOB_NAME, "db_write", "finalLeaderboardDF", spark=spark):
                 utils.writeToCassandra(finalLeaderboardDF, config.cassandraUserKeyspace, "nlw_mdo_leaderboard")
@@ -684,7 +731,15 @@ class NationalLearningWeekLeaderboardModel:
         # ----------------------------------------------------------
         # Compute today stats always (fresh)
         # ----------------------------------------------------------
-        today_cert_str, today_hours_str, today_org_df = compute_stats(yesterday_start_str, today_start_str)
+        # today_org_df's lineage covers content_cert/event_cert (union +
+        # countDistinct collect), content_hours/event_hours (union + sum
+        # collect), and the final org-level join+groupBy+orderBy computed
+        # inside compute_stats() - none of it had a phase timer before, even
+        # though compute_stats()'s own countDistinct/sum .collect() calls
+        # already force real execution on every call.
+        with profiling.phase(JOB_NAME, "process", "today_org_df", spark=spark) as m:
+            today_cert_str, today_hours_str, today_org_df = compute_stats(yesterday_start_str, today_start_str)
+            m["materialize"] = today_org_df
 
         # ----------------------------------------------------------
         # Yesterday: promote from Redis if exists, else compute fresh
@@ -704,12 +759,22 @@ class NationalLearningWeekLeaderboardModel:
                 yesterday_org_df = spark.createDataFrame(org_yesterday_rows, ["org_id", "learning_hours"])
             else:
                 # fallback: compute fresh for yesterday
-                _, _, yesterday_org_df = compute_stats(day_before_start_str, yesterday_start_str)
+                # yesterday_org_df's lineage covers the same compute_stats() work
+                # described above, invisible to the profiler until this
+                # materialize forces it.
+                with profiling.phase(JOB_NAME, "process", "yesterday_org_df", spark=spark) as m:
+                    _, _, yesterday_org_df = compute_stats(day_before_start_str, yesterday_start_str)
+                    m["materialize"] = yesterday_org_df
         else:
             print("[Stats] First run — computing yesterday stats fresh")
-            yesterday_cert_str, yesterday_hours_str, yesterday_org_df = compute_stats(
-                day_before_start_str, yesterday_start_str
-            )
+            # yesterday_org_df's lineage covers the same compute_stats() work
+            # described above, invisible to the profiler until this materialize
+            # forces it.
+            with profiling.phase(JOB_NAME, "process", "yesterday_org_df", spark=spark) as m:
+                yesterday_cert_str, yesterday_hours_str, yesterday_org_df = compute_stats(
+                    day_before_start_str, yesterday_start_str
+                )
+                m["materialize"] = yesterday_org_df
 
         # ----------------------------------------------------------
         # Dispatch yesterday

@@ -49,8 +49,9 @@ class ACBPModel:
             primary_categories = ["Course", "Program", "Blended Program", "Curated Program", "Standalone Assessment"]
 
             print("📥 Reading source data...")
-            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
-                userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE).select("userID",
+            userOrgDF_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark) as m:
+                userOrgDF = spark.read.parquet(userOrgDF_path).select("userID",
                                                                                                "fullName",
                                                                                                "userStatus",
                                                                                                "userPrimaryEmail",
@@ -62,23 +63,37 @@ class ACBPModel:
                                                                                                "designation", "group",
                                                                                                "additionalProperties.externalSystem",
                                                                                                "additionalProperties.externalSystemId")
+                m["materialize"] = userOrgDF
+                m["input_mb"] = profiling.dir_size_mb(userOrgDF_path)
 
-            with profiling.phase(JOB_NAME, "read", "contentHierarchyDF", spark=spark):
-                contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "allCourseProgramESDF", spark=spark):
+            contentHierarchyDF_path = ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentHierarchyDF", spark=spark) as m:
+                contentHierarchyDF = spark.read.parquet(contentHierarchyDF_path)
+                m["materialize"] = contentHierarchyDF
+                m["input_mb"] = profiling.dir_size_mb(contentHierarchyDF_path)
+            allCourseProgramESDF_path = ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "allCourseProgramESDF", spark=spark) as m:
                 allCourseProgramESDF = spark.read.parquet(
-                    ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE).filter(
+                    allCourseProgramESDF_path).filter(
                     col("category").isin(primary_categories))
+                m["materialize"] = allCourseProgramESDF
+                m["input_mb"] = profiling.dir_size_mb(allCourseProgramESDF_path)
 
             allCourseProgramDetailsDF = contentDFUtil.allCourseProgramDetailsWithCompetenciesJsonDataFrame(
                 allCourseProgramESDF, contentHierarchyDF,
                 spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE)).drop("competenciesJson")
 
-            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark):
-                enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
+            enrolmentDF_path = ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark) as m:
+                enrolmentDF = spark.read.parquet(enrolmentDF_path).filter(col('enrolment_status') == 'enrolled')
+                m["materialize"] = enrolmentDF
+                m["input_mb"] = profiling.dir_size_mb(enrolmentDF_path)
 
-            with profiling.phase(JOB_NAME, "read", "acbpAllEnrolDF", spark=spark):
-                acbpAllEnrolDF = spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
+            acbpAllEnrolDF_path = ParquetFileConstants.ACBP_COMPUTED_FILE
+            with profiling.phase(JOB_NAME, "read", "acbpAllEnrolDF", spark=spark) as m:
+                acbpAllEnrolDF = spark.read.parquet(acbpAllEnrolDF_path)
+                m["materialize"] = acbpAllEnrolDF
+                m["input_mb"] = profiling.dir_size_mb(acbpAllEnrolDF_path)
             #acbpAllEnrolDF.printSchema()
 
             acbpAllEnrolmentDF = (acbpAllEnrolDF \
@@ -118,8 +133,9 @@ class ACBPModel:
              .withColumn("assignmentType", array_join(F.transform(
                 split(col("assignmentType"), "\\|"), 
                 lambda x: mapping_expr[trim(x)]),"|"))'''
-            with profiling.phase(JOB_NAME, "read", "acbpSelectEnrolmentDF", spark=spark):
-                acbpSelectEnrolmentDF = spark.read.parquet(ParquetFileConstants.ACBP_SELECT_FILE) \
+            acbpSelectEnrolmentDF_path = ParquetFileConstants.ACBP_SELECT_FILE
+            with profiling.phase(JOB_NAME, "read", "acbpSelectEnrolmentDF", spark=spark) as m:
+                acbpSelectEnrolmentDF = spark.read.parquet(acbpSelectEnrolmentDF_path) \
                     .withColumn("courseID", explode(col("acbpCourseIDList"))) \
                     .join(allCourseProgramDetailsDF, ["courseID"], "left") \
                     .drop("acbpCourseIDList") \
@@ -136,6 +152,8 @@ class ACBPModel:
                                                 lambda v: F.concat(lit('"'), v, lit('"'))),", ")), "|")) \
                     .withColumn("assignmentTypeInfo", when(col("assignmentType") == "alluser", lit("AllUser")).otherwise(col("assignmentTypeInfo"))) \
                     .withColumn("assignmentType", array_join(F.transform(split(col("assignmentType"), "\\|"), lambda x: mapping_expr[trim(x)]), "|"))
+                m["materialize"] = acbpSelectEnrolmentDF
+                m["input_mb"] = profiling.dir_size_mb(acbpSelectEnrolmentDF_path)
 
             # Write to warehouse with mapped names
             cbPlanWarehouseDF = acbpSelectEnrolmentDF \
@@ -161,6 +179,14 @@ class ACBPModel:
             ) \
                 .dropDuplicates() \
                 .orderBy("org_id", "created_by", "plan_name")
+
+            # cbPlanWarehouseDF's lineage covers everything since the acbpSelectEnrolmentDF
+            # read above: this select/withColumn/select chain plus the dropDuplicates/orderBy
+            # shuffle. Materializing it here (long before its eventual write, further down)
+            # is what makes that real cost visible as "process" time instead of silently
+            # landing inside whatever phase happens to touch it next.
+            with profiling.phase(JOB_NAME, "process", "cbPlanWarehouseDF", spark=spark) as m:
+                m["materialize"] = cbPlanWarehouseDF
 
             window_spec = Window.partitionBy("userID", "courseID").orderBy(desc("completionDueDate"))
 
@@ -247,18 +273,30 @@ class ACBPModel:
             ) \
                 .fillna("")
 
+            # enrolmentReportDF's lineage covers everything since the acbpAllEnrolDF/
+            # enrolmentDF reads above: allCourseProgramDetailsDF's hierarchy/org-details
+            # joins, acbpAllEnrolmentDF's explode + two joins + na.drop, acbpEnrolmentDF's
+            # "Live"-status window dedup, and this filter/select/withColumn chain. None of
+            # that executes until forced - materializing here is what makes that real cost
+            # visible as "process" time instead of landing inside the write phase below.
+            with profiling.phase(JOB_NAME, "process", "enrolmentReportDF", spark=spark) as m:
+                m["materialize"] = enrolmentReportDF
+
             print("📝 Writing combined CSV reports for enrollment...")
-            with profiling.phase(JOB_NAME, "write", "enrolmentReportDF_csv", spark=spark):
+            with profiling.phase(JOB_NAME, "write", "enrolmentReportDF_csv", spark=spark) as m:
                 dfexportutil.write_csv_combined(
                     df=enrolmentReportDF,
                     single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/{config.cbpEnrolmentReport}",
                     partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoEnrolmentReportPath}/{today}",
                     partition_column='mdoid',
                     parquet_tmp_path=f"{config.localReportDir}/temp/cbp-enrolment-report/{today}",
-                    csv_filename=config.cbpEnrolmentReport)
-            with profiling.phase(JOB_NAME, "write", "enrolmentReportDF", spark=spark):
+                    csv_filename=config.cbpEnrolmentReport,
+                    metrics=m)
+            enrolmentReportDF_path = f"{config.warehouseReportDir}/cbp_enrollments"
+            with profiling.phase(JOB_NAME, "write", "enrolmentReportDF", spark=spark) as m:
                 enrolmentReportDF.write.mode("overwrite").option("compression", "snappy").parquet(
-                    f"{config.warehouseReportDir}/cbp_enrollments")
+                    enrolmentReportDF_path)
+                m["output_mb"] = profiling.dir_size_mb(enrolmentReportDF_path)
 
             ######################################################
             # creating data for apar enrollment report for sahil
@@ -267,10 +305,16 @@ class ACBPModel:
             print("📝 Start Apar enrollment report data...")
 
             #getting KCM dataframes
-            with profiling.phase(JOB_NAME, "read", "kcmDF", spark=spark):
-                kcmDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
-            with profiling.phase(JOB_NAME, "read", "kcmMappingDF", spark=spark):
-                kcmMappingDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}")
+            kcmDF_path = f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}"
+            with profiling.phase(JOB_NAME, "read", "kcmDF", spark=spark) as m:
+                kcmDF = spark.read.parquet(kcmDF_path)
+                m["materialize"] = kcmDF
+                m["input_mb"] = profiling.dir_size_mb(kcmDF_path)
+            kcmMappingDF_path = f"{config.warehouseReportDir}/{config.dwKcmContentTable}"
+            with profiling.phase(JOB_NAME, "read", "kcmMappingDF", spark=spark) as m:
+                kcmMappingDF = spark.read.parquet(kcmMappingDF_path)
+                m["materialize"] = kcmMappingDF
+                m["input_mb"] = profiling.dir_size_mb(kcmMappingDF_path)
 
             # kcm dictionary dataframe
             kcmMappingDF = kcmMappingDF.join(kcmDF, kcmDF.competency_area_id == kcmMappingDF.competency_area_id, "left").select(
@@ -345,6 +389,15 @@ class ACBPModel:
                 col("competency_areas").alias("competency_type"),
                 lit(None).cast("string").alias("parichay_id"),
                 col("allocatedOn").cast("timestamp").alias("assigned_on")).dropDuplicates(["user_id", "content_id"])
+
+            # aparEnrolmentData's lineage covers everything since the kcmDF/kcmMappingDF
+            # reads above: kcmMappingDF's reassignment (join + select), resultDF's join +
+            # distinct + groupBy/agg (plus its own un-instrumented .show() a few lines up),
+            # and this where/join/join/withColumn/filter/select/dropDuplicates chain.
+            # Materializing it here is what makes that real cost visible as "process" time
+            # instead of landing inside the write phase further down.
+            with profiling.phase(JOB_NAME, "process", "aparEnrolmentData", spark=spark) as m:
+                m["materialize"] = aparEnrolmentData
 
             resultDF.unpersist()
             kcmMappingDF.unpersist()
@@ -431,28 +484,42 @@ class ACBPModel:
                 lit(currentDateTime).alias("Report_Last_Generated_On")
             )
 
+            # userSummaryReportDF's lineage covers everything since acbpEnrolmentDF was
+            # built earlier (re-pulled fresh here since it was never cached): cleanDF's
+            # Ministry/Department/Organization normalization withColumns, and this
+            # groupBy/agg/select chain. Materializing it here is what makes that real
+            # cost visible as "process" time instead of landing inside the write phase
+            # below.
+            with profiling.phase(JOB_NAME, "process", "userSummaryReportDF", spark=spark) as m:
+                m["materialize"] = userSummaryReportDF
+
             print("📝 Writing combined CSV reports for user summary...")
-            with profiling.phase(JOB_NAME, "write", "userSummaryReportDF", spark=spark):
+            with profiling.phase(JOB_NAME, "write", "userSummaryReportDF", spark=spark) as m:
                 dfexportutil.write_csv_combined(
                     df=userSummaryReportDF,
                     single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/{config.cbpSummaryReport}",
                     partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoSummaryReportPath}/{today}",
                     partition_column='mdoid',
                     parquet_tmp_path=f"{config.localReportDir}/temp/cbp-summary-report/{today}",
-                    csv_filename=config.cbpSummaryReport
+                    csv_filename=config.cbpSummaryReport,
+                    metrics=m
                 )
 
             print("📦 Writing warehouse data...")
-            with profiling.phase(JOB_NAME, "write", "cbPlanWarehouseDF", spark=spark):
+            cbPlanWarehouseDF_path = f"{config.warehouseReportDir}/{config.dwCBPlanTable}"
+            with profiling.phase(JOB_NAME, "write", "cbPlanWarehouseDF", spark=spark) as m:
                 cbPlanWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                    f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
+                    cbPlanWarehouseDF_path)
+                m["output_mb"] = profiling.dir_size_mb(cbPlanWarehouseDF_path)
             print("✅ Processing completed successfully!")
 
             # apar enrollment report for Sahil
             print("📝 Writing Apar enrollment parquet report for warehouse...")
-            with profiling.phase(JOB_NAME, "write", "aparEnrolmentData", spark=spark):
+            aparEnrolmentData_path = f"{config.warehouseReportDir}/{config.dwAparCBPEnrollmentTable}"
+            with profiling.phase(JOB_NAME, "write", "aparEnrolmentData", spark=spark) as m:
                 aparEnrolmentData.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                    f"{config.warehouseReportDir}/{config.dwAparCBPEnrollmentTable}")
+                    aparEnrolmentData_path)
+                m["output_mb"] = profiling.dir_size_mb(aparEnrolmentData_path)
             print("✅ Apar enrollment parquet report written successfully!")
 
         except Exception as e:

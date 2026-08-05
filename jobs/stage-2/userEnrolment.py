@@ -71,8 +71,9 @@ class UserEnrolmentModel:
             primary_categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Curated Program"]
 
             # Load and cache base DataFrames that are used multiple times
-            with profiling.phase(JOB_NAME, "read", "unenrolmentAuditDF", spark=spark):
-                unenrolmentAuditDF = spark.read.parquet(ParquetFileConstants.UNENROLMENT_AUDIT_PARQUET_FILE) \
+            unenrolmentAuditDF_path = ParquetFileConstants.UNENROLMENT_AUDIT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "unenrolmentAuditDF", spark=spark) as m:
+                unenrolmentAuditDF = spark.read.parquet(unenrolmentAuditDF_path) \
                     .filter(col('action') == 'UNENROLL') \
                     .select(
                     col("userid").alias("userID"),
@@ -81,6 +82,8 @@ class UserEnrolmentModel:
                     col("actiondate").alias("unenrolledOn"),
                     col("action")
                 ).cache()
+                m["materialize"] = unenrolmentAuditDF
+                m["input_mb"] = profiling.dir_size_mb(unenrolmentAuditDF_path)
 
             # A user/course/batch can have more than one unenrol record (e.g. unenrolled,
             # re-enrolled, unenrolled again). Keep only the most recent one so the join
@@ -97,13 +100,22 @@ class UserEnrolmentModel:
                 .drop("rn")
             )
 
-            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark):
-                enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
-                userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-            with profiling.phase(JOB_NAME, "read", "contentOrgDF", spark=spark):
-                contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(
+            enrolmentDF_path = ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark) as m:
+                enrolmentDF = spark.read.parquet(enrolmentDF_path)
+                m["materialize"] = enrolmentDF
+                m["input_mb"] = profiling.dir_size_mb(enrolmentDF_path)
+            userOrgDF_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark) as m:
+                userOrgDF = spark.read.parquet(userOrgDF_path)
+                m["materialize"] = userOrgDF
+                m["input_mb"] = profiling.dir_size_mb(userOrgDF_path)
+            contentOrgDF_path = ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentOrgDF", spark=spark) as m:
+                contentOrgDF = spark.read.parquet(contentOrgDF_path).filter(
                     col("category").isin(primary_categories))
+                m["materialize"] = contentOrgDF
+                m["input_mb"] = profiling.dir_size_mb(contentOrgDF_path)
 
             print("🔄 Processing platform enrolments...")
 
@@ -142,10 +154,16 @@ class UserEnrolmentModel:
             print("🔄 Processing external/marketplace enrolments...")
 
             # Load external data
-            with profiling.phase(JOB_NAME, "read", "externalEnrolmentDF", spark=spark):
-                externalEnrolmentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE).withColumn("badge_details", explode_outer("issued_badges"))
-            with profiling.phase(JOB_NAME, "read", "externalContentOrgDF", spark=spark):
-                externalContentOrgDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+            externalEnrolmentDF_path = ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "externalEnrolmentDF", spark=spark) as m:
+                externalEnrolmentDF = spark.read.parquet(externalEnrolmentDF_path).withColumn("badge_details", explode_outer("issued_badges"))
+                m["materialize"] = externalEnrolmentDF
+                m["input_mb"] = profiling.dir_size_mb(externalEnrolmentDF_path)
+            externalContentOrgDF_path = ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "externalContentOrgDF", spark=spark) as m:
+                externalContentOrgDF = spark.read.parquet(externalContentOrgDF_path)
+                m["materialize"] = externalContentOrgDF
+                m["input_mb"] = profiling.dir_size_mb(externalContentOrgDF_path)
 
             # Process marketplace data and cache
             marketPlaceContentEnrolmentsDF = (
@@ -188,13 +206,16 @@ class UserEnrolmentModel:
             print("🔄 Processing ACBP data...")
 
             # Load and process ACBP data
-            with profiling.phase(JOB_NAME, "read", "acbpAllEnrolmentDF", spark=spark):
-                acbpAllEnrolmentDF = (spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
+            acbpAllEnrolmentDF_path = ParquetFileConstants.ACBP_COMPUTED_FILE
+            with profiling.phase(JOB_NAME, "read", "acbpAllEnrolmentDF", spark=spark) as m:
+                acbpAllEnrolmentDF = (spark.read.parquet(acbpAllEnrolmentDF_path)
                                       .withColumn("courseID", explode(col("acbpCourseIDList"))) \
                                       .withColumn("courseID", regexp_replace(col("courseID"), r"^\s*\[|\]\s*$|\s+", "")) \
                                       .withColumn("liveCBPlan", lit(True))
                                       .select(col("userOrgID"), col("courseID"), col("userID"),
                                               col("designation"), col("liveCBPlan")))
+                m["materialize"] = acbpAllEnrolmentDF
+                m["input_mb"] = profiling.dir_size_mb(acbpAllEnrolmentDF_path)
 
             # Join platform data with ACBP, then with the (de-duplicated) unenrolment audit
             # data, in a single chain so neither join gets thrown away.
@@ -474,6 +495,15 @@ class UserEnrolmentModel:
                 ).otherwise(lit(False))
             ).cache()
 
+            # mdoReportDF's lineage covers every join/union/transform since the last
+            # "read" phase above (preComputeUserOrgEnrolment's joins, the marketplace
+            # join, the ACBP/unenrolment joins, the platform+marketplace union). None
+            # of that executes until something forces it - this phase's materialize
+            # is what makes that real cost visible as "process" time instead of
+            # silently landing inside whichever write phase runs first.
+            with profiling.phase(JOB_NAME, "process", "mdoReportDF", spark=spark) as m:
+                m["materialize"] = mdoReportDF
+
             govt_part_df = mdoReportDF.filter(~col("is_non_govt_user")).drop("is_non_govt_user", "Roles")
             non_govt_part_df = mdoReportDF.filter(col("is_non_govt_user")).drop("is_non_govt_user", "Roles")
 
@@ -517,7 +547,8 @@ class UserEnrolmentModel:
                     enrolment_out_path,
                     'mdoid',
                     f"{config.localReportDir}/temp/user_enrolment_report/{today}",
-                    csv_filename=config.userEnrollmentReport
+                    csv_filename=config.userEnrollmentReport,
+                    job_name=JOB_NAME
                 )
             else:
                 print("ℹ️  No Govt users found in this run — skipping Govt CSV write.")
@@ -529,16 +560,19 @@ class UserEnrolmentModel:
                     enrolment_out_path,
                     'mdoid',
                     f"{config.localReportDir}/temp/user_enrolment_report_non_govt/{today}",
-                    csv_filename=config.userEnrollmentReport
+                    csv_filename=config.userEnrollmentReport,
+                    job_name=JOB_NAME
                 )
             else:
                 print("ℹ️  No Non-Govt (VOLUNTEER) users found in this run — skipping Non-Govt CSV write.")
 
             print("📦 Writing warehouse data...")
             warehouseDF = platformWarehouseDF.unionByName(marketPlaceWarehouseDF)
-            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+            warehouseDF_out_path = f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}"
+            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark) as m:
                 warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                    f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
+                    warehouseDF_out_path)
+                m["output_mb"] = profiling.dir_size_mb(warehouseDF_out_path)
 
             mdoReportDF.unpersist()
 

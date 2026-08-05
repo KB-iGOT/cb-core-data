@@ -38,8 +38,11 @@ class InAppReviewModel:
         try:
             today = self.get_date()
 
-            with profiling.phase(JOB_NAME, "read", "weeklyClapsDF", spark=spark):
-                weeklyClapsDF = spark.read.parquet(ParquetFileConstants.CLAPS_PARQUET_FILE)
+            weeklyClapsDF_path = ParquetFileConstants.CLAPS_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "weeklyClapsDF", spark=spark) as m:
+                weeklyClapsDF = spark.read.parquet(weeklyClapsDF_path)
+                m["materialize"] = weeklyClapsDF
+                m["input_mb"] = profiling.dir_size_mb(weeklyClapsDF_path)
             
             # calculate end of the week to set an expiry date for the feeds
             def endOfWeek(today_date):

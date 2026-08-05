@@ -283,10 +283,13 @@ class ZipUploadModel:
 
             # ── Read org hierarchy for L0-based password grouping ──────────────
             print("📥 Reading org hierarchy...")
-            with profiling.phase(JOB_NAME, "read", "org_hierarchy_df", spark=spark):
+            org_hierarchy_df_path = f"{config.warehouseReportDir}/{config.dwOrgTable}"
+            with profiling.phase(JOB_NAME, "read", "org_hierarchy_df", spark=spark) as m:
                 org_hierarchy_df = spark.read.parquet(
-                    f"{config.warehouseReportDir}/{config.dwOrgTable}"
+                    org_hierarchy_df_path
                 ).select("mdo_id", "ministry_id", "department_id").cache()
+                m["materialize"] = org_hierarchy_df
+                m["input_mb"] = profiling.dir_size_mb(org_hierarchy_df_path)
                 print(f"  Org hierarchy rows: {org_hierarchy_df.count()}")
 
             # ------------------ Part 1: Merge & Zip MDOID Reports ------------- #

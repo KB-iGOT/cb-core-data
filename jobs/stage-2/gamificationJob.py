@@ -79,8 +79,11 @@ def processGamificationJob(config):
 
         # Step 1: Load Enrolment Data
         print("📚 Step 1: Loading Enrolment Data...")
-        with profiling.phase(JOB_NAME, "read", "enrolment_df", spark=spark):
-            enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
+        enrolment_df_path = ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "enrolment_df", spark=spark) as m:
+            enrolment_df = spark.read.parquet(enrolment_df_path).filter(col('enrolment_status') == 'enrolled')
+            m["materialize"] = enrolment_df
+            m["input_mb"] = profiling.dir_size_mb(enrolment_df_path)
 
         user_enrolment_df = (enrolment_df
                              .withColumn("badge_details", explode_outer("issued_badges"))
@@ -90,8 +93,9 @@ def processGamificationJob(config):
                                      col("badge_details")["issuedOn"].alias("badge_issued_on"))
                              .withColumn("badge_issued_ts", to_date(to_timestamp(col("badge_issued_on"), "yyyy-MM-dd'T'HH:mm:ss.SSSZ")))
                              )
-        with profiling.phase(JOB_NAME, "read", "external_enrolment_df", spark=spark):
-            external_enrolment_df = (spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
+        external_enrolment_df_path = ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "external_enrolment_df", spark=spark) as m:
+            external_enrolment_df = (spark.read.parquet(external_enrolment_df_path)
                                      .withColumn("badge_details", explode_outer("issued_badges"))
                                      .withColumn("certificateID",
                                                  when(col("issued_certificates").isNull(), "")
@@ -104,13 +108,16 @@ def processGamificationJob(config):
                                              col("badge_details.criteria").alias("badge_criteria_enrolment"),
                                              col("badge_details.issuedOn").alias("badge_issued_on"))
                                      .withColumn("badge_issued_ts", to_date(to_timestamp(col("badge_issued_on"), "yyyy-MM-dd'T'HH:mm:ss.SSSZ"))))
+            m["materialize"] = external_enrolment_df
+            m["input_mb"] = profiling.dir_size_mb(external_enrolment_df_path)
         enrolment_complete_data = user_enrolment_df.unionByName(external_enrolment_df)
         print("✅ Step 1 Complete")
 
         # Step 2: Load External Content Data
         print("📚 Step 2: Loading External Content Data...")
-        with profiling.phase(JOB_NAME, "read", "external_content_data", spark=spark):
-            external_content_data = (spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+        external_content_data_path = ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "external_content_data", spark=spark) as m:
+            external_content_data = (spark.read.parquet(external_content_data_path)
                                      .filter(col("badge").isNotNull())
                                      #.withColumn("parsed", from_json(col("cios_data"), schema))
                                      .withColumn("badge", explode_outer(col("badge")))
@@ -125,12 +132,17 @@ def processGamificationJob(config):
                                              to_date(to_timestamp(col("badge.createdOn"), "yyyy-MM-dd'T'HH:mm:ss.SSSX")).alias("badge_created_date_time"),
                                              col("badge.badgeSubTitle").alias("badge_sub_title"), col("badge.badgeEarningDateTime").alias("badge_earning_date"))
                                      )
+            m["materialize"] = external_content_data
+            m["input_mb"] = profiling.dir_size_mb(external_content_data_path)
         print("✅ Step 2 Complete")
 
         # Step 3: Load Content Badges data
         print("🏷️ Step 3: Loading Content Badges data...")
-        with profiling.phase(JOB_NAME, "read", "es_content_data", spark=spark):
-            es_content_data = spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE)
+        es_content_data_path = ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "es_content_data", spark=spark) as m:
+            es_content_data = spark.read.parquet(es_content_data_path)
+            m["materialize"] = es_content_data
+            m["input_mb"] = profiling.dir_size_mb(es_content_data_path)
         badge_data = (es_content_data
                       .filter(col("badgeDetails_v1").isNotNull())
                       .withColumn("badge_details", explode_outer("badgeDetails_v1"))
@@ -155,10 +167,21 @@ def processGamificationJob(config):
         print("🔗 Step 4: Joining User Enrolment and Badge Data...")
         enrolment_content_with_badge_data = (enrolment_complete_data.withColumnRenamed("courseID", "content_id").withColumnRenamed("badge_id", "enrolment_badge_id")
                                              .join(broadcast(content_badge_complete_data), on="content_id", how="left"))
+        # enrolment_content_with_badge_data's lineage covers everything since the
+        # enrolment_df/external_enrolment_df/external_content_data/es_content_data reads
+        # above: user_enrolment_df's explode, badge_data's filter/explode/withColumn chain,
+        # the badge_data/external_content_data union, and this broadcast join. None of that
+        # executes until forced - inserting this phase here (right before the existing,
+        # unconditional .cache()+.count() below) is what makes that real cost visible as
+        # "process" time instead of landing invisibly on whichever line happens to run first.
+        with profiling.phase(JOB_NAME, "process", "enrolment_content_with_badge_data", spark=spark) as m:
+            m["materialize"] = enrolment_content_with_badge_data
         enrolment_content_with_badge_data.cache()
         enrolment_content_with_badge_data.count()
-        with profiling.phase(JOB_NAME, "write", "enrolment_content_with_badge_data", spark=spark):
-            enrolment_content_with_badge_data.write.mode("overwrite").option("compression", "snappy").parquet(ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE)
+        enrolment_content_with_badge_data_path = ParquetFileConstants.GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "write", "enrolment_content_with_badge_data", spark=spark) as m:
+            enrolment_content_with_badge_data.write.mode("overwrite").option("compression", "snappy").parquet(enrolment_content_with_badge_data_path)
+            m["output_mb"] = profiling.dir_size_mb(enrolment_content_with_badge_data_path)
         print("✅ Step 4 Complete")
 
         current_month_start = trunc(current_date(), "month")
@@ -166,7 +189,7 @@ def processGamificationJob(config):
 
         # Step 5: Add Enrolment Related Metrics
         print("✨ Step 5: Adding Enrolment Related Metrics...")
-        enrolment_related_metrics = enrolment_content_with_badge_data.select(
+        enrolment_related_metrics_df = enrolment_content_with_badge_data.select(
             # -------------------------------
             # Total badges
             # -------------------------------
@@ -240,7 +263,16 @@ def processGamificationJob(config):
                 (col("enrolment_badge_id").isNotNull()) &
                 (col("badge_issued_ts") >= current_month_start),  col("userID")
             )).alias("badge_earned_learners_current_month")
-        ).collect()[0]
+        )
+
+        # enrolment_related_metrics_df's lineage is this single wide aggregation (multiple
+        # countDistinct/count/sum expressions) over the now-cached enrolment_content_with_badge_data.
+        # The .collect() below already forces real execution - inserting this phase first is
+        # what makes that cost visible as "process" time instead of an invisible ad-hoc action.
+        with profiling.phase(JOB_NAME, "process", "enrolment_related_metrics_df", spark=spark) as m:
+            m["materialize"] = enrolment_related_metrics_df
+
+        enrolment_related_metrics = enrolment_related_metrics_df.collect()[0]
 
         # -------------------------------
         # Total badges
@@ -338,10 +370,13 @@ def processGamificationJob(config):
 
         # Step 8: Add Gamification MDO report
         print("🔍 Step 8: Adding Gamification MDO report...")
-        with profiling.phase(JOB_NAME, "read", "user_master_df", spark=spark):
-            user_master_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE).select(
+        user_master_df_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+        with profiling.phase(JOB_NAME, "read", "user_master_df", spark=spark) as m:
+            user_master_df = spark.read.parquet(user_master_df_path).select(
                 "userID",col("fullName").alias("Learner Name"), col("ministry_name").alias("Ministry"),
                 col("dept_name").alias("Department"), col("userOrgID").alias("Organization ID"), col("employmentDetails.employeeCode").alias("Employee_Id"))
+            m["materialize"] = user_master_df
+            m["input_mb"] = profiling.dir_size_mb(user_master_df_path)
         reporting_data = (enrolment_content_with_badge_data.filter(col("badge_id").isNotNull()).select(
             col("userID"),
             col("enrolment_badge_id").alias("Badge ID"),
@@ -364,6 +399,16 @@ def processGamificationJob(config):
                           .select("Learner Name",col("Employee_Id").alias("Employee Id"),"Content Name", "Content Completion Status", "Badge ID","Badge Title","Badge Subtitle","Rule/criteria ID", "Source", "Date and time of award", "Ministry", "Department", "Organization ID")
                           .withColumn("Report_Last_Generated_On", currentDateTime).withColumn("mdoid", col("Organization ID"))
                           .repartition(col("Organization ID")).cache())
+
+        # reporting_data's lineage covers everything since the user_master_df read above:
+        # the join with enrolment_content_with_badge_data, the completion-status withColumn,
+        # and this second filter/select/withColumn/repartition chain. Materializing it here
+        # (rather than letting write_csv_per_mdo_id_duckdb's internal action trigger it for
+        # the first time) is what makes that real cost visible as "process" time instead of
+        # landing inside an un-instrumented write.
+        with profiling.phase(JOB_NAME, "process", "reporting_data", spark=spark) as m:
+            m["materialize"] = reporting_data
+
         today = datetime.now().strftime("%Y-%m-%d")
 
         dfexportutil.write_csv_per_mdo_id_duckdb(
