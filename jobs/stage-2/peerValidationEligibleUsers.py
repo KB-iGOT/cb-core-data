@@ -60,8 +60,9 @@ class PeerValidationEligibleUsers:
     
     
     def load_parquet_data(self):
-        with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=self.spark):
-            enrolmentDF = self.spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).select(
+        enrolmentDF_path = ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=self.spark) as m:
+            enrolmentDF = self.spark.read.parquet(enrolmentDF_path).select(
                 col("userID").alias("user_id"),
                 col("courseID").alias("course_id"),
                 col("firstCompletedOn"),
@@ -75,17 +76,25 @@ class PeerValidationEligibleUsers:
                 "firstCompletedOn_date",
                 to_date(date_format(col("firstCompletedOn"), ParquetFileConstants.DATE_TIME_FORMAT))
             )
-        with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=self.spark):
-            userOrgDF = self.spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE).select(
+            m["materialize"] = enrolmentDF
+            m["input_mb"] = profiling.dir_size_mb(enrolmentDF_path)
+        userOrgDF_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+        with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=self.spark) as m:
+            userOrgDF = self.spark.read.parquet(userOrgDF_path).select(
                 col("userID").alias("user_id"),
                 col("userOrgID"),
                 col("fullName")
             )
-        with profiling.phase(JOB_NAME, "read", "courseDetailsDF", spark=self.spark):
-            courseDetailsDF = self.spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).select(
+            m["materialize"] = userOrgDF
+            m["input_mb"] = profiling.dir_size_mb(userOrgDF_path)
+        courseDetailsDF_path = ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "courseDetailsDF", spark=self.spark) as m:
+            courseDetailsDF = self.spark.read.parquet(courseDetailsDF_path).select(
                 col("courseID").alias("course_id"),
                 col("courseName").alias("course_name")
             )
+            m["materialize"] = courseDetailsDF
+            m["input_mb"] = profiling.dir_size_mb(courseDetailsDF_path)
         return enrolmentDF, userOrgDF, courseDetailsDF
     
     def filter_forms_by_state(self, forms: DataFrame, formHistoryDF: DataFrame) -> DataFrame:
@@ -128,17 +137,19 @@ class PeerValidationEligibleUsers:
     def process_data(self,output_path):
         try:
             print("Step 1: Loading Forms State Data...")
-            with profiling.phase(JOB_NAME, "read", "notification_queue", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "notification_queue", spark=self.spark) as m:
                 notification_queue = self.read_postgres_table(self.config.dwpeerValidationNotificationQueue).select(col("notification_id"))
-            with profiling.phase(JOB_NAME, "read", "formHistoryDF", spark=self.spark):
+                m["materialize"] = notification_queue
+            with profiling.phase(JOB_NAME, "read", "formHistoryDF", spark=self.spark) as m:
                 formHistoryDF = self.read_postgres_table(self.config.dwpeerValidationFormStateTable)
+                m["materialize"] = formHistoryDF
             print("✅ Step 1 Complete")
             print("Step 2: Loading Forms Data from Elasticsearch...")
             context_type = ["peerValidationSurvey"]
             fields = ["formId","contextType","title","version", "status", "createdBy", "additionalProperties","createdFor","endDate","createdDate"]
             query = {"bool": {"must": [{"match": {"contextType": pc}} for pc in context_type]}}
 
-            with profiling.phase(JOB_NAME, "read", "formsDF", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "formsDF", spark=self.spark) as m:
                 formsDF = utils.read_elasticsearch_data_scroll(
                     self.spark,
                     self.config.sparkIGotElasticsearchConnectionHost,
@@ -147,6 +158,7 @@ class PeerValidationEligibleUsers:
                     fields = fields,
                     query = query
                 )
+                m["materialize"] = formsDF
             formsDF = formsDF.withColumn("endDate",from_unixtime(col("endDate")/1000).cast("timestamp")) \
                 .withColumn("createdDate",from_unixtime(col("createdDate")/1000).cast("timestamp")) \
                     .filter(col("status") == "Active") \
@@ -180,6 +192,18 @@ class PeerValidationEligibleUsers:
             print("Step 7: Removing Already Notified Users from Eligible Users...")
             eligibleUsersDF = eligibleUsersDF.join(notification_queue, on="notification_id", how="left_anti")
             print("✅ Step 7 Complete")
+
+            # eligibleUsersDF's lineage covers everything since the formsDF ES read
+            # above: the formsDF withColumn/filter/select, filter_forms_by_state's
+            # join with formHistoryDF, expand_forms/add_trigger_windows, the three
+            # compute_eligible_users joins (enrolmentDF/userOrgDF/formsDF/
+            # courseDetailsDF), and this left_anti join against notification_queue.
+            # None of that executes until forced - this phase's materialize is what
+            # makes that real cost visible as "process" time instead of it silently
+            # landing inside the very next line's un-instrumented .count() call.
+            with profiling.phase(JOB_NAME, "process", "eligibleUsersDF", spark=self.spark) as m:
+                m["materialize"] = eligibleUsersDF
+
             count = eligibleUsersDF.count()
             if count > 0:
                 print("Step 8: Building Notification Payload and Saving to DB...")
@@ -234,6 +258,15 @@ class PeerValidationEligibleUsers:
                     col("created_at").cast("timestamp"),
                     col("updated_at").cast("timestamp")
                 )
+
+                # This eligibleUsersDF's lineage covers building the notification
+                # payload (nested struct/array + to_json) and the status/timestamp
+                # withColumns/select above, off the already-materialized eligible
+                # users set. Materializing it here (rather than letting the db_write
+                # phase below be the first real action to touch any of this) is what
+                # makes that real cost visible as "process" time instead of "write" time.
+                with profiling.phase(JOB_NAME, "process", "eligibleUsersDF", spark=self.spark) as m:
+                    m["materialize"] = eligibleUsersDF
 
                 print(f"Step 8 Complete - {count} notifications inserted into queue.")
                 with profiling.phase(JOB_NAME, "db_write", "eligibleUsersDF", spark=self.spark):

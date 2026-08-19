@@ -34,22 +34,46 @@ class UserActivityModel:
 
     def processData(self,spark, config):
         today = self.get_date()
-        with profiling.phase(JOB_NAME, "read", "organizationDF", spark=spark):
-            organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
-        with profiling.phase(JOB_NAME, "read", "userDF", spark=spark):
-            userDF = spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE)
-        with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
-            userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-        with profiling.phase(JOB_NAME, "read", "orgHierarchyDF", spark=spark):
-            orgHierarchyDF = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_SELECT_PARQUET_FILE)
-        with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
-            contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE).withColumnRenamed("content_id", "_id").withColumnRenamed("batch_id", "c_batch_id").drop("data_last_generated_on")
-        with profiling.phase(JOB_NAME, "read", "enrollmentDF", spark=spark):
-            enrollmentDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
-        with profiling.phase(JOB_NAME, "read", "eventDF", spark=spark):
-            eventDF = spark.read.parquet(ParquetFileConstants.EVENT_PARQUET_FILE).withColumnRenamed("event_id", "ed_event_id")
-        with profiling.phase(JOB_NAME, "read", "eventEnrolmentsDF", spark=spark):
-            eventEnrolmentsDF = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
+        organizationDF_path = ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "organizationDF", spark=spark) as m:
+            organizationDF = spark.read.parquet(organizationDF_path)
+            m["materialize"] = organizationDF
+            m["input_mb"] = profiling.dir_size_mb(organizationDF_path)
+        userDF_path = ParquetFileConstants.USER_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "userDF", spark=spark) as m:
+            userDF = spark.read.parquet(userDF_path)
+            m["materialize"] = userDF
+            m["input_mb"] = profiling.dir_size_mb(userDF_path)
+        userOrgDF_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+        with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark) as m:
+            userOrgDF = spark.read.parquet(userOrgDF_path)
+            m["materialize"] = userOrgDF
+            m["input_mb"] = profiling.dir_size_mb(userOrgDF_path)
+        orgHierarchyDF_path = ParquetFileConstants.ORG_HIERARCHY_SELECT_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "orgHierarchyDF", spark=spark) as m:
+            orgHierarchyDF = spark.read.parquet(orgHierarchyDF_path)
+            m["materialize"] = orgHierarchyDF
+            m["input_mb"] = profiling.dir_size_mb(orgHierarchyDF_path)
+        contentDF_path = ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark) as m:
+            contentDF = spark.read.parquet(contentDF_path).withColumnRenamed("content_id", "_id").withColumnRenamed("batch_id", "c_batch_id").drop("data_last_generated_on")
+            m["materialize"] = contentDF
+            m["input_mb"] = profiling.dir_size_mb(contentDF_path)
+        enrollmentDF_path = f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}"
+        with profiling.phase(JOB_NAME, "read", "enrollmentDF", spark=spark) as m:
+            enrollmentDF = spark.read.parquet(enrollmentDF_path)
+            m["materialize"] = enrollmentDF
+            m["input_mb"] = profiling.dir_size_mb(enrollmentDF_path)
+        eventDF_path = ParquetFileConstants.EVENT_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "eventDF", spark=spark) as m:
+            eventDF = spark.read.parquet(eventDF_path).withColumnRenamed("event_id", "ed_event_id")
+            m["materialize"] = eventDF
+            m["input_mb"] = profiling.dir_size_mb(eventDF_path)
+        eventEnrolmentsDF_path = ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "eventEnrolmentsDF", spark=spark) as m:
+            eventEnrolmentsDF = spark.read.parquet(eventEnrolmentsDF_path)
+            m["materialize"] = eventEnrolmentsDF
+            m["input_mb"] = profiling.dir_size_mb(eventEnrolmentsDF_path)
 
         eventEnrolmentWithDetails = eventEnrolmentsDF.join(broadcast(eventDF), eventEnrolmentsDF["event_id"] == eventDF["ed_event_id"], how="left")
 
@@ -113,9 +137,20 @@ class UserActivityModel:
             .dropDuplicates(["user_id", "batch_id", "content_id"])
 
         warehouseDF = contentEnrolmentWithDetails.union(userEventEnrolmentsDF)
+
+        # warehouseDF's lineage covers everything since the reads above: eventEnrolmentWithDetails'
+        # join with eventDF, userEventEnrolmentsDF's join with userOrgDF plus its withColumn chain
+        # and dropDuplicates, contentEnrolmentWithDetails' join with contentDF plus its
+        # withColumn/dropDuplicates, and this union. None of that executes until forced - this
+        # phase's materialize splits that real process cost apart from the write phase below.
+        with profiling.phase(JOB_NAME, "process", "warehouseDF", spark=spark) as m:
+            m["materialize"] = warehouseDF
+
         print("📦 Writing warehouse data...")
-        with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
-            warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwUserActivityTable}")
+        warehouseDF_output_path = f"{config.warehouseReportDir}/{config.dwUserActivityTable}"
+        with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark) as m:
+            warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(warehouseDF_output_path)
+            m["output_mb"] = profiling.dir_size_mb(warehouseDF_output_path)
 
         
 

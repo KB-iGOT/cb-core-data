@@ -39,15 +39,21 @@ class LearnerLeaderBoardModel:
             month = date_format(add_months(current_date(), -1), "M")
             year  = date_format(add_months(current_date(), -1), "yyyy")
             # Karma points
-            with profiling.phase(JOB_NAME, "read", "karma_points_df", spark=spark):
-                karma_points_df = spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE) \
+            karma_points_df_path = ParquetFileConstants.USER_KARMA_POINTS_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "karma_points_df", spark=spark) as m:
+                karma_points_df = spark.read.parquet(karma_points_df_path) \
                     .filter((col("credit_date") >= month_start) & (col("credit_date") <= month_end)) \
                     .groupBy("userid") \
                     .agg(sum("points").alias("total_points"), max("credit_date").alias("last_credit_date")) \
                     .cache()
+                m["materialize"] = karma_points_df
+                m["input_mb"] = profiling.dir_size_mb(karma_points_df_path)
 
-            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
-                userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+            userOrgDF_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark) as m:
+                userOrgDF = spark.read.parquet(userOrgDF_path)
+                m["materialize"] = userOrgDF
+                m["input_mb"] = profiling.dir_size_mb(userOrgDF_path)
 
             # Orgs with more than N users
             orgWithNUsers = userOrgDF.groupBy("userOrgID") \
@@ -81,9 +87,12 @@ class LearnerLeaderBoardModel:
             userLeaderboardDF = userLeaderboardDF.withColumn("row_num", row_number().over(window_spec_row))
 
             # Read previous leaderboard data
-            with profiling.phase(JOB_NAME, "read", "learnerLeaderboardDF", spark=spark):
-                learnerLeaderboardDF = (spark.read.parquet(ParquetFileConstants.LEARNER_LEADERBOARD_PARQUET_FILE)
+            learnerLeaderboardDF_path = ParquetFileConstants.LEARNER_LEADERBOARD_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "learnerLeaderboardDF", spark=spark) as m:
+                learnerLeaderboardDF = (spark.read.parquet(learnerLeaderboardDF_path)
                  .select("userid", "rank").alias("l"))
+                m["materialize"] = learnerLeaderboardDF
+                m["input_mb"] = profiling.dir_size_mb(learnerLeaderboardDF_path)
 
             u = userLeaderboardDF.alias("u")
             finalDF = (u.join(learnerLeaderboardDF, on="userid", how="left")
@@ -96,6 +105,18 @@ class LearnerLeaderBoardModel:
                 F.col("u.month"),
                 F.col("u.year"),
                 F.coalesce(F.col("l.rank"), F.lit(0)).alias("previous_rank")))
+
+            # finalDF's lineage covers everything since the userOrgDF/karma_points_df
+            # reads above: the orgWithNUsers groupBy, the filteredUserOrgDF/
+            # userOrgDataDF join+select, the userLeaderboardDF join with
+            # karma_points_df, the rank/row_num window functions, and the final
+            # join with learnerLeaderboardDF. None of that executes until forced -
+            # this phase's materialize is what makes that real cost visible as
+            # "process" time instead of silently landing inside the first
+            # db_write phase below.
+            with profiling.phase(JOB_NAME, "process", "finalDF", spark=spark) as m:
+                m["materialize"] = finalDF
+
             # Write to Cassandra
             with profiling.phase(JOB_NAME, "db_write", "finalDF", spark=spark):
                 utils.writeToCassandra(finalDF, config.cassandraUserKeyspace, config.cassandraLearnerLeaderBoardTable)

@@ -64,9 +64,10 @@ class KarmaPointsModel:
             # ---------------- ratings -> karma (operation_type = RATING) ----------------
             timeuuid_to_millis_udf = F.udf(KarmaPointsModel.timeuuid_to_millis, LongType())
 
-            with profiling.phase(JOB_NAME, "read", "course_rating_df", spark=spark):
+            course_rating_df_path = ParquetFileConstants.RATING_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "course_rating_df", spark=spark) as m:
                 course_rating_df = (
-                    spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)
+                    spark.read.parquet(course_rating_df_path)
                     .withColumnRenamed("activityid", "courseID")
                     .withColumnRenamed("userid", "userID")
                     .withColumnRenamed("rating", "userRating")
@@ -83,19 +84,24 @@ class KarmaPointsModel:
                     # IMPORTANT: compare timestamp to timestamp bounds (no lit(...) around bounds)
                     .where((F.col("credit_date") >= month_start_ts) & (F.col("credit_date") < month_end_ts))
                 )
+                m["materialize"] = course_rating_df
+                m["input_mb"] = profiling.dir_size_mb(course_rating_df_path)
 
             categories = [
                 "Course", "Program", "Blended Program", "CuratedCollections",
                 "Standalone Assessment", "Curated Program"
             ]
 
-            with profiling.phase(JOB_NAME, "read", "cbp_details", spark=spark):
+            cbp_details_path = ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "cbp_details", spark=spark) as m:
                 cbp_details = (
-                    spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+                    spark.read.parquet(cbp_details_path)
                     .filter(F.col("category").isin(categories))
                     .where(F.col("courseStatus").isin("Live", "Retired"))
                     .select("courseID", "courseName", "category")
                 )
+                m["materialize"] = cbp_details
+                m["input_mb"] = profiling.dir_size_mb(cbp_details_path)
             course_details = cbp_details.where(F.col("category") == F.lit("Course"))
 
             karma_from_rating_df = (
@@ -117,9 +123,10 @@ class KarmaPointsModel:
             )
 
             # -------- course completions (first 4 per user) -> karma (COURSE_COMPLETION) --------
-            with profiling.phase(JOB_NAME, "read", "course_completion_src", spark=spark):
+            course_completion_src_path = ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "course_completion_src", spark=spark) as m:
                 course_completion_src = (
-                    spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
+                    spark.read.parquet(course_completion_src_path)
                     # Here courseCompletedTimestamp must be TIMESTAMP (you were filtering with timestamp bounds already)
                     .where(
                         (F.col("dbCompletionStatus") == F.lit(2)) &
@@ -128,6 +135,8 @@ class KarmaPointsModel:
                     )
                     .join(course_details, ["courseID"], "inner")
                 )
+                m["materialize"] = course_completion_src
+                m["input_mb"] = profiling.dir_size_mb(course_completion_src_path)
 
             w_first4 = Window.partitionBy("userID").orderBy(F.col("courseCompletedTimestamp").asc())
             first_completion_df = (
@@ -137,13 +146,16 @@ class KarmaPointsModel:
                 .drop("rowNum")
             )
 
-            with profiling.phase(JOB_NAME, "read", "courses_with_assessment_df", spark=spark):
+            courses_with_assessment_df_path = ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "courses_with_assessment_df", spark=spark) as m:
                 courses_with_assessment_df = (
-                    spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE)
+                    spark.read.parquet(courses_with_assessment_df_path)
                     .where((F.col("assessUserStatus") == F.lit("SUBMITTED")) & F.col("assessChildID").isNotNull())
                     .select("courseID").distinct()
                     .withColumn("hasAssessment", F.lit(True))
                 )
+                m["materialize"] = courses_with_assessment_df
+                m["input_mb"] = profiling.dir_size_mb(courses_with_assessment_df_path)
 
             karma_from_completion_df = (
                 first_completion_df
@@ -179,6 +191,16 @@ class KarmaPointsModel:
                 .withColumn("points", F.col("points").cast("int"))
             )
 
+            # all_karma_points_df's lineage covers everything since the cbp_details read
+            # above: karma_from_rating_df's join with cbp_details, course_completion_src's
+            # first-4-per-user window (first_completion_df), karma_from_completion_df's
+            # join with courses_with_assessment_df, and this union + cast normalization.
+            # None of that executes until forced - this phase's materialize is what makes
+            # that real cost visible as "process" time instead of silently landing inside
+            # whichever write phase runs first.
+            with profiling.phase(JOB_NAME, "process", "all_karma_points_df", spark=spark) as m:
+                m["materialize"] = all_karma_points_df
+
             # -------- lookup --------
             lookup_df = (
                 all_karma_points_df
@@ -189,11 +211,14 @@ class KarmaPointsModel:
             )
 
             # -------- summary --------
-            with profiling.phase(JOB_NAME, "read", "existing_summary_df", spark=spark):
+            existing_summary_df_path = ParquetFileConstants.USER_KARMA_POINTS_SUMMARY_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "existing_summary_df", spark=spark) as m:
                 existing_summary_df = (
-                    spark.read.parquet(ParquetFileConstants.USER_KARMA_POINTS_SUMMARY_PARQUET_FILE)
+                    spark.read.parquet(existing_summary_df_path)
                     .select(F.col("userid"), F.col("total_points").alias("existing_total_points"))
                 )
+                m["materialize"] = existing_summary_df
+                m["input_mb"] = profiling.dir_size_mb(existing_summary_df_path)
 
             summary_df = (
                 all_karma_points_df
@@ -203,6 +228,14 @@ class KarmaPointsModel:
                 .withColumn("total_points", F.expr("existing_total_points + points"))
                 .select("userid", "total_points")
             )
+
+            # summary_df's lineage covers the groupBy/sum over all_karma_points_df (already
+            # cached above) plus the full-outer join against existing_summary_df and the
+            # fillna/derived-column work. Materializing it here (rather than letting the
+            # write phase below be the first real action to touch any of this) is what
+            # makes that real cost visible as "process" time instead of "write" time.
+            with profiling.phase(JOB_NAME, "process", "summary_df", spark=spark) as m:
+                m["materialize"] = summary_df
 
             with profiling.phase(JOB_NAME, "write", "all_karma_points_df", spark=spark):
                 utils.writeToCassandra(all_karma_points_df, config.cassandraUserKeyspace, config.cassandraKarmaPointsTable)

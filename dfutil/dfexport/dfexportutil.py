@@ -24,12 +24,12 @@ from dfutil.utils import profiling
 
 
 
-def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, threshold=100000, csv_filename="report.csv"):
+def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, threshold=100000, csv_filename="report.csv", metrics=None):
     """
     Optimized hybrid write strategy:
     - Small/medium groups: Direct CSV write via Spark partitionBy
     - Large groups: Filter first, then write to parquet for DuckDB processing
-    
+
     Args:
         df (DataFrame): Source DataFrame
         output_dir (str): Output directory path
@@ -37,6 +37,9 @@ def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, t
         isIndividualWrite (bool): If True, write as parquet instead of CSV
         threshold (int): Max row count per group to consider for fast write
         csv_filename (str): Name of the CSV file to create inside each partition folder
+        metrics (dict, optional): profiling.phase()'s yielded metrics dict - if
+            given, populated with output_mb (on-disk size of output_dir, which
+            every branch below ultimately writes into) once all writes complete.
     """
     
     if isIndividualWrite == False:
@@ -94,6 +97,9 @@ def write_csv_per_mdo_id(df, output_dir, groupByAttr, isIndividualWrite=False, t
             .option("header", True) \
             .option("compression", "snappy") \
             .parquet(output_dir)
+
+    if metrics is not None:
+        metrics["output_mb"] = profiling.dir_size_mb(output_dir)
 
 def convert_spark_partitions_to_folders(spark_output_dir: str, final_output_dir: str, partition_column: str, csv_filename: str):
     """
@@ -174,7 +180,7 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
         csv_filename (str): Name of the CSV file to create inside each partition folder
         job_name (str, optional): Calling job's name, for profiling attribution
     """
-    with profiling.phase(job_name or "shared_utils", "write", f"csv_per_{group_by_attr}"):
+    with profiling.phase(job_name or "shared_utils", "write", f"csv_per_{group_by_attr}") as m:
         # Setup temporary parquet path if not provided
         if parquet_tmp_path is None:
             parquet_tmp_path = output_dir + "_temp_partitioned_parquets"
@@ -212,6 +218,9 @@ def write_csv_per_mdo_id_duckdb(df, output_dir: str, group_by_attr: str, parquet
         )
 
         print("🎉 Done writing all group CSV files using partitioned parquet approach.")
+
+        m["output_mb"] = profiling.dir_size_mb(output_dir)
+        m["record_count"] = result.get("total_partitions")
 
         return {
             'successful_writes': result['successful_conversions'],
@@ -388,11 +397,12 @@ def write_single_parquet(df, final_path: str):
 def write_csv_combined(df, single_csv_path: str, partitioned_output_dir: str,
                       partition_column: str, parquet_tmp_path: str = None,
                       filter_condition: str = None, max_workers: int = 4,
-                      keep_parquets: bool = False,csv_filename: str = "report.csv"):
+                      keep_parquets: bool = False, csv_filename: str = "report.csv",
+                      metrics: dict = None):
     """
     Combined method using partitioned parquet approach for both outputs.
     More memory efficient and supports parallel processing for partitioned CSVs.
-    
+
     Args:
         df (DataFrame): Spark DataFrame to write
         single_csv_path (str): Full path for the single CSV file (including filename)
@@ -402,7 +412,11 @@ def write_csv_combined(df, single_csv_path: str, partitioned_output_dir: str,
         filter_condition (str, optional): SQL WHERE condition to filter data
         max_workers (int): Number of parallel workers for partitioned CSV conversion
         keep_parquets (bool): Whether to keep intermediate parquet files
-    
+        metrics (dict, optional): profiling.phase()'s yielded metrics dict - if
+            given, populated with output_mb (combined on-disk size of both the
+            single CSV and the partitioned CSV directory) and record_count
+            (total rows written) once both writes complete.
+
     Returns:
         dict: Summary of both operations
     """
@@ -514,7 +528,13 @@ def write_csv_combined(df, single_csv_path: str, partitioned_output_dir: str,
         summary['partitioned_csv']['successful_writes'] = partition_result['successful_conversions']
         summary['partitioned_csv']['failed_writes'] = partition_result['failed_conversions']
         summary['partitioned_csv']['total_partitions'] = partition_result['total_partitions']
-    
+
+    if metrics is not None:
+        single_mb = profiling.dir_size_mb(single_csv_path) or 0
+        partitioned_mb = profiling.dir_size_mb(partitioned_output_dir) or 0
+        metrics["output_mb"] = round(single_mb + partitioned_mb, 2)
+        metrics["record_count"] = summary["total_rows"]
+
     # Overall summary
     print(f"\n🎉 Combined CSV Writing Complete!")
     print(f"   📁 Single CSV: {single_csv_path}")

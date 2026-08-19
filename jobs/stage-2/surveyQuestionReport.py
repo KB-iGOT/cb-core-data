@@ -70,13 +70,14 @@ class SurveyQuestionReportModel:
             collection = self.config.reportConfigCollection
             
             # Read from MongoDB using Spark MongoDB connector
-            with profiling.phase(JOB_NAME, "read", "mongo_df", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "mongo_df", spark=self.spark) as m:
                 mongo_df = (self.spark.read
                            .format("mongo")
                            .option("uri", mongo_uri)
                            .option("database", database)
                            .option("collection", collection)
                            .load())
+                m["materialize"] = mongo_df
 
             # Filter by report name
             filtered_df = mongo_df.filter(col("report") == filter_name)
@@ -125,8 +126,9 @@ class SurveyQuestionReportModel:
             DataFrame with unique solution IDs and names
         """
         query = f'SELECT DISTINCT solutionId, solutionName FROM "{datasource}"'
-        with profiling.phase(JOB_NAME, "read", "result", spark=self.spark):
+        with profiling.phase(JOB_NAME, "read", "result", spark=self.spark) as m:
             result = utils.druidDFOption(query, self.config.mlSparkDruidRouterHost, limit=1000000)
+            m["materialize"] = result
 
         if result is None:
             return self.spark.createDataFrame([], StructType([
@@ -155,13 +157,14 @@ class SurveyQuestionReportModel:
             database = self.config.mlMongoDatabase
             collection = "solutions"
             
-            with profiling.phase(JOB_NAME, "read", "solutions_df", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "solutions_df", spark=self.spark) as m:
                 solutions_df = (self.spark.read
                               .format("mongo")
                               .option("uri", mongo_uri)
                               .option("database", database)
                               .option("collection", collection)
                               .load())
+                m["materialize"] = solutions_df
 
             # Filter by solution IDs
             filtered_solutions = solutions_df.filter(col("solutionId").isin(solution_ids))
@@ -329,12 +332,13 @@ class SurveyQuestionReportModel:
             WHERE solutionId='{solution_id}'
             '''
             
-            with profiling.phase(JOB_NAME, "read", "survey_submission_ids_df", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "survey_submission_ids_df", spark=self.spark) as m:
                 survey_submission_ids_df = utils.druidDFOption(
                     survey_submission_id_query,
                     self.config.mlSparkDruidRouterHost,
                     limit=1000000
                 )
+                m["materialize"] = survey_submission_ids_df
 
             if survey_submission_ids_df is None or survey_submission_ids_df.count() == 0:
                 logger.warning(f"No survey submissions found for solutionId: {solution_id}")
@@ -363,12 +367,13 @@ class SurveyQuestionReportModel:
                 '''
                 
                 # Query Druid for batch
-                with profiling.phase(JOB_NAME, "read", "batch_df", spark=self.spark):
+                with profiling.phase(JOB_NAME, "read", "batch_df", spark=self.spark) as m:
                     batch_df = utils.druidDFOption(
                         batch_query,
                         self.config.mlSparkDruidRouterHost,
                         limit=1000000
                     )
+                    m["materialize"] = batch_df
 
                 if batch_df is None:
                     logger.warning(f"Batch {batch_count}: No data returned")
@@ -454,19 +459,21 @@ class SurveyQuestionReportModel:
             
             # Write CSV in append mode if specified
             if append:
-                with profiling.phase(JOB_NAME, "write", "df", spark=self.spark):
+                with profiling.phase(JOB_NAME, "write", "df", spark=self.spark) as m:
                     df.coalesce(1).write \
                         .mode("append") \
                         .option("header", "true") \
                         .option("encoding", "UTF-8") \
                         .csv(output_path)
+                    m["output_mb"] = profiling.dir_size_mb(output_path)
             else:
-                with profiling.phase(JOB_NAME, "write", "df", spark=self.spark):
+                with profiling.phase(JOB_NAME, "write", "df", spark=self.spark) as m:
                     df.coalesce(1).write \
                         .mode("overwrite") \
                         .option("header", "true") \
                         .option("encoding", "UTF-8") \
                         .csv(output_path)
+                    m["output_mb"] = profiling.dir_size_mb(output_path)
                     
         except Exception as e:
             logger.error(f"Error generating report: {str(e)}")

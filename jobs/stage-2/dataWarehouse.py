@@ -64,14 +64,17 @@ class DataWarehouseModel:
             today_date = datetime.today().strftime('%Y-%m-%d')
 
             print("📚 Step 1: Loading User Details Data...")
-            with profiling.phase(JOB_NAME, "read", "userDetailsDF", spark=spark):
-                userDetailsDF = spark.read.parquet(f"{warehouse_path}/{config.dwUserTable}") \
+            userDetailsDF_path = f"{warehouse_path}/{config.dwUserTable}"
+            with profiling.phase(JOB_NAME, "read", "userDetailsDF", spark=spark) as m:
+                userDetailsDF = spark.read.parquet(userDetailsDF_path) \
                     .withColumn("status", col("status").cast("int")) \
                     .withColumn("no_of_karma_points", col("no_of_karma_points").cast("int")) \
                     .withColumn("marked_as_not_my_user", col("marked_as_not_my_user").cast("boolean")) \
                     .withColumn("total_event_learning_hours", col("total_event_learning_hours").cast("double")) \
                     .withColumn("total_content_learning_hours", col("total_content_learning_hours").cast("double")) \
                     .withColumn("total_learning_hours", col("total_learning_hours").cast("double"))
+                m["materialize"] = userDetailsDF
+                m["input_mb"] = profiling.dir_size_mb(userDetailsDF_path)
             with profiling.phase(JOB_NAME, "db_write", "userDetailsDF", spark=spark):
                 self.write_postgres_table(userDetailsDF, postgres_url, config.dwUserTable, config.dwPostgresUsername,
                                           config.dwPostgresCredential)
@@ -79,20 +82,24 @@ class DataWarehouseModel:
 
 
             print("📚 Step 2: Loading Content Data...")
-            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
-                contentDF = spark.read.parquet(f"{warehouse_path}/{config.dwCourseTable}") \
+            contentDF_path = f"{warehouse_path}/{config.dwCourseTable}"
+            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark) as m:
+                contentDF = spark.read.parquet(contentDF_path) \
                     .withColumn("resource_count", col("resource_count").cast("int")) \
                     .withColumn("total_certificates_issued", col("total_certificates_issued").cast("int")) \
                     .withColumn("content_rating", col("content_rating").cast("float")) \
                     .dropDuplicates(["content_id"])
+                m["materialize"] = contentDF
+                m["input_mb"] = profiling.dir_size_mb(contentDF_path)
             with profiling.phase(JOB_NAME, "db_write", "contentDF", spark=spark):
                 self.write_postgres_table(contentDF, postgres_url,config.dwCourseTable, config.dwPostgresUsername,
                                           config.dwPostgresCredential)
             print("Content table updated")
 
             print("📚 Step 3: Loading Assessment Data...")
-            with profiling.phase(JOB_NAME, "read", "assessment", spark=spark):
-                assessment = spark.read.parquet(f"{warehouse_path}/{config.dwAssessmentTable}") \
+            assessment_path = f"{warehouse_path}/{config.dwAssessmentTable}"
+            with profiling.phase(JOB_NAME, "read", "assessment", spark=spark) as m:
+                assessment = spark.read.parquet(assessment_path) \
                     .withColumn("score_achieved", col("score_achieved").cast("float")) \
                     .withColumn("overall_score", col("overall_score").cast("float")) \
                     .withColumn("cut_off_percentage", col("cut_off_percentage").cast("float")) \
@@ -100,14 +107,17 @@ class DataWarehouseModel:
                     .withColumn("number_of_incorrect_responses", col("number_of_incorrect_responses").cast("int")) \
                     .withColumn("number_of_retakes", col("number_of_retakes").cast("int")) \
                     .filter(col("content_id").isNotNull())
+                m["materialize"] = assessment
+                m["input_mb"] = profiling.dir_size_mb(assessment_path)
             with profiling.phase(JOB_NAME, "db_write", "assessment", spark=spark):
                 self.write_postgres_table(assessment, postgres_url, config.dwAssessmentTable, config.dwPostgresUsername,
                                           config.dwPostgresCredential)
             print("Assessment table updated")
 
             print("📚 Step 4: Loading BP Enrolments Data...")
-            with profiling.phase(JOB_NAME, "read", "bp_enrolments", spark=spark):
-                bp_enrolments = spark.read.parquet(f"{warehouse_path}/{config.dwBPEnrollmentsTable}") \
+            bp_enrolments_path = f"{warehouse_path}/{config.dwBPEnrollmentsTable}"
+            with profiling.phase(JOB_NAME, "read", "bp_enrolments", spark=spark) as m:
+                bp_enrolments = spark.read.parquet(bp_enrolments_path) \
                     .withColumn("component_progress_percentage", col("component_progress_percentage").cast("float")) \
                     .withColumn("offline_session_date", to_date(col("offline_session_date"))) \
                     .withColumn("component_completed_on", to_date(col("component_completed_on"))) \
@@ -116,6 +126,8 @@ class DataWarehouseModel:
                     .filter(col("content_id").isNotNull()) \
                     .filter(col("user_id").isNotNull()) \
                     .filter(col("batch_id").isNotNull())
+                m["materialize"] = bp_enrolments
+                m["input_mb"] = profiling.dir_size_mb(bp_enrolments_path)
 
             with profiling.phase(JOB_NAME, "db_write", "bp_enrolments", spark=spark):
                 self.write_postgres_table(bp_enrolments, postgres_url, config.dwBPEnrollmentsTable, config.dwPostgresUsername,
@@ -123,58 +135,79 @@ class DataWarehouseModel:
             print("BP Enrolments table updated")
 
             print("📚 Step 5: Loading Content Resource Data...")
-            with profiling.phase(JOB_NAME, "read", "content_resource", spark=spark):
-                content_resource = spark.read.parquet(f"{warehouse_path}/{config.dwContentResourceTable}")
+            content_resource_path = f"{warehouse_path}/{config.dwContentResourceTable}"
+            with profiling.phase(JOB_NAME, "read", "content_resource", spark=spark) as m:
+                content_resource = spark.read.parquet(content_resource_path)
+                m["materialize"] = content_resource
+                m["input_mb"] = profiling.dir_size_mb(content_resource_path)
             with profiling.phase(JOB_NAME, "db_write", "content_resource", spark=spark):
                 self.write_postgres_table(content_resource, postgres_url, config.dwContentResourceTable,
                                           config.dwPostgresUsername, config.dwPostgresCredential)
             print("Content resource table updated")
 
             print("📚 Step 6: Loading CB Plan Data...")
-            with profiling.phase(JOB_NAME, "read", "cb_plan", spark=spark):
-                cb_plan = spark.read.parquet(f"{warehouse_path}/{config.dwCBPlanTable}")
+            cb_plan_path = f"{warehouse_path}/{config.dwCBPlanTable}"
+            with profiling.phase(JOB_NAME, "read", "cb_plan", spark=spark) as m:
+                cb_plan = spark.read.parquet(cb_plan_path)
+                m["materialize"] = cb_plan
+                m["input_mb"] = profiling.dir_size_mb(cb_plan_path)
             with profiling.phase(JOB_NAME, "db_write", "cb_plan", spark=spark):
                 self.write_postgres_table(cb_plan, postgres_url, config.dwCBPlanTable, config.dwPostgresUsername,
                                           config.dwPostgresCredential)
             print("CB Plan table updated")
 
             print("📚 Step 8: Loading Org Hierarchy Data...")
-            with profiling.phase(JOB_NAME, "read", "org_hierarchy", spark=spark):
-                org_hierarchy = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwOrgTable}")
+            org_hierarchy_path = f"{config.warehouseReportDir}/{config.dwOrgTable}"
+            with profiling.phase(JOB_NAME, "read", "org_hierarchy", spark=spark) as m:
+                org_hierarchy = spark.read.parquet(org_hierarchy_path)
+                m["materialize"] = org_hierarchy
+                m["input_mb"] = profiling.dir_size_mb(org_hierarchy_path)
             with profiling.phase(JOB_NAME, "db_write", "org_hierarchy", spark=spark):
                 self.write_postgres_table(org_hierarchy, postgres_url, config.dwOrgTable, config.dwPostgresUsername,
                                           config.dwPostgresCredential)
             print("Org hierarchy table updated")
 
             print("📚 Step 9: Loading KCM Content Data...")
-            with profiling.phase(JOB_NAME, "read", "kcm_content", spark=spark):
-                kcm_content = spark.read.parquet(f"{warehouse_path}/{config.dwKcmContentTable}") \
+            kcm_content_path = f"{warehouse_path}/{config.dwKcmContentTable}"
+            with profiling.phase(JOB_NAME, "read", "kcm_content", spark=spark) as m:
+                kcm_content = spark.read.parquet(kcm_content_path) \
                     .select("course_id", "competency_area_id", "competency_theme_id", "competency_sub_theme_id",
                             "data_last_generated_on")
+                m["materialize"] = kcm_content
+                m["input_mb"] = profiling.dir_size_mb(kcm_content_path)
             with profiling.phase(JOB_NAME, "db_write", "kcm_content", spark=spark):
                 self.write_postgres_table(kcm_content, postgres_url, config.dwKcmContentTable, config.dwPostgresUsername,
                                           config.dwPostgresCredential)
             print("KCM Content table updated")
 
             print("📚 Step 10: Loading KCM Dict Data...")
-            with profiling.phase(JOB_NAME, "read", "kcm_dict", spark=spark):
-                kcm_dict = spark.read.parquet(f"{warehouse_path}/{config.dwKcmDictionaryTable}")
+            kcm_dict_path = f"{warehouse_path}/{config.dwKcmDictionaryTable}"
+            with profiling.phase(JOB_NAME, "read", "kcm_dict", spark=spark) as m:
+                kcm_dict = spark.read.parquet(kcm_dict_path)
+                m["materialize"] = kcm_dict
+                m["input_mb"] = profiling.dir_size_mb(kcm_dict_path)
             with profiling.phase(JOB_NAME, "db_write", "kcm_dict", spark=spark):
                 self.write_postgres_table(kcm_dict, postgres_url, config.dwKcmDictionaryTable, config.dwPostgresUsername,
                                           config.dwPostgresCredential)
             print("KCM Dict table updated")
 
             print("📚 Step 11: Loading Events Data...")
-            with profiling.phase(JOB_NAME, "read", "events", spark=spark):
-                events = spark.read.parquet(f"{config.warehouseReportDir}/event_details")
+            events_path = f"{config.warehouseReportDir}/event_details"
+            with profiling.phase(JOB_NAME, "read", "events", spark=spark) as m:
+                events = spark.read.parquet(events_path)
+                m["materialize"] = events
+                m["input_mb"] = profiling.dir_size_mb(events_path)
             with profiling.phase(JOB_NAME, "db_write", "events", spark=spark):
                 self.write_postgres_table(events, postgres_url, config.dwEventsTable, config.dwPostgresUsername,
                                           config.dwPostgresCredential)
             print("Events table updated")
 
             print("📚 Step 12: Loading Events Enrolments Data...")
-            with profiling.phase(JOB_NAME, "read", "eventsEnrolmentDataDFWithKarmaPoints", spark=spark):
-                eventsEnrolmentDataDFWithKarmaPoints = spark.read.parquet(f"{config.warehouseReportDir}/event_enrolment_details")
+            eventsEnrolmentDataDFWithKarmaPoints_path = f"{config.warehouseReportDir}/event_enrolment_details"
+            with profiling.phase(JOB_NAME, "read", "eventsEnrolmentDataDFWithKarmaPoints", spark=spark) as m:
+                eventsEnrolmentDataDFWithKarmaPoints = spark.read.parquet(eventsEnrolmentDataDFWithKarmaPoints_path)
+                m["materialize"] = eventsEnrolmentDataDFWithKarmaPoints
+                m["input_mb"] = profiling.dir_size_mb(eventsEnrolmentDataDFWithKarmaPoints_path)
             with profiling.phase(JOB_NAME, "db_write", "eventsEnrolmentDataDFWithKarmaPoints", spark=spark):
                 self.write_postgres_table(eventsEnrolmentDataDFWithKarmaPoints, postgres_url, config.dwEventsEnrolmentTable,
                                           config.dwPostgresUsername, config.dwPostgresCredential)
@@ -182,13 +215,16 @@ class DataWarehouseModel:
             print("Events Enrolments table updated")
 
             print("📚 Step 7: Loading User Enrolments Data...")
-            with profiling.phase(JOB_NAME, "read", "enrolments", spark=spark):
-                enrolments = spark.read.parquet(f"{warehouse_path}/{config.dwEnrollmentsTable}") \
+            enrolments_path = f"{warehouse_path}/{config.dwEnrollmentsTable}"
+            with profiling.phase(JOB_NAME, "read", "enrolments", spark=spark) as m:
+                enrolments = spark.read.parquet(enrolments_path) \
                     .withColumn("content_progress_percentage", col("content_progress_percentage").cast("float")) \
                     .withColumn("user_rating", col("user_rating").cast("float")) \
                     .withColumn("resource_count_consumed", col("resource_count_consumed").cast("int")) \
                     .withColumn("live_cbp_plan_mandate", col("live_cbp_plan_mandate").cast("boolean")) \
                     .filter(col("content_id").isNotNull())
+                m["materialize"] = enrolments
+                m["input_mb"] = profiling.dir_size_mb(enrolments_path)
             with profiling.phase(JOB_NAME, "db_write", "enrolments", spark=spark):
                 self.write_postgres_table(enrolments, postgres_url, config.dwEnrollmentsTable, config.dwPostgresUsername,
                                           config.dwPostgresCredential)
@@ -199,13 +235,19 @@ class DataWarehouseModel:
             #self.write_postgres_table(course_completion_survey_details_df, postgres_url, config.dwCourseCompletionSurveryTable,
             #                          config.dwPostgresUsername, config.dwPostgresCredential)
 
-            with profiling.phase(JOB_NAME, "read", "bharat_kalp_courses", spark=spark):
-                bharat_kalp_courses = spark.read.parquet(f"{warehouse_path}/{config.dwBharatKalpCoursesTable}")
+            bharat_kalp_courses_path = f"{warehouse_path}/{config.dwBharatKalpCoursesTable}"
+            with profiling.phase(JOB_NAME, "read", "bharat_kalp_courses", spark=spark) as m:
+                bharat_kalp_courses = spark.read.parquet(bharat_kalp_courses_path)
+                m["materialize"] = bharat_kalp_courses
+                m["input_mb"] = profiling.dir_size_mb(bharat_kalp_courses_path)
             with profiling.phase(JOB_NAME, "db_write", "bharat_kalp_courses", spark=spark):
                 self.write_postgres_table(bharat_kalp_courses, postgres_url, config.dwBharatKalpCoursesTable, config.dwPostgresUsername, config.dwPostgresCredential)
 
-            with profiling.phase(JOB_NAME, "read", "bharat_kalp_events", spark=spark):
-                bharat_kalp_events = spark.read.parquet(f"{warehouse_path}/{config.dwBharatKalpEventsTable}")
+            bharat_kalp_events_path = f"{warehouse_path}/{config.dwBharatKalpEventsTable}"
+            with profiling.phase(JOB_NAME, "read", "bharat_kalp_events", spark=spark) as m:
+                bharat_kalp_events = spark.read.parquet(bharat_kalp_events_path)
+                m["materialize"] = bharat_kalp_events
+                m["input_mb"] = profiling.dir_size_mb(bharat_kalp_events_path)
             with profiling.phase(JOB_NAME, "db_write", "bharat_kalp_events", spark=spark):
                 self.write_postgres_table(bharat_kalp_events, postgres_url, config.dwBharatKalpEventsTable, config.dwPostgresUsername, config.dwPostgresCredential)
 

@@ -70,16 +70,20 @@ class BlendedModel:
             spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", "true")
             spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
 
-            with profiling.phase(JOB_NAME, "read", "userOrgHierarchyDataDF", spark=spark):
-                userOrgHierarchyDataDF = (spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
+            userOrgHierarchyDataDF_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+            with profiling.phase(JOB_NAME, "read", "userOrgHierarchyDataDF", spark=spark) as m:
+                userOrgHierarchyDataDF = (spark.read.parquet(userOrgHierarchyDataDF_path)
                              .select("userID", "fullName", "userGender", "userCategory", "maskedPhone",
                                      "maskedEmail", "userPrimaryEmail", "userMobile", "userStatus",
                                      "designation", "group", "Tag", "ministry_name", "dept_name",
                                      "userOrgID", "userOrgName", col("employmentDetails.employeeCode").alias("Employee_Id"))
                              ).cache()
+                m["materialize"] = userOrgHierarchyDataDF
+                m["input_mb"] = profiling.dir_size_mb(userOrgHierarchyDataDF_path)
 
-            with profiling.phase(JOB_NAME, "read", "bpWithOrgDF", spark=spark):
-                bpWithOrgDF = (spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+            bpWithOrgDF_path = ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "bpWithOrgDF", spark=spark) as m:
+                bpWithOrgDF = (spark.read.parquet(bpWithOrgDF_path)
                      .filter(col("category").isin(primary_categories))
                      .where(expr("courseStatus IN ('Live', 'Retired')"))
                      .where(col("courseLastPublishedOn").isNotNull())
@@ -99,6 +103,8 @@ class BlendedModel:
                          col("courseOrgName").alias("bpOrgName"),
                      )
                      ).cache()
+                m["materialize"] = bpWithOrgDF
+                m["input_mb"] = profiling.dir_size_mb(bpWithOrgDF_path)
 
 
             bpBatchDF, bpBatchSessionDF = bpBatchDataframe(spark)
@@ -113,8 +119,11 @@ class BlendedModel:
                 .join(batchCreatedByDF, on=["bpBatchCreatedBy"], how="left")
             
 
-            with profiling.phase(JOB_NAME, "read", "userEnrolmentDF", spark=spark):
-                userEnrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled').cache()
+            userEnrolmentDF_path = ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "userEnrolmentDF", spark=spark) as m:
+                userEnrolmentDF = spark.read.parquet(userEnrolmentDF_path).filter(col('enrolment_status') == 'enrolled').cache()
+                m["materialize"] = userEnrolmentDF
+                m["input_mb"] = profiling.dir_size_mb(userEnrolmentDF_path)
 
             bpUserEnrolmentDF = userEnrolmentDF \
                            .select(
@@ -145,8 +154,11 @@ class BlendedModel:
             bpCompletionWithUserDetailsDF = userOrgHierarchyDataDF.join(bpCompletionDF, ["userID"], "right")
             bpCompletionDF.unpersist(blocking=True)
 
-            with profiling.phase(JOB_NAME, "read", "hierarchyDF", spark=spark):
-                hierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
+            hierarchyDF_path = ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "hierarchyDF", spark=spark) as m:
+                hierarchyDF = spark.read.parquet(hierarchyDF_path)
+                m["materialize"] = hierarchyDF
+                m["input_mb"] = profiling.dir_size_mb(hierarchyDF_path)
             parsedHierarchyDF = hierarchyDF.withColumn("data", from_json(col("hierarchy"), schemas.get_hierarchy_schema())) \
                 .select("identifier", "data.*")
             bpChildDF = bpChildDataFrame(bpWithOrgDF, hierarchyDF, parsedHierarchyDF,spark)
@@ -235,6 +247,20 @@ class BlendedModel:
 
             # Apply duration formatting
             fullDF = self.duration_format(fullDF, "bpChildDuration").distinct()
+
+            # fullDF's lineage covers everything since the userOrgHierarchyDataDF/
+            # bpWithOrgDF/userEnrolmentDF/hierarchyDF reads above: bpBatchDataframe's
+            # transforms, bpWithBatchDF/bpCompletionDF's joins, bpChildDataFrame's
+            # explode/union chain, bpCompletionWithChildrenDF/
+            # bpCompletionWithChildBatchInfoDF's joins, bpChildrenWithProgress's joins
+            # and derived columns, this phase's own withColumn chain, and the final
+            # duration_format + distinct(). None of that executes until forced - this
+            # phase's materialize is what makes that real cost visible as "process"
+            # time before it forks into the fullReportDF (CSV) and df_warehouse
+            # (warehouse parquet) branches below.
+            with profiling.phase(JOB_NAME, "process", "fullDF", spark=spark) as m:
+                m["materialize"] = fullDF
+
             bpChildrenWithProgress.unpersist(blocking=True)
             fullReportDF = fullDF \
                 .filter(col("userStatus").cast("int") == 1) \
@@ -298,8 +324,17 @@ class BlendedModel:
                     col("bpID").alias("contentid"),
                     col("Report_Last_Generated_On")
                 ) \
-                .orderBy("bpID", "userID") 
-            
+                .orderBy("bpID", "userID")
+
+            # fullReportDF's lineage covers the filter/withColumn(MDO_Name/Ministry/
+            # Department/Organization)/select/orderBy projection off fullDF (already
+            # materialized above). Materializing it here (rather than letting the
+            # un-instrumented CSV writes below be the first real trigger) is what
+            # makes that real cost visible as "process" time before it feeds both the
+            # mdoReportDF and cbpReportDF CSV exports.
+            with profiling.phase(JOB_NAME, "process", "fullReportDF", spark=spark) as m:
+                m["materialize"] = fullReportDF
+
             reportPath = f"{config.blendedReportPath}/{today}"
 
             mdo_report_columns = [
@@ -406,8 +441,19 @@ class BlendedModel:
             fullDF.unpersist(blocking=True)
 
             warehouseDF = df_warehouse.coalesce(1).distinct()
-            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
-                warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwBPEnrollmentsTable}")
+
+            # warehouseDF's lineage covers the withColumn/select projection off fullDF
+            # (already materialized above, df_warehouse) plus the coalesce(1) +
+            # distinct(). Materializing it here (rather than letting the write phase
+            # below be the first real action to touch any of this) is what makes that
+            # real cost visible as "process" time instead of "write" time.
+            with profiling.phase(JOB_NAME, "process", "warehouseDF", spark=spark) as m:
+                m["materialize"] = warehouseDF
+
+            warehouseDF_output_path = f"{config.warehouseReportDir}/{config.dwBPEnrollmentsTable}"
+            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark) as m:
+                warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(warehouseDF_output_path)
+                m["output_mb"] = profiling.dir_size_mb(warehouseDF_output_path)
 
             print("✅ Warehouse DataFrame created")
 
@@ -496,9 +542,11 @@ def bpChildDataFrame(blendedProgramESDF: DataFrame, hierarchyDF: DataFrame, pars
     
     return resultDF
 def bpBatchDataframe(spark):
-    with profiling.phase(JOB_NAME, "read", "batch_df", spark=spark):
-        batch_df = spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE) \
-
+    batch_df_path = ParquetFileConstants.BATCH_SELECT_PARQUET_FILE
+    with profiling.phase(JOB_NAME, "read", "batch_df", spark=spark) as m:
+        batch_df = spark.read.parquet(batch_df_path)
+        m["materialize"] = batch_df
+        m["input_mb"] = profiling.dir_size_mb(batch_df_path)
 
     bp_batch_df = batch_df.select(
         col("courseID").alias("bpID"),

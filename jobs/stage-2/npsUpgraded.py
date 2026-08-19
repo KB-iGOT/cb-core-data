@@ -52,11 +52,23 @@ class NPSUpgradedModel:
                 users_rated_course_df.select("userid")
             ).dropDuplicates(["userid"]).na.drop(subset=["userid"])
 
+            # df's lineage covers the union of C2/C3 and its dropDuplicates/na.drop -
+            # none of that executes until forced, and the un-instrumented df.count()
+            # right below would otherwise be the first thing to trigger it.
+            with profiling.phase(JOB_NAME, "process", "df", spark=spark) as m:
+                m["materialize"] = df
+
             # Remove users who already submitted/rejected (C1)
             # Use set subtraction on the single key column to mirror Scala `except`
             filtered_df = df.select("userid").subtract(
                 users_submitted_rejected_df.select("userid")
             ).na.drop(subset=["userid"])
+
+            # filtered_df's lineage covers the subtract against C1 and its na.drop -
+            # the un-instrumented filtered_df.count() right below would otherwise be
+            # the first thing to trigger it.
+            with profiling.phase(JOB_NAME, "process", "filtered_df", spark=spark) as m:
+                m["materialize"] = filtered_df
 
             total_count = df.count()
             print(f"DataFrame Count (eligible users): {total_count}")
@@ -66,6 +78,14 @@ class NPSUpgradedModel:
 
             # Check existing feed
             cassandra_df = self.userUpgradedFeedFromCassandraDataFrame(spark, config).select("userid").dropDuplicates(["userid"])
+
+            # cassandra_df's lineage covers the extra select/dropDuplicates on top of
+            # the already-materialized Cassandra read - the un-instrumented
+            # cassandra_df.count() right below would otherwise be the first thing to
+            # trigger it.
+            with profiling.phase(JOB_NAME, "process", "cassandra_df", spark=spark) as m:
+                m["materialize"] = cassandra_df
+
             existing_feed_count = cassandra_df.count()
             print(f"DataFrame Count (users already having feed): {existing_feed_count}")
 
@@ -79,6 +99,13 @@ class NPSUpgradedModel:
                 )
                 .dropDuplicates(["userid"])
             )
+
+            # filtered_store_to_cassandra_df's lineage covers the subtract against
+            # cassandra_df, the not-null/not-empty filter, and the dropDuplicates -
+            # the un-instrumented final_feed_count.count() right below would
+            # otherwise be the first thing to trigger it.
+            with profiling.phase(JOB_NAME, "process", "filtered_store_to_cassandra_df", spark=spark) as m:
+                m["materialize"] = filtered_store_to_cassandra_df
 
             final_feed_count = filtered_store_to_cassandra_df.count()
             print(f"DataFrame Count (final users to create feed): {final_feed_count}")
@@ -115,10 +142,11 @@ class NPSUpgradedModel:
 
     def userUpgradedFeedFromCassandraDataFrame(self, spark, config):
         """Users already having NPS2 feed in user_feed table (Cassandra)."""
-        with profiling.phase(JOB_NAME, "read", "cassandra_feed_df", spark=spark):
+        with profiling.phase(JOB_NAME, "read", "cassandra_feed_df", spark=spark) as m:
             df = utils.read_cassandra_table(spark, config.cassandraUserFeedKeyspace, config.cassandraUserFeedTable)\
                 .select(col("userid").alias("userid"))\
                 .where(col("category") == "NPS2")
+            m["materialize"] = df
         if df is None:
             return spark.createDataFrame([], self.nps_userids_schema())
         return df.na.drop(subset=["userid"])
@@ -127,8 +155,9 @@ class NPSUpgradedModel:
         """Users who saw the upgraded NPS popup in last 15 days (from Druid)."""
         query = """SELECT userID as userid FROM "nps-upgraded-users-data" WHERE __time >= CURRENT_TIMESTAMP -
         INTERVAL '15' DAY"""
-        with profiling.phase(JOB_NAME, "read", "c1_trigger_df", spark=spark):
+        with profiling.phase(JOB_NAME, "read", "c1_trigger_df", spark=spark) as m:
             df = utils.druidDFOption(query, config.sparkDruidRouterHost, limit=1000000, spark=spark)
+            m["materialize"] = df
         if df is None:
             return spark.createDataFrame([], self.nps_userids_schema())
         return df.na.drop(subset=["userid"])  # ensure clean ids
@@ -137,11 +166,14 @@ class NPSUpgradedModel:
         """Users enrolled/completed at least 1 course in last 15 days (from Cassandra)."""
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         fifteen_days_ago_start = today_start - timedelta(days=15)
-        with profiling.phase(JOB_NAME, "read", "enrolment_df", spark=spark):
-            enrolment_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)\
+        enrolment_df_path = ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "enrolment_df", spark=spark) as m:
+            enrolment_df = spark.read.parquet(enrolment_df_path)\
                 .filter((col("firstCompletedOn").between(lit(fifteen_days_ago_start), lit(today_start)))
                         | (col("courseEnrolledTimestamp").between(lit(fifteen_days_ago_start), lit(today_start)))
                         ).select("userid").distinct()
+            m["materialize"] = enrolment_df
+            m["input_mb"] = profiling.dir_size_mb(enrolment_df_path)
         return enrolment_df
 
     def npsUpgradedTriggerC3DataFrame(self, spark, config):
@@ -156,13 +188,16 @@ class NPSUpgradedModel:
         today_start_ms = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
         fifteen_days_ago_start_ms = int(
             (datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=15)).timestamp() * 1000)
-        with profiling.phase(JOB_NAME, "read", "ratings_df", spark=spark):
-            ratings_df = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)\
+        ratings_df_path = ParquetFileConstants.RATING_PARQUET_FILE
+        with profiling.phase(JOB_NAME, "read", "ratings_df", spark=spark) as m:
+            ratings_df = spark.read.parquet(ratings_df_path)\
                 .filter(col("createdon").isNotNull())\
                 .withColumn("rated_on", timeuuid_to_millis_udf(col("createdon")))\
                 .where((col("rated_on") >= lit(fifteen_days_ago_start_ms)) & (col("rated_on") < lit(today_start_ms)))\
                 .select("userid")\
                 .distinct()
+            m["materialize"] = ratings_df
+            m["input_mb"] = profiling.dir_size_mb(ratings_df_path)
 
         return ratings_df
 

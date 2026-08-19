@@ -143,10 +143,16 @@ class DashboardSyncModel:
             # ===== PHASE 4: CBP Top 10 Reviews (Scala line 114) =====
             self.cbp_top_10_reviews(spark, config)
             # ===== PHASE 5: Kafka displatches for druid ingest =====
-            with profiling.phase(JOB_NAME, "read", "enrolmentWarehouseComputed", spark=spark):
-                enrolmentWarehouseComputed = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "contentWarehouseComputed", spark=spark):
-                contentWarehouseComputed = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            enrolmentWarehouseComputed_path = ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "enrolmentWarehouseComputed", spark=spark) as m:
+                enrolmentWarehouseComputed = spark.read.parquet(enrolmentWarehouseComputed_path)
+                m["materialize"] = enrolmentWarehouseComputed
+                m["input_mb"] = profiling.dir_size_mb(enrolmentWarehouseComputed_path)
+            contentWarehouseComputed_path = ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentWarehouseComputed", spark=spark) as m:
+                contentWarehouseComputed = spark.read.parquet(contentWarehouseComputed_path)
+                m["materialize"] = contentWarehouseComputed
+                m["input_mb"] = profiling.dir_size_mb(contentWarehouseComputed_path)
             #userDF = spark.read.parquet(ParquetFileConstants.USER_SELECT_PARQUET_FILE)
             #orgDF = spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE)
            # STEP 1: Select only needed columns from each DF to reduce size
@@ -220,8 +226,17 @@ class DashboardSyncModel:
                 col("user_consumption_status").alias("completionStatus"),
             )
         )
-            # Final checkpoint
-            allCourseProgramCompletionWithDetailsDF = allCourseProgramCompletionWithDetailsDF.checkpoint()
+            # allCourseProgramCompletionWithDetailsDF's lineage covers everything
+            # since the enrolmentWarehouseComputed read above: the enrolment_slim
+            # select+repartition and the big column-mapping select feeding it.
+            # None of that executes until the .checkpoint() below forces it -
+            # wrapping that checkpoint (an un-instrumented action) in this phase
+            # is what makes that real cost visible as "process" time instead of
+            # it silently landing inside the print(...count()) that follows.
+            with profiling.phase(JOB_NAME, "process", "allCourseProgramCompletionWithDetailsDF", spark=spark) as m:
+                # Final checkpoint
+                allCourseProgramCompletionWithDetailsDF = allCourseProgramCompletionWithDetailsDF.checkpoint()
+                m["materialize"] = allCourseProgramCompletionWithDetailsDF
 
             print(f"Final dataset: {allCourseProgramCompletionWithDetailsDF.count()} records")
             allCourseProgramCompletionWithDetailsDF.show(5)
@@ -668,8 +683,11 @@ class DashboardSyncModel:
 
         try:
             # Load content with competencies (Scala line 652-654)
-            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark):
-                content_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+            content_df_path = ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark) as m:
+                content_df = spark.read.parquet(content_df_path)
+                m["materialize"] = content_df
+                m["input_mb"] = profiling.dir_size_mb(content_df_path)
             content_df = content_df.filter(
                 col("courseStatus").isin("Live", "Retired")
             ).select("courseID", "competencyAreaRefId", "competencyThemeRefId",
@@ -738,6 +756,17 @@ class DashboardSyncModel:
                     ))).alias("area_count_map")
                 ).alias("jsonData")
             )
+
+            # result_df's lineage covers everything since the content_df read
+            # above: the area/theme/subtheme posexplode+repartition, their
+            # positional joins, the join back to content_df + dropDuplicates,
+            # the area-wise/total groupBy aggregations, and this final
+            # join+groupBy+struct. None of that executes until something forces
+            # it - this phase's materialize is what makes that real cost visible
+            # as "process" time instead of silently landing inside the
+            # Redis.dispatchDataFrame call below (the first real action here).
+            with profiling.phase(JOB_NAME, "process", "result_df", spark=spark) as m:
+                m["materialize"] = result_df
 
             # Dispatch to Redis (Scala line 683)
             Redis.dispatchDataFrame("dashboard_competency_coverage_by_org",
@@ -1059,8 +1088,11 @@ class DashboardSyncModel:
                 return
 
             # Courses under 30 mins (Scala lines 1298-1301)
-            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark):
-                content_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+            content_df_path = ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark) as m:
+                content_df = spark.read.parquet(content_df_path)
+                m["materialize"] = content_df
+                m["input_mb"] = profiling.dir_size_mb(content_df_path)
             cbps_under_30mins_df = content_df.filter(
                 (col("courseStatus") == "Live") &
                 (col("courseDuration") < 1800) &
@@ -1105,16 +1137,31 @@ class DashboardSyncModel:
 
         try:
             # Load warehouse tables
-            with profiling.phase(JOB_NAME, "read", "user_org_df", spark=spark):
-                user_org_df = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-            with profiling.phase(JOB_NAME, "read", "user_warehouse_df", spark=spark):
-                user_warehouse_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "enrolment_warehouse_df", spark=spark):
-                enrolment_warehouse_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark):
-                content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "events_df", spark=spark):
-                events_df = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
+            user_org_df_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+            with profiling.phase(JOB_NAME, "read", "user_org_df", spark=spark) as m:
+                user_org_df = spark.read.parquet(user_org_df_path)
+                m["materialize"] = user_org_df
+                m["input_mb"] = profiling.dir_size_mb(user_org_df_path)
+            user_warehouse_df_path = ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "user_warehouse_df", spark=spark) as m:
+                user_warehouse_df = spark.read.parquet(user_warehouse_df_path)
+                m["materialize"] = user_warehouse_df
+                m["input_mb"] = profiling.dir_size_mb(user_warehouse_df_path)
+            enrolment_warehouse_df_path = ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "enrolment_warehouse_df", spark=spark) as m:
+                enrolment_warehouse_df = spark.read.parquet(enrolment_warehouse_df_path)
+                m["materialize"] = enrolment_warehouse_df
+                m["input_mb"] = profiling.dir_size_mb(enrolment_warehouse_df_path)
+            content_warehouse_df_path = ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark) as m:
+                content_warehouse_df = spark.read.parquet(content_warehouse_df_path)
+                m["materialize"] = content_warehouse_df
+                m["input_mb"] = profiling.dir_size_mb(content_warehouse_df_path)
+            events_df_path = ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "events_df", spark=spark) as m:
+                events_df = spark.read.parquet(events_df_path)
+                m["materialize"] = events_df
+                m["input_mb"] = profiling.dir_size_mb(events_df_path)
 
             # Create joined enrolment data with userOrgID and courseDuration
             enrolment_df = enrolment_warehouse_df \
@@ -1244,12 +1291,21 @@ class DashboardSyncModel:
 
         try:
             # Load warehouse tables and create joined data
-            with profiling.phase(JOB_NAME, "read", "user_warehouse_df", spark=spark):
-                user_warehouse_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "enrolment_warehouse_df", spark=spark):
-                enrolment_warehouse_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark):
-                content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            user_warehouse_df_path = ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "user_warehouse_df", spark=spark) as m:
+                user_warehouse_df = spark.read.parquet(user_warehouse_df_path)
+                m["materialize"] = user_warehouse_df
+                m["input_mb"] = profiling.dir_size_mb(user_warehouse_df_path)
+            enrolment_warehouse_df_path = ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "enrolment_warehouse_df", spark=spark) as m:
+                enrolment_warehouse_df = spark.read.parquet(enrolment_warehouse_df_path)
+                m["materialize"] = enrolment_warehouse_df
+                m["input_mb"] = profiling.dir_size_mb(enrolment_warehouse_df_path)
+            content_warehouse_df_path = ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark) as m:
+                content_warehouse_df = spark.read.parquet(content_warehouse_df_path)
+                m["materialize"] = content_warehouse_df
+                m["input_mb"] = profiling.dir_size_mb(content_warehouse_df_path)
 
             # Create joined enrolment data
             enrolment_df = enrolment_warehouse_df \
@@ -1323,8 +1379,11 @@ class DashboardSyncModel:
             print(f"📝 Redis Key: lhp_certificationsTillYesterday, Value: {total_certs_yesterday}")
 
             # Event certifications (Scala lines 1189-1201)
-            with profiling.phase(JOB_NAME, "read", "events_df", spark=spark):
-                events_df = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
+            events_df_path = ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "events_df", spark=spark) as m:
+                events_df = spark.read.parquet(events_df_path)
+                m["materialize"] = events_df
+                m["input_mb"] = profiling.dir_size_mb(events_df_path)
             nlw_start_date = QueryConstants.NLW_START_DATE.strip("'")
 
             total_event_certs_today = events_df.filter(
@@ -1388,12 +1447,21 @@ class DashboardSyncModel:
 
         try:
             # Load warehouse tables and create joined data
-            with profiling.phase(JOB_NAME, "read", "user_warehouse_df", spark=spark):
-                user_warehouse_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "enrolment_warehouse_df", spark=spark):
-                enrolment_warehouse_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark):
-                content_warehouse_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            user_warehouse_df_path = ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "user_warehouse_df", spark=spark) as m:
+                user_warehouse_df = spark.read.parquet(user_warehouse_df_path)
+                m["materialize"] = user_warehouse_df
+                m["input_mb"] = profiling.dir_size_mb(user_warehouse_df_path)
+            enrolment_warehouse_df_path = ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "enrolment_warehouse_df", spark=spark) as m:
+                enrolment_warehouse_df = spark.read.parquet(enrolment_warehouse_df_path)
+                m["materialize"] = enrolment_warehouse_df
+                m["input_mb"] = profiling.dir_size_mb(enrolment_warehouse_df_path)
+            content_warehouse_df_path = ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "content_warehouse_df", spark=spark) as m:
+                content_warehouse_df = spark.read.parquet(content_warehouse_df_path)
+                m["materialize"] = content_warehouse_df
+                m["input_mb"] = profiling.dir_size_mb(content_warehouse_df_path)
 
             # Create joined enrolment data
             enrolment_df = enrolment_warehouse_df \

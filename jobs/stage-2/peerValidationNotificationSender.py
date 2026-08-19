@@ -102,9 +102,10 @@ class PeerValidationNotificationSender:
 
     def send_notification(self):
         try:
-            with profiling.phase(JOB_NAME, "read", "pendingNotificationDF", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "pendingNotificationDF", spark=self.spark) as m:
                 pendingNotificationDF = self.read_postgres_table(self.config.dwpeerValidationNotificationQueue) \
                 .filter(col("status") == "PENDING")
+                m["materialize"] = pendingNotificationDF
 
             if pendingNotificationDF.count() == 0:
                 print("[INFO] No pending notifications.")
@@ -208,8 +209,9 @@ class PeerValidationNotificationSender:
                     latestProcessedDF = successDF.groupBy("form_id") \
                     .agg(max("first_trigger_end").alias("last_processed_date"))
 
-                    with profiling.phase(JOB_NAME, "read", "existingFormStateDF", spark=self.spark):
+                    with profiling.phase(JOB_NAME, "read", "existingFormStateDF", spark=self.spark) as m:
                         existingFormStateDF = self.read_postgres_table(self.config.dwpeerValidationFormStateTable)
+                        m["materialize"] = existingFormStateDF
                     formsToUpdateDF = existingFormStateDF.join(
                         latestProcessedDF,
                         existingFormStateDF["form_id"] == latestProcessedDF["form_id"],
@@ -218,6 +220,17 @@ class PeerValidationNotificationSender:
                     finalFormStateDF = formsToUpdateDF.union(
                     latestProcessedDF.withColumn("data_generated_at", current_timestamp())
                     )
+
+                    # finalFormStateDF's lineage covers everything since the
+                    # existingFormStateDF read above: the latestProcessedDF groupBy/agg
+                    # over successDF, the left_anti join building formsToUpdateDF, and
+                    # the union that produces finalFormStateDF. None of that executes
+                    # until forced - this phase's materialize is what makes that real
+                    # cost visible as "process" time instead of silently landing inside
+                    # the db_write phase below.
+                    with profiling.phase(JOB_NAME, "process", "finalFormStateDF", spark=self.spark) as m:
+                        m["materialize"] = finalFormStateDF
+
                     with profiling.phase(JOB_NAME, "db_write", "finalFormStateDF", spark=self.spark):
                         self.write_postgres_table(finalFormStateDF, self.config.dwpeerValidationFormStateTable, mode="overwrite")
 
@@ -232,6 +245,15 @@ class PeerValidationNotificationSender:
                         col("timestamp")
                     )
                     from dfutil.utils.utils import dispatch_df_to_kafka
+
+                    # kafkaDF's lineage covers the groupBy+count over successDF and the
+                    # subsequent withColumn/select chain that builds the kafka payload.
+                    # None of that executes until forced - this phase's materialize is
+                    # what makes that real cost visible as "process" time instead of
+                    # silently landing inside the write phase below.
+                    with profiling.phase(JOB_NAME, "process", "kafkaDF", spark=self.spark) as m:
+                        m["materialize"] = kafkaDF
+
                     with profiling.phase(JOB_NAME, "write", "kafkaDF", spark=self.spark):
                         dispatch_df_to_kafka(kafkaDF, self.config.peerValidationKafkaTopic, broker_list=self.config.kpBrokerList)
 

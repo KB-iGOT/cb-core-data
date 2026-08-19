@@ -36,21 +36,31 @@ class MinistryMetricsModel:
     def process_data(self, spark,conf):
         try:
             print("📥 Loading base DataFrames...")
-            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark):
-                enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "org_hierarchyDF", spark=spark):
-                org_hierarchyDF = spark.read.parquet(ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE)
+            enrolmentDF_path = ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark) as m:
+                enrolmentDF = spark.read.parquet(enrolmentDF_path)
+                m["materialize"] = enrolmentDF
+                m["input_mb"] = profiling.dir_size_mb(enrolmentDF_path)
+            org_hierarchyDF_path = ParquetFileConstants.ORG_HIERARCHY_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "org_hierarchyDF", spark=spark) as m:
+                org_hierarchyDF = spark.read.parquet(org_hierarchyDF_path)
+                m["materialize"] = org_hierarchyDF
+                m["input_mb"] = profiling.dir_size_mb(org_hierarchyDF_path)
             ministryNamesDF = org_hierarchyDF.select(col("mdo_name").alias("ministry"), col("mdo_id").alias("ministryID"))
-            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark):
-                userDF= spark.read.parquet(ParquetFileConstants.USER_COMPUTED_PARQUET_FILE) \
+            userDF_path = ParquetFileConstants.USER_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark) as m:
+                userDF= spark.read.parquet(userDF_path) \
                 .withColumnRenamed("userOrgID", "user_org_id") \
                           .withColumnRenamed("userID", "user_ID") \
                           .filter(col("userStatus") == 1)
+                m["materialize"] = userDF
+                m["input_mb"] = profiling.dir_size_mb(userDF_path)
 
             # Druid query for active users
             query = """SELECT DISTINCT(uid) as user_ID FROM "summary-events" WHERE dimensions_type='app' AND __time > CURRENT_TIMESTAMP - INTERVAL '24' HOUR"""
-            with profiling.phase(JOB_NAME, "read", "usersLoggedInLast24HrsDF", spark=spark):
+            with profiling.phase(JOB_NAME, "read", "usersLoggedInLast24HrsDF", spark=spark) as m:
                 usersLoggedInLast24HrsDF = utils.druidDFOption(query, conf.sparkDruidRouterHost)
+                m["materialize"] = usersLoggedInLast24HrsDF
             twentyFoutHrActiveUserDF = userDF.join(usersLoggedInLast24HrsDF, ["user_ID"], "inner")
             joined24HrActiveUserDF = twentyFoutHrActiveUserDF.join(
                 org_hierarchyDF, 
@@ -158,12 +168,40 @@ class MinistryMetricsModel:
                 .join(ministryNamesDF, ["ministry"], "inner")
                 .select(col("ministryID"), coalesce(col("enrolmentCount"), lit(0)).alias("enrolmentCount")))
             
+            # finalActiveUserCountDF's lineage covers the 24-hour active-user branch:
+            # the usersLoggedInLast24HrsDF/userDF/org_hierarchyDF joins, the three
+            # ministry/department/org groupBys, their union, and the final join with
+            # ministryNamesDF. None of that executes until forced - this phase's
+            # materialize is what makes that real cost visible as "process" time
+            # instead of silently landing inside the redis_write phase below.
+            with profiling.phase(JOB_NAME, "process", "finalActiveUserCountDF", spark=spark) as m:
+                m["materialize"] = finalActiveUserCountDF
             with profiling.phase(JOB_NAME, "redis_write", "finalActiveUserCountDF", spark=spark):
                 Redis.dispatchDataFrame("dashboard_rolled_up_login_percent_last_24_hrs", finalActiveUserCountDF, "ministryID", "activeUserCount",conf=conf)
+
+            # finalUserCountDF's lineage covers the user-count branch: the userDF/
+            # org_hierarchyDF joins, the three ministry/department/org groupBys, their
+            # union, and the final join with ministryNamesDF.
+            with profiling.phase(JOB_NAME, "process", "finalUserCountDF", spark=spark) as m:
+                m["materialize"] = finalUserCountDF
             with profiling.phase(JOB_NAME, "redis_write", "finalUserCountDF", spark=spark):
                 Redis.dispatchDataFrame("dashboard_rolled_up_user_count", finalUserCountDF, "ministryID", "userCount",conf=conf)
+
+            # finalCertificateCountDF's lineage covers the certificate-count branch:
+            # the enrolmentDF/userDF/org_hierarchyDF joins (joinUserDF/
+            # joinedWithMinistryIDDF), the three ministry/department/org groupBys,
+            # their union, and the final join with ministryNamesDF.
+            with profiling.phase(JOB_NAME, "process", "finalCertificateCountDF", spark=spark) as m:
+                m["materialize"] = finalCertificateCountDF
             with profiling.phase(JOB_NAME, "redis_write", "finalCertificateCountDF", spark=spark):
                 Redis.dispatchDataFrame("dashboard_rolled_up_certificates_generated_count", finalCertificateCountDF, "ministryID", "certificateCount",conf=conf)
+
+            # finalEnrolmentCountDF's lineage covers the enrolment-count branch:
+            # joinedWithMinistryIDDF (shared with the certificate branch above), the
+            # three ministry/department/org groupBys, their union, and the final join
+            # with ministryNamesDF.
+            with profiling.phase(JOB_NAME, "process", "finalEnrolmentCountDF", spark=spark) as m:
+                m["materialize"] = finalEnrolmentCountDF
             with profiling.phase(JOB_NAME, "redis_write", "finalEnrolmentCountDF", spark=spark):
                 Redis.dispatchDataFrame("dashboard_rolled_up_enrolment_content_count",finalEnrolmentCountDF, "ministryID", "enrolmentCount",conf=conf)
 

@@ -460,18 +460,21 @@ def main():
 
         # Run the complete workflow
         print("\n[PHASE 1] Pre-processing events...")
-        with profiling.phase(JOB_NAME, "process", "pre_process", spark=spark):
+        with profiling.phase(JOB_NAME, "process", "pre_process", spark=spark) as m:
             processed_data = WorkFlowSummaryModel.pre_process(input_data, config, sc)
+            m["materialize"] = processed_data
             print(f"[INFO] Processed {processed_data.count()} workflow groups")
 
         print("\n[PHASE 2] Running core algorithm...")
-        with profiling.phase(JOB_NAME, "process", "algorithm", spark=spark):
+        with profiling.phase(JOB_NAME, "process", "algorithm", spark=spark) as m:
             result = WorkFlowSummaryModel.algorithm(processed_data, config, sc)
+            m["materialize"] = result
             print(f"[INFO] Generated {result.count()} session summaries")
 
         print("\n[PHASE 3] Post-processing...")
-        with profiling.phase(JOB_NAME, "process", "post_process", spark=spark):
+        with profiling.phase(JOB_NAME, "process", "post_process", spark=spark) as m:
             output = WorkFlowSummaryModel.post_process(result, config, sc)
+            m["materialize"] = output
 
             # Collect and display results
             print("\n[RESULTS] Workflow Session Summaries:")

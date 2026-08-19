@@ -87,10 +87,14 @@ class WeeklyClapsModel:
             weekStart, weekEnd, weekEndTime, dataTillDate = self.get_this_week_dates()
             app_postgres_url = f"jdbc:postgresql://{config.appPostgresHost}/{config.appPostgresSchema}"
 
-            with profiling.phase(JOB_NAME, "read", "existing_weekly_claps_df", spark=spark):
-                existing_weekly_claps_df = spark.read.parquet(ParquetFileConstants.CLAPS_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "platform_engagement_df", spark=spark):
+            existing_weekly_claps_df_path = ParquetFileConstants.CLAPS_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "existing_weekly_claps_df", spark=spark) as m:
+                existing_weekly_claps_df = spark.read.parquet(existing_weekly_claps_df_path)
+                m["materialize"] = existing_weekly_claps_df
+                m["input_mb"] = profiling.dir_size_mb(existing_weekly_claps_df_path)
+            with profiling.phase(JOB_NAME, "read", "platform_engagement_df", spark=spark) as m:
                 platform_engagement_df = self.users_platform_engagement_dataframe(weekStart, weekEndTime, spark, config)
+                m["materialize"] = platform_engagement_df
 
             joined_df = existing_weekly_claps_df.join(platform_engagement_df, ["userid"], "full_outer")
 
@@ -135,6 +139,18 @@ class WeeklyClapsModel:
             ))
 
             df = joined_df
+
+            # df's lineage covers everything since the existing_weekly_claps_df/
+            # platform_engagement_df reads above: the full_outer join, the
+            # null-safety default withColumns, and the w4 struct construction.
+            # None of that executes until forced - this phase's materialize is
+            # what makes that real cost visible as "process" time instead of
+            # silently landing inside the un-instrumented .collect() a few lines
+            # below (which would otherwise be the first thing to trigger real
+            # execution).
+            with profiling.phase(JOB_NAME, "process", "df", spark=spark) as m:
+                m["materialize"] = df
+
             condition = (col("w4")["timespent"] >= lit(config.cutoffTime)) & (~col("claps_updated_this_week"))
 
             # === Weekend rollover check ===
@@ -185,10 +201,22 @@ class WeeklyClapsModel:
                 .withColumn("w3", self.safe_to_json(df, "w3")) \
                 .withColumn("w4", self.safe_to_json(df, "w4"))
 
+            # final_df's lineage covers everything since the previous "df" process
+            # phase above: whichever weekend-rollover/additive branch executed, the
+            # cleanup defaults, and the safe_to_json conversions. None of that
+            # executes until forced - this phase's materialize is what makes that
+            # real cost visible as "process" time instead of silently landing
+            # inside the un-instrumented .show() below (which would otherwise be
+            # the first thing to trigger real execution).
+            with profiling.phase(JOB_NAME, "process", "final_df", spark=spark) as m:
+                m["materialize"] = final_df
+
             final_df.show(5, truncate=False)
             # === Write outputs ===
-            with profiling.phase(JOB_NAME, "write", "final_df", spark=spark):
-                final_df.coalesce(1).write.mode("overwrite").csv(f"/tmp/weeklyClaps{today}", header=True)
+            final_df_output_path = f"/tmp/weeklyClaps{today}"
+            with profiling.phase(JOB_NAME, "write", "final_df", spark=spark) as m:
+                final_df.coalesce(1).write.mode("overwrite").csv(final_df_output_path, header=True)
+                m["output_mb"] = profiling.dir_size_mb(final_df_output_path)
 
             # Uncomment for Postgres writes
             with profiling.phase(JOB_NAME, "db_write", "final_df", spark=spark):

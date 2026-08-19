@@ -48,13 +48,22 @@ class UserAssessmentModel:
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             # Stage 1: Load Assessment Data
             print("Stage 1: Loading assessment data...")
-            with profiling.phase(JOB_NAME, "read", "assessmentDF", spark=spark):
-                assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE).filter(
+            assessmentDF_path = ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "assessmentDF", spark=spark) as m:
+                assessmentDF = spark.read.parquet(assessmentDF_path).filter(
                     col("assessCategory").isin("Standalone Assessment"))
-            with profiling.phase(JOB_NAME, "read", "hierarchyDF", spark=spark):
-                hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "organizationDF", spark=spark):
-                organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
+                m["materialize"] = assessmentDF
+                m["input_mb"] = profiling.dir_size_mb(assessmentDF_path)
+            hierarchyDF_path = ParquetFileConstants.HIERARCHY_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "hierarchyDF", spark=spark) as m:
+                hierarchyDF = spark.read.parquet(hierarchyDF_path)
+                m["materialize"] = hierarchyDF
+                m["input_mb"] = profiling.dir_size_mb(hierarchyDF_path)
+            organizationDF_path = ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "organizationDF", spark=spark) as m:
+                organizationDF = spark.read.parquet(organizationDF_path)
+                m["materialize"] = organizationDF
+                m["input_mb"] = profiling.dir_size_mb(organizationDF_path)
             print("Stage 1: Complete")
 
             # Stage 2: Add Hierarchy Information
@@ -86,8 +95,11 @@ class UserAssessmentModel:
 
             # Stage 5: Process User Assessment Data
             print("Stage 5: Processing user assessment data...")
-            with profiling.phase(JOB_NAME, "read", "userAssessmentDF", spark=spark):
-                userAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE)
+            userAssessmentDF_path = ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "userAssessmentDF", spark=spark) as m:
+                userAssessmentDF = spark.read.parquet(userAssessmentDF_path)
+                m["materialize"] = userAssessmentDF
+                m["input_mb"] = profiling.dir_size_mb(userAssessmentDF_path)
             userAssessChildrenDF = assessmentDFUtil.user_assessment_children_dataframe(userAssessmentDF,
                                                                                        assessChildrenDF)
             print("User Assessment Children DataFrame Schema:")
@@ -169,15 +181,29 @@ class UserAssessmentModel:
                 col("Report_Last_Generated_On")
             ).coalesce(1)
 
+            # original_df's lineage covers everything since the userAssessmentDF
+            # read above: the add_hierarchy_column/transform_assessment_data/
+            # assessment_children_dataframe/user_assessment_children_dataframe/
+            # all_course_program_details_*/user_assessment_children_details_dataframe
+            # joins (including their own inline reads of CONTENT_COMPUTED_PARQUET_FILE/
+            # RATING_SUMMARY_COMPUTED_PARQUET_FILE/USER_ORG_COMPUTED_FILE), the
+            # "latest" groupBy/agg, the broadcast join, and the final
+            # dropDuplicates/select. None of that executes until forced - this
+            # phase's materialize is what makes that real cost visible as "process"
+            # time instead of silently landing inside the write phase below.
+            with profiling.phase(JOB_NAME, "process", "original_df", spark=spark) as m:
+                m["materialize"] = original_df
+
             print("Stage 9: Complete")
 
             # Stage 10: Generate Final Report
             print("Stage 10: Generating final report...")
             # Export report
-            with profiling.phase(JOB_NAME, "write", "original_df", spark=spark):
+            with profiling.phase(JOB_NAME, "write", "original_df", spark=spark) as m:
                 dfexportutil.write_csv_per_mdo_id(original_df,
                                                   f"{config.localReportDir}/{config.standaloneAssessmentReportPath}/{today}",
-                                                  'mdoid', csv_filename=config.userAssessmentReport)
+                                                  'mdoid', csv_filename=config.userAssessmentReport,
+                                                  metrics=m)
             print("Stage 10: Complete")
 
             # Performance Summary

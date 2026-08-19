@@ -39,19 +39,31 @@ class ODCSRecommendationModel:
 
     def process_data(self, spark, config):
         try:
-            with profiling.phase(JOB_NAME, "read", "all_enrolments_df", spark=spark):
-                all_enrolments_df = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE).withColumnRenamed("userID", "user_id")
-            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark):
-                content_df = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE) \
+            all_enrolments_df_path = ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "all_enrolments_df", spark=spark) as m:
+                all_enrolments_df = spark.read.parquet(all_enrolments_df_path).withColumnRenamed("userID", "user_id")
+                m["materialize"] = all_enrolments_df
+                m["input_mb"] = profiling.dir_size_mb(all_enrolments_df_path)
+            content_df_path = ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "content_df", spark=spark) as m:
+                content_df = spark.read.parquet(content_df_path) \
                     .filter(col("content_sub_type").isin("Course", "Program", "Moderated Course", "Moderated Program"))
+                m["materialize"] = content_df
+                m["input_mb"] = profiling.dir_size_mb(content_df_path)
             enrolments_df = all_enrolments_df.join(
                 content_df.select("content_id"), ["content_id"], "inner"
             )
 
-            with profiling.phase(JOB_NAME, "read", "user_df", spark=spark):
-                user_df = spark.read.parquet(ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "rating_draft_df", spark=spark):
-                rating_draft_df = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)
+            user_df_path = ParquetFileConstants.USER_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "user_df", spark=spark) as m:
+                user_df = spark.read.parquet(user_df_path)
+                m["materialize"] = user_df
+                m["input_mb"] = profiling.dir_size_mb(user_df_path)
+            rating_draft_df_path = ParquetFileConstants.RATING_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "rating_draft_df", spark=spark) as m:
+                rating_draft_df = spark.read.parquet(rating_draft_df_path)
+                m["materialize"] = rating_draft_df
+                m["input_mb"] = profiling.dir_size_mb(rating_draft_df_path)
 
             completion_df = enrolments_df.groupBy("content_id").agg(count("user_id").alias("total_enrolments"),
                                                                     sum(when(col("user_consumption_status") == lit(
@@ -104,6 +116,17 @@ class ODCSRecommendationModel:
                 .withColumn("top_15_content_ids", concat_ws(",", col("top_content_ids")))
                 .select("mdo_id", "top_15_content_ids")
             )
+
+            # final_df's lineage covers everything since the user_df/rating_draft_df
+            # reads above: the completion_df and rating_df groupBy/agg, the
+            # enrolments_with_mdo join, the content_stats_df joins+groupBy, the
+            # ranked_content_df window/filter, and the final groupBy+collect_list.
+            # None of that executes until forced - this phase's materialize is what
+            # makes that real cost visible as "process" time instead of it silently
+            # landing inside the un-instrumented .show() below (which would
+            # otherwise be the first thing to trigger real execution).
+            with profiling.phase(JOB_NAME, "process", "final_df", spark=spark) as m:
+                m["materialize"] = final_df
 
             final_df.show(10, truncate=False)
             with profiling.phase(JOB_NAME, "redis_write", "final_df", spark=spark):

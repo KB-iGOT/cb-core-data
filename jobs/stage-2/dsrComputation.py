@@ -74,11 +74,14 @@ class DSRComputationModel:
         try:
             output_path = getattr(config, 'baseCachePath', '/home/analytics/pyspark/data-res/pq_files/cache_pq/')
 
-            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark):
-                userDF = spark.read.option("recursiveFileLookup", "true").parquet(ParquetFileConstants.USER_PARQUET_FILE) \
+            userDF_path = ParquetFileConstants.USER_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "userDF", spark=spark) as m:
+                userDF = spark.read.option("recursiveFileLookup", "true").parquet(userDF_path) \
                     .withColumnRenamed("id", "user_id") \
                     .withColumnRenamed("rootorgid", "mdo_id") \
                     .withColumn("userCreatedTimestamp", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ").cast("long"))
+                m["materialize"] = userDF
+                m["input_mb"] = profiling.dir_size_mb(userDF_path)
 
             # ------------------------------------------------------------------ #
             # Exclude VOLUNTEER (Non-Govt) users from every metric in this report.
@@ -126,16 +129,42 @@ class DSRComputationModel:
 
             userDF = userDF.filter(~is_volunteer_expr).drop("is_volunteer_by_designation")
 
-            with profiling.phase(JOB_NAME, "read", "eventsEnrolmentDataDF", spark=spark):
-                eventsEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "contentEnrolmentDataDF", spark=spark):
-                contentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "externalContentEnrolmentDataDF", spark=spark):
-                externalContentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
-                contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "externalContentDF", spark=spark):
-                externalContentDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+            # userDF's lineage covers everything since the userDF read phase above:
+            # designationVolunteerFlagDF's from_json/explode/groupBy, the join of that flag
+            # back onto userDF, and this final volunteer-exclusion filter. None of that
+            # executes until forced - this phase's materialize is what makes that real cost
+            # visible as "process" time instead of silently landing in whatever join/count
+            # below happens to touch userDF first. (volunteerUserIdsDF forks off the same
+            # join upstream of this filter; its own cost surfaces later at the
+            # mau_govt_only_df / user_loggedin_yesterday_govt_only_df phases below.)
+            with profiling.phase(JOB_NAME, "process", "userDF", spark=spark) as m:
+                m["materialize"] = userDF
+
+            eventsEnrolmentDataDF_path = ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "eventsEnrolmentDataDF", spark=spark) as m:
+                eventsEnrolmentDataDF = spark.read.parquet(eventsEnrolmentDataDF_path)
+                m["materialize"] = eventsEnrolmentDataDF
+                m["input_mb"] = profiling.dir_size_mb(eventsEnrolmentDataDF_path)
+            contentEnrolmentDataDF_path = ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentEnrolmentDataDF", spark=spark) as m:
+                contentEnrolmentDataDF = spark.read.parquet(contentEnrolmentDataDF_path)
+                m["materialize"] = contentEnrolmentDataDF
+                m["input_mb"] = profiling.dir_size_mb(contentEnrolmentDataDF_path)
+            externalContentEnrolmentDataDF_path = ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "externalContentEnrolmentDataDF", spark=spark) as m:
+                externalContentEnrolmentDataDF = spark.read.parquet(externalContentEnrolmentDataDF_path)
+                m["materialize"] = externalContentEnrolmentDataDF
+                m["input_mb"] = profiling.dir_size_mb(externalContentEnrolmentDataDF_path)
+            contentDF_path = ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark) as m:
+                contentDF = spark.read.parquet(contentDF_path)
+                m["materialize"] = contentDF
+                m["input_mb"] = profiling.dir_size_mb(contentDF_path)
+            externalContentDF_path = ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "externalContentDF", spark=spark) as m:
+                externalContentDF = spark.read.parquet(externalContentDF_path)
+                m["materialize"] = externalContentDF
+                m["input_mb"] = profiling.dir_size_mb(externalContentDF_path)
 
             # Event enrolments aren't joined against userDF anywhere below (unlike content
             # enrolments), so VOLUNTEER exclusion has to be applied explicitly here via an
@@ -146,6 +175,13 @@ class DSRComputationModel:
                 "inner"
             )
 
+            # eventsEnrolmentDataDF's lineage covers this inner join against the (already
+            # volunteer-filtered) userDF. It doesn't execute until forced - this phase's
+            # materialize is what makes that real cost visible instead of it silently
+            # landing inside whichever un-instrumented .count()/.filter() below touches
+            # eventsEnrolmentDataDF first.
+            with profiling.phase(JOB_NAME, "process", "eventsEnrolmentDataDF", spark=spark) as m:
+                m["materialize"] = eventsEnrolmentDataDF
 
             # ------------------------------------------------------------------ #
             # Active users (status == 1) joined with org
@@ -160,6 +196,14 @@ class DSRComputationModel:
                 .join(activeUsersDF.select("user_id").alias("u"),
                       col("e.userID") == col("u.user_id"), "inner") \
                 .select(col("e.*"))
+
+            # enrichedContentEnrolmentsDF's lineage covers this join against activeUsersDF.
+            # Materializing it here (rather than letting the un-instrumented .count() below
+            # trigger it for the first time) is what makes that real cost visible as
+            # "process" time - and keeps the several .count()/.filter() reuses of this same
+            # DF further down cheap (served from cache) instead of each re-running the join.
+            with profiling.phase(JOB_NAME, "process", "enrichedContentEnrolmentsDF", spark=spark) as m:
+                m["materialize"] = enrichedContentEnrolmentsDF
 
             total_enrolments = enrichedContentEnrolmentsDF.count()
             #Redis.update("dashboard_enrolment_count", str(total_enrolments), conf=config)
@@ -178,6 +222,13 @@ class DSRComputationModel:
                 col("e.userID") == col("u.user_id"), "inner"
             ) \
                 .select(col("e.*"), col("c.content_type"), col("c.content_status"))
+
+            # enrichedCourseEnrolmentsDF's lineage covers its two joins (contentDF, then
+            # userWithOrgDF). Materializing it here (rather than letting the un-instrumented
+            # .agg().first() below trigger it for the first time) is what makes that real
+            # cost visible as "process" time.
+            with profiling.phase(JOB_NAME, "process", "enrichedCourseEnrolmentsDF", spark=spark) as m:
+                m["materialize"] = enrichedCourseEnrolmentsDF
 
             unique_users_enrolled = enrichedCourseEnrolmentsDF \
                 .filter(
@@ -252,8 +303,11 @@ class DSRComputationModel:
             # ------------------------------------------------------------------ #
             # Live courses — reuse single filtered DF for count, publishers, duration
             # ------------------------------------------------------------------ #
-            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
-                contentDF = spark.read.parquet(ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
+            contentDF_reload_path = ParquetFileConstants.CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark) as m:
+                contentDF = spark.read.parquet(contentDF_reload_path)
+                m["materialize"] = contentDF
+                m["input_mb"] = profiling.dir_size_mb(contentDF_reload_path)
 
             liveCoursesDF = contentDF \
                 .filter(col("content_status").isin("Live", "LIVE")) \
@@ -337,12 +391,22 @@ class DSRComputationModel:
                              AND __time >= TIME_FLOOR(CURRENT_TIMESTAMP + INTERVAL '5:30' HOUR TO MINUTE - INTERVAL '30' DAY, 'P1D')
                              AND __time <  TIME_FLOOR(CURRENT_TIMESTAMP + INTERVAL '5:30' HOUR TO MINUTE, 'P1D')"""
 
-            with profiling.phase(JOB_NAME, "read", "mau_df", spark=spark):
+            with profiling.phase(JOB_NAME, "read", "mau_df", spark=spark) as m:
                 mau_df = druidDFOption(mau_query, config.sparkDruidRouterHost, limit=10000000, spark=spark)
                 if mau_df is None:
                     mau_df = self._empty_df(spark, "actor_id")
+                m["materialize"] = mau_df
 
             mau_govt_only_df = mau_df.join(volunteerUserIdsDF, ["actor_id"], "left_anti")
+
+            # mau_govt_only_df's lineage covers this anti-join against volunteerUserIdsDF
+            # (which itself forks off the same designationVolunteerFlagDF join computed
+            # earlier). Materializing it here (rather than letting the un-instrumented
+            # .first() below trigger it for the first time) is what makes that real cost
+            # visible as "process" time.
+            with profiling.phase(JOB_NAME, "process", "mau_govt_only_df", spark=spark) as m:
+                m["materialize"] = mau_govt_only_df
+
             total_mau = mau_govt_only_df.select(countDistinct("actor_id").alias("activeCount")).first()["activeCount"]
             #Redis.update("lp_monthly_active_users", str(total_mau), conf=config)
             Redis.update("lp_monthly_active_users_updated_format", format_count(total_mau), conf=config)
@@ -358,7 +422,7 @@ class DSRComputationModel:
                                                  AND __time >= TIME_FLOOR(CURRENT_TIMESTAMP + INTERVAL '5:30' HOUR TO MINUTE - INTERVAL '24' HOUR, 'P1D')
                                                  AND __time <  TIME_FLOOR(CURRENT_TIMESTAMP + INTERVAL '5:30' HOUR TO MINUTE, 'P1D')"""
 
-            with profiling.phase(JOB_NAME, "read", "user_loggedin_yesterday_df", spark=spark):
+            with profiling.phase(JOB_NAME, "read", "user_loggedin_yesterday_df", spark=spark) as m:
                 user_loggedin_yesterday_df = druidDFOption(
                     user_loggedin_yesterday_query,
                     config.sparkDruidRouterHost,
@@ -369,10 +433,19 @@ class DSRComputationModel:
                     user_loggedin_yesterday_df = spark.createDataFrame(
                         [], StructType([StructField("actor_id", StringType(), True)])
                     )
+                m["materialize"] = user_loggedin_yesterday_df
 
             user_loggedin_yesterday_govt_only_df = user_loggedin_yesterday_df.join(
                 volunteerUserIdsDF, ["actor_id"], "left_anti"
             )
+
+            # user_loggedin_yesterday_govt_only_df's lineage covers this anti-join against
+            # volunteerUserIdsDF. Materializing it here (rather than letting the
+            # un-instrumented .first() below trigger it for the first time) is what makes
+            # that real cost visible as "process" time.
+            with profiling.phase(JOB_NAME, "process", "user_loggedin_yesterday_govt_only_df", spark=spark) as m:
+                m["materialize"] = user_loggedin_yesterday_govt_only_df
+
             user_loggedin_yesterday_count = user_loggedin_yesterday_govt_only_df \
                 .select(countDistinct("actor_id").alias("userLoggedInYesterday")) \
                 .first()["userLoggedInYesterday"]

@@ -49,22 +49,34 @@ class DSRComputationUpdatedModel:
     def process_data(self, spark, config):
         try:
             # Active users from user parquet
-            with profiling.phase(JOB_NAME, "read", "activeUsersDF", spark=spark):
-                activeUsersDF = spark.read.option("recursiveFileLookup", "true").parquet(ParquetFileConstants.USER_PARQUET_FILE) \
+            activeUsersDF_path = ParquetFileConstants.USER_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "activeUsersDF", spark=spark) as m:
+                activeUsersDF = spark.read.option("recursiveFileLookup", "true").parquet(activeUsersDF_path) \
                     .withColumnRenamed("id", "user_id") \
                     .withColumnRenamed("rootorgid", "mdo_id") \
                     .withColumn("userCreatedTimestamp", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ").cast("long")) \
                     .filter(col("status") == 1)
-            with profiling.phase(JOB_NAME, "read", "contentEnrolmentDataDF", spark=spark):
-                contentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "externalContentEnrolmentDataDF", spark=spark):
-                externalContentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE)
-            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark):
-                contentDF = spark.read.parquet(ParquetFileConstants.ESCONTENT_PARQUET_FILE) \
+                m["materialize"] = activeUsersDF
+                m["input_mb"] = profiling.dir_size_mb(activeUsersDF_path)
+            contentEnrolmentDataDF_path = ParquetFileConstants.ENROLMENT_SELECT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentEnrolmentDataDF", spark=spark) as m:
+                contentEnrolmentDataDF = spark.read.parquet(contentEnrolmentDataDF_path)
+                m["materialize"] = contentEnrolmentDataDF
+                m["input_mb"] = profiling.dir_size_mb(contentEnrolmentDataDF_path)
+            externalContentEnrolmentDataDF_path = ParquetFileConstants.EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "externalContentEnrolmentDataDF", spark=spark) as m:
+                externalContentEnrolmentDataDF = spark.read.parquet(externalContentEnrolmentDataDF_path)
+                m["materialize"] = externalContentEnrolmentDataDF
+                m["input_mb"] = profiling.dir_size_mb(externalContentEnrolmentDataDF_path)
+            contentDF_path = ParquetFileConstants.ESCONTENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentDF", spark=spark) as m:
+                contentDF = spark.read.parquet(contentDF_path) \
                     .withColumnRenamed("identifier", "content_id") \
                     .withColumnRenamed("primaryCategory", "content_type") \
                     .withColumnRenamed("status", "content_status") \
                     .withColumnRenamed("courseCategory", "content_sub_type")
+                m["materialize"] = contentDF
+                m["input_mb"] = profiling.dir_size_mb(contentDF_path)
 
 
             ist_offset = timezone(timedelta(hours=5, minutes=30))
@@ -146,6 +158,15 @@ class DSRComputationUpdatedModel:
                 .join(activeUsersDF.select("user_id").alias("u"), col("e.userID") == col("u.user_id"), "inner") \
                 .select(col("e.*"), col("c.content_type"), col("c.content_status"))
 
+            # enrichedContentEnrolmentsDF's lineage covers the two joins above
+            # (contentDF + activeUsersDF against contentEnrolmentDataDF). It's
+            # reused below for both the overall and yesterday enrolment counts, so
+            # without this it would otherwise be computed from scratch twice, with
+            # neither pass showing up as anything but a plain un-instrumented
+            # .count().
+            with profiling.phase(JOB_NAME, "process", "enrichedContentEnrolmentsDF", spark=spark) as m:
+                m["materialize"] = enrichedContentEnrolmentsDF
+
             # Overall Course enrolment count
             total_enrolments = enrichedContentEnrolmentsDF.filter(contentFilter).count() + externalContentEnrolmentDataDF.count()
 
@@ -174,6 +195,16 @@ class DSRComputationUpdatedModel:
                 contentDF.select("content_id", "content_type", "content_status").alias("c"), col("e.courseID") == col("c.content_id"), "left") \
                 .join(activeUsersDF.select("user_id").alias("u"), col("e.userID") == col("u.user_id"), "inner") \
                 .select(col("e.*"), col("c.content_type"), col("c.content_status"))
+
+            # enrichedContentCompletedDF's lineage covers the two joins above
+            # (contentDF + activeUsersDF against contentEnrolmentDataDF, same shape
+            # as enrichedContentEnrolmentsDF above but independently computed).
+            # It's reused below for both the overall and yesterday completion
+            # counts, so without this it would otherwise be computed from scratch
+            # twice, with neither pass showing up as anything but a plain
+            # un-instrumented .count().
+            with profiling.phase(JOB_NAME, "process", "enrichedContentCompletedDF", spark=spark) as m:
+                m["materialize"] = enrichedContentCompletedDF
 
             total_content_completions = enrichedContentCompletedDF.filter(contentFilter & completionFilter).count() + externalContentEnrolmentDataDF.filter(col("status") == 2).count()
 

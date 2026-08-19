@@ -59,14 +59,25 @@ class CourseReportModel:
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             course_categories= config.courseCategoriesToSelect
 
-            
-            with profiling.phase(JOB_NAME, "read", "allCourseProgramDetailsDF", spark=spark):
-                allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("courseCategory").isin(course_categories))
-            with profiling.phase(JOB_NAME, "read", "contentHierarchyDF", spark=spark):
-                contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
-            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark):
-                enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
+            # read start
+            allCourseProgramDetailsDF_path = ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "allCourseProgramDetailsDF", spark=spark) as m:
+                allCourseProgramDetailsDF = spark.read.parquet(allCourseProgramDetailsDF_path).filter(col("courseCategory").isin(course_categories))
+                m["materialize"] = allCourseProgramDetailsDF
+                m["input_mb"] = profiling.dir_size_mb(allCourseProgramDetailsDF_path)
+            contentHierarchyDF_path = ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentHierarchyDF", spark=spark) as m:
+                contentHierarchyDF = spark.read.parquet(contentHierarchyDF_path).withColumnRenamed("identifier", "courseID")
+                m["materialize"] = contentHierarchyDF
+                m["input_mb"] = profiling.dir_size_mb(contentHierarchyDF_path)
+            enrolmentDF_path = ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "enrolmentDF", spark=spark) as m:
+                enrolmentDF = spark.read.parquet(enrolmentDF_path).filter(col('enrolment_status') == 'enrolled')
+                m["materialize"] = enrolmentDF
+                m["input_mb"] = profiling.dir_size_mb(enrolmentDF_path)
 
+            # read end
+            # ETL start
             getContentResourceWithCategoryDF = contentHierarchyDF \
                 .join(allCourseProgramDetailsDF, ["courseID"], "inner") \
                 .select(
@@ -129,12 +140,23 @@ class CourseReportModel:
                 .dropDuplicates() \
                 .withColumn("data_last_generated_on", currentDateTime) \
                 .cache()  # Cache the final result since it's used multiple times
+
+            # distinctDF's lineage covers everything since the enrolmentDF/contentHierarchyDF/
+            # allCourseProgramDetailsDF reads above: the getContentResourceWithCategoryDF join,
+            # resultDF's hierarchy explode/select, and this dropDuplicates+withColumn. None of
+            # that executes until forced - this phase's materialize is what makes that real
+            # cost visible as "process" time instead of silently landing inside the write phase below.
+            with profiling.phase(JOB_NAME, "process", "distinctDF", spark=spark) as m:
+                m["materialize"] = distinctDF
+
             # Generate report path
             report_path=f"{config.localReportDir}/{config.courseReportPath}/{today}"
 
             # Write to warehouse - single coalesce operation
-            with profiling.phase(JOB_NAME, "write", "distinctDF", spark=spark):
-                distinctDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwContentResourceTable}")
+            distinctDF_output_path = f"{config.warehouseReportDir}/{config.dwContentResourceTable}"
+            with profiling.phase(JOB_NAME, "write", "distinctDF", spark=spark) as m:
+                distinctDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(distinctDF_output_path)
+                m["output_mb"] = profiling.dir_size_mb(distinctDF_output_path)
 
             courseResCountDF = allCourseProgramDetailsDF.select("courseID", "courseResourceCount")
             userEnrolmentDF=enrolmentDF.join(
@@ -161,8 +183,11 @@ class CourseReportModel:
 
             allCBPAndAggDF = allCourseProgramDetailsDF.join(aggregatedDF, ["courseID"], "left")
 
-            with profiling.phase(JOB_NAME, "read", "courseBatchDF", spark=spark):
-                courseBatchDF=spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE)
+            courseBatchDF_path = ParquetFileConstants.BATCH_SELECT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "courseBatchDF", spark=spark) as m:
+                courseBatchDF=spark.read.parquet(courseBatchDF_path)
+                m["materialize"] = courseBatchDF
+                m["input_mb"] = profiling.dir_size_mb(courseBatchDF_path)
 
             curatedCourseDataDFWithBatchInfo = allCBPAndAggDF \
             .join(
@@ -186,8 +211,19 @@ class CourseReportModel:
             .withColumn("ArchivedOn", when(col("courseStatus") == "Retired", to_date(col("lastStatusChangedOn"), ParquetFileConstants.DATE_FORMAT))) \
             .withColumn("Report_Last_Generated_On", currentDateTime)
 
-            with profiling.phase(JOB_NAME, "read", "marketPlaceEnrolmentsDF", spark=spark):
-                marketPlaceEnrolmentsDF = spark.read.parquet(ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE) \
+            # fullDF's lineage covers everything since the distinctDF process phase above:
+            # courseResCountDF's select, the userEnrolmentDF join, calculateCourseProgress's
+            # transforms feeding allCBPCompletionWithDetailsDF, the aggregatedDF groupBy/agg,
+            # the allCBPAndAggDF join, the courseBatchDF read/broadcast join building
+            # curatedCourseDataDFWithBatchInfo, and this final withColumn chain. None of that
+            # executes until forced - this phase's materialize is what makes that real cost
+            # visible as "process" time.
+            with profiling.phase(JOB_NAME, "process", "fullDF", spark=spark) as m:
+                m["materialize"] = fullDF
+
+            marketPlaceEnrolmentsDF_path = ParquetFileConstants.EXTERNAL_ENROLMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "marketPlaceEnrolmentsDF", spark=spark) as m:
+                marketPlaceEnrolmentsDF = spark.read.parquet(marketPlaceEnrolmentsDF_path) \
                 .withColumn("issuedCertificateCountPerContent",
                             when(size(col("issued_certificates")) > 0, lit(1)).otherwise(lit(0))) \
                 .groupBy("content_id") \
@@ -200,9 +236,14 @@ class CourseReportModel:
                     F_min("completedon").alias("earliestCompletedOn"),
                     F_max("completedon").alias("latestCompletedOn")
                 )
+                m["materialize"] = marketPlaceEnrolmentsDF
+                m["input_mb"] = profiling.dir_size_mb(marketPlaceEnrolmentsDF_path)
 
-            with profiling.phase(JOB_NAME, "read", "marketPlaceContentsDF", spark=spark):
-                marketPlaceContentsDF= spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+            marketPlaceContentsDF_path = ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "marketPlaceContentsDF", spark=spark) as m:
+                marketPlaceContentsDF= spark.read.parquet(marketPlaceContentsDF_path)
+                m["materialize"] = marketPlaceContentsDF
+                m["input_mb"] = profiling.dir_size_mb(marketPlaceContentsDF_path)
             
             marketPlaceContentWithEnrolmentsDF = contentDFUtil.duration_format(marketPlaceContentsDF, "courseDuration") \
                 .join(marketPlaceEnrolmentsDF, ["content_id"], "outer") \
@@ -312,6 +353,15 @@ class CourseReportModel:
             
             mdoReportDF = platformContentMdoReportDF.union(marketPlaceContentMdoReportDF)
 
+            # mdoReportDF's lineage covers everything since the fullDF process phase above:
+            # marketPlaceContentWithEnrolmentsDF's join with marketPlaceEnrolmentsDF, the
+            # marketPlaceContentMdoReportDF/platformContentMdoReportDF selects, and this
+            # union. Materializing it here (rather than letting the un-instrumented
+            # .distinct().collect() below trigger it for the first time) is what makes that
+            # real cost visible as "process" time.
+            with profiling.phase(JOB_NAME, "process", "mdoReportDF", spark=spark) as m:
+                m["materialize"] = mdoReportDF
+
             distinct_orgids = mdoReportDF \
                       .select("mdoid") \
                       .distinct() \
@@ -319,6 +369,9 @@ class CourseReportModel:
 
             orgid_list = [row.mdoid for row in distinct_orgids]
 
+            # ETL end
+
+            # Write start
             print("📝 Writing CSV reports...")
             dfexportutil.write_csv_per_mdo_id_duckdb(
                 mdoReportDF,
@@ -377,12 +430,18 @@ class CourseReportModel:
                     col('difficultyLevel').alias('difficulty_level'),
                     col("data_last_generated_on")
                 )
-            with profiling.phase(JOB_NAME, "read", "orgComputedDF", spark=spark):
-                orgComputedDF = spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE) \
+            orgComputedDF_path = ParquetFileConstants.ORG_SELECT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "orgComputedDF", spark=spark) as m:
+                orgComputedDF = spark.read.parquet(orgComputedDF_path) \
                     .select(col("orgId").alias("content_provider_id"),
                             col("orgName").alias("content_provider_name"))
-            with profiling.phase(JOB_NAME, "read", "es_final_assessment_df", spark=spark):
-                es_final_assessment_df = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
+                m["materialize"] = orgComputedDF
+                m["input_mb"] = profiling.dir_size_mb(orgComputedDF_path)
+            es_final_assessment_df_path = ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "es_final_assessment_df", spark=spark) as m:
+                es_final_assessment_df = spark.read.parquet(es_final_assessment_df_path)
+                m["materialize"] = es_final_assessment_df
+                m["input_mb"] = profiling.dir_size_mb(es_final_assessment_df_path)
             es_final_assessment_df = es_final_assessment_df.select(
                 col("Identifier").alias("content_id"),
                 col("createdFor").getItem(0).alias("content_provider_id"),
@@ -416,9 +475,24 @@ class CourseReportModel:
             platformContentWarehouseDF = platformContentWarehouseDF.unionByName(es_final_assessment_df)
 
             df_warehouse = platformContentWarehouseDF.union(marketPlaceContentWarehouseDF)
-            with profiling.phase(JOB_NAME, "write", "df_warehouse", spark=spark):
-                df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
 
+            # df_warehouse's lineage covers everything since the fullDF process phase above:
+            # scorm_detection_df's groupBy/agg over the exploded hierarchy, the
+            # platformContentWarehouseDF join with scorm_detection_df, the
+            # es_final_assessment_df join with orgComputedDF, the unionByName, and this
+            # final union. Materializing it here (before the write phase, which would
+            # otherwise be the first real action to touch any of this) splits that real
+            # process cost apart from actual write time.
+            with profiling.phase(JOB_NAME, "process", "df_warehouse", spark=spark) as m:
+                m["materialize"] = df_warehouse
+
+            df_warehouse_output_path = f"{config.warehouseReportDir}/{config.dwCourseTable}"
+            with profiling.phase(JOB_NAME, "write", "df_warehouse", spark=spark) as m:
+                df_warehouse.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(df_warehouse_output_path)
+                m["output_mb"] = profiling.dir_size_mb(df_warehouse_output_path)
+
+            # Write End
+            print(f"✅ {JOB_NAME} job completed")
         except Exception as e:
             print(f"❌ Error occurred during CourseReportModel processing: {str(e)}")
             raise e

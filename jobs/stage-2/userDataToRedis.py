@@ -43,8 +43,9 @@ class UserDataToRedisModel:
             spark: SparkSession
         """
         try:
-            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
-                userOrgDF = spark.read.parquet(ParquetFileConstants.USER_SELECT_PARQUET_FILE).select(
+            userOrgDF_path = ParquetFileConstants.USER_SELECT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark) as m:
+                userOrgDF = spark.read.parquet(userOrgDF_path).select(
                     F.col("userID"),
                     F.col("firstName"),
                     F.col("userProfileImgUrl"),
@@ -52,6 +53,8 @@ class UserDataToRedisModel:
                     F.col("professionalDetails.designation").alias("designation"),
                     F.col("employmentDetails.departmentName").alias("departmentName")
                 )
+                m["materialize"] = userOrgDF
+                m["input_mb"] = profiling.dir_size_mb(userOrgDF_path)
 
             # Repartition the larger DataFrame to improve parallelism
             repartitioned_user_data = userOrgDF.repartition(500)

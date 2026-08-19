@@ -179,11 +179,12 @@ class DataExhaustModel:
         try:
             # Process enrolment data
             self.logger.info("Processing enrolment data...")
-            with profiling.phase(JOB_NAME, "read", "enrolment_data", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "enrolment_data", spark=self.spark) as m:
                 enrolment_df = self.read_cassandra_table(
                     self.config.cassandraCourseKeyspace,
                     self.config.cassandraUserEnrolmentsTable
                 )
+                m["materialize"] = enrolment_df
 
             with profiling.phase(JOB_NAME, "write", "enrolment_data", spark=self.spark) as m:
                 self.write_parquet(enrolment_df, f"{output_base_path}/enrolment", metrics=m)
@@ -191,11 +192,12 @@ class DataExhaustModel:
 
             # Process batch data
             self.logger.info("Processing batch data...")
-            with profiling.phase(JOB_NAME, "read", "batch_data", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "batch_data", spark=self.spark) as m:
                 batch_df = self.read_cassandra_table(
                     self.config.cassandraCourseKeyspace,
                     self.config.cassandraCourseBatchTable
                 )
+                m["materialize"] = batch_df
 
             with profiling.phase(JOB_NAME, "write", "batch_data", spark=self.spark) as m:
                 self.write_parquet(batch_df, f"{output_base_path}/batch", metrics=m)
@@ -203,11 +205,12 @@ class DataExhaustModel:
 
             # Process KCM V6 hierarchy
             self.logger.info("Processing KCM V6 hierarchy...")
-            with profiling.phase(JOB_NAME, "read", "kcm_v6_hierarchy", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "kcm_v6_hierarchy", spark=self.spark) as m:
                 kcm_v6_hierarchy = self.read_cassandra_table(
                     self.config.cassandraHierarchyStoreKeyspace,
                     self.config.cassandraFrameworkHierarchyTable
                 ).filter(col("identifier") == "kcmfinal_fw")
+                m["materialize"] = kcm_v6_hierarchy
 
             with profiling.phase(JOB_NAME, "write", "kcm_v6_hierarchy", spark=self.spark) as m:
                 self.write_parquet(kcm_v6_hierarchy, f"{output_base_path}/kcmV6", metrics=m)
@@ -215,11 +218,12 @@ class DataExhaustModel:
 
             # Process questionset hierarchy
             self.logger.info("Processing questionset hierarchy...")
-            with profiling.phase(JOB_NAME, "read", "questionset_hierarchy", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "questionset_hierarchy", spark=self.spark) as m:
                 questionset_hierarchy_df = self.read_cassandra_table(
                     self.config.cassandraHierarchyStoreKeyspace,
                     self.config.cassandraQuestionSetHierarchyTable
                 )
+                m["materialize"] = questionset_hierarchy_df
 
             questionset_hierarchy_df = questionset_hierarchy_df.withColumn(
                 "hierarchy", from_json(col("hierarchy"), questionset_hierarchy_schema)
@@ -241,7 +245,7 @@ class DataExhaustModel:
 
             # Process user assessment data (complex transformation)
             self.logger.info("Processing user assessment data...")
-            with profiling.phase(JOB_NAME, "read", "user_assessment_data", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "user_assessment_data", spark=self.spark) as m:
                 user_assessment_df = self.read_cassandra_table(
                     self.config.cassandraUserKeyspace,
                     self.config.cassandraUserAssessmentTable
@@ -257,6 +261,8 @@ class DataExhaustModel:
                     col("language").alias("assessLanguage")
                 ).fillna("{}", subset=["submitassessmentresponse", "submitassessmentrequest"]) \
 
+                m["materialize"] = user_assessment_df
+
             # write user assessment data to parquet
             with profiling.phase(JOB_NAME, "write", "user_assessment_data", spark=self.spark) as m:
                 self.write_parquet(user_assessment_df, f"{output_base_path}/userAssessmentRaw", metrics=m)
@@ -265,11 +271,12 @@ class DataExhaustModel:
 
             # Process content hierarchy
             self.logger.info("Processing content hierarchy...")
-            with profiling.phase(JOB_NAME, "read", "content_hierarchy", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "content_hierarchy", spark=self.spark) as m:
                 hierarchy_df = self.read_cassandra_table(
                     self.config.cassandraHierarchyStoreKeyspace,
                     self.config.cassandraContentHierarchyTable
                 )
+                m["materialize"] = hierarchy_df
 
             with profiling.phase(JOB_NAME, "write", "content_hierarchy", spark=self.spark) as m:
                 self.write_parquet(hierarchy_df, f"{output_base_path}/hierarchy", metrics=m)
@@ -277,11 +284,12 @@ class DataExhaustModel:
 
             # Process rating summary
             self.logger.info("Processing rating summary...")
-            with profiling.phase(JOB_NAME, "read", "rating_summary", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "rating_summary", spark=self.spark) as m:
                 rating_summary_df = self.read_cassandra_table(
                     self.config.cassandraUserKeyspace,
                     self.config.cassandraRatingSummaryTable
                 )
+                m["materialize"] = rating_summary_df
 
             with profiling.phase(JOB_NAME, "write", "rating_summary", spark=self.spark) as m:
                 self.write_parquet(rating_summary_df, f"{output_base_path}/ratingSummary", metrics=m)
@@ -289,11 +297,12 @@ class DataExhaustModel:
 
             # Process ACBP data
             self.logger.info("Processing ACBP data...")
-            with profiling.phase(JOB_NAME, "read", "acbp", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "acbp", spark=self.spark) as m:
                 acbp_df = self.read_cassandra_table(
                     self.config.cassandraUserKeyspace,
                     self.config.cassandraAcbpTable
                 )
+                m["materialize"] = acbp_df
 
             with profiling.phase(JOB_NAME, "write", "acbp", spark=self.spark) as m:
                 self.write_parquet(acbp_df, f"{output_base_path}/acbp", metrics=m)
@@ -301,11 +310,12 @@ class DataExhaustModel:
 
             # Process ratings
             self.logger.info("Processing ratings...")
-            with profiling.phase(JOB_NAME, "read", "ratings", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "ratings", spark=self.spark) as m:
                 rating_df = self.read_cassandra_table(
                     self.config.cassandraUserKeyspace,
                     self.config.cassandraRatingsTable
                 )
+                m["materialize"] = rating_df
 
             with profiling.phase(JOB_NAME, "write", "ratings", spark=self.spark) as m:
                 self.write_parquet(rating_df, f"{output_base_path}/rating", metrics=m)
@@ -313,11 +323,12 @@ class DataExhaustModel:
 
             # Process user roles
             self.logger.info("Processing user roles...")
-            with profiling.phase(JOB_NAME, "read", "user_roles", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "user_roles", spark=self.spark) as m:
                 role_df = self.read_cassandra_table(
                     self.config.cassandraUserKeyspace,
                     self.config.cassandraUserRolesTable
                 )
+                m["materialize"] = role_df
 
             with profiling.phase(JOB_NAME, "write", "user_roles", spark=self.spark) as m:
                 self.write_parquet(role_df, f"{output_base_path}/role", metrics=m)
@@ -336,7 +347,7 @@ class DataExhaustModel:
             fields_clause = ",".join([f'"{f}"' for f in fields])
             query = f'{{"_source":[{fields_clause}],"query":{{"bool":{{"should":[{should_clause}]}}}}}}'
 
-            with profiling.phase(JOB_NAME, "read", "es_content_data", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "es_content_data", spark=self.spark) as m:
                 es_content_df = utils.read_elasticsearch_data(
                     self.spark,
                     self.config.sparkElasticsearchConnectionHost,
@@ -346,31 +357,34 @@ class DataExhaustModel:
                     fields,
                     array_fields
                 )
+                m["materialize"] = es_content_df
             with profiling.phase(JOB_NAME, "write", "es_content_data", spark=self.spark) as m:
                 self.write_parquet(es_content_df, f"{output_base_path}/esContent", metrics=m)
             es_content_df.unpersist()
 
             # Process organization data with hierarchy
             self.logger.info("Processing organization data...")
-            with profiling.phase(JOB_NAME, "read", "org_data", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "org_data", spark=self.spark) as m:
                 org_df = self.read_cassandra_table(
                     self.config.cassandraUserKeyspace,
                     self.config.cassandraOrgTable
                 )
+                m["materialize"] = org_df
 
             with profiling.phase(JOB_NAME, "write", "org_data", spark=self.spark) as m:
                 self.write_parquet(org_df, f"{output_base_path}/org", metrics=m)
 
             appPostgresUrl = f"jdbc:postgresql://{self.config.appPostgresHost}/{self.config.appPostgresSchema}"
-            with profiling.phase(JOB_NAME, "read", "org_postgres_hierarchy", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "org_postgres_hierarchy", spark=self.spark) as m:
                 org_postgres_df = self.read_postgres_table(
                     appPostgresUrl,
                     self.config.appOrgHierarchyTable,
                     self.config.appPostgresUsername,
                     self.config.appPostgresCredential
                 )
+                m["materialize"] = org_postgres_df
 
-            with profiling.phase(JOB_NAME, "process", "org_hierarchy_join", spark=self.spark):
+            with profiling.phase(JOB_NAME, "process", "org_hierarchy_join", spark=self.spark) as m:
                 # Transform organization data
                 org_cassandra_df = org_df.withColumn(
                     "createddate", to_timestamp(col("createddate"), "yyyy-MM-dd HH:mm:ss:SSSZ")
@@ -414,6 +428,7 @@ class DataExhaustModel:
                 ).withColumn(
                     "data_last_generated_on", current_timestamp()
                 ).distinct().dropDuplicates(["mdo_id"]).repartition(16)
+                m["materialize"] = org_hierarchy_df
 
             with profiling.phase(JOB_NAME, "write", "org_hierarchy", spark=self.spark) as m:
                 self.write_parquet(org_hierarchy_df, f"{output_base_path}/orgHierarchy", metrics=m)
@@ -425,24 +440,26 @@ class DataExhaustModel:
 
             # process claps data
             self.logger.info("Processing weeklyclaps data...")
-            with profiling.phase(JOB_NAME, "read", "weekly_claps", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "weekly_claps", spark=self.spark) as m:
                 weekly_claps_df = self.read_postgres_table(
                     appPostgresUrl,
                     self.config.dwLearnerStatsTable,
                     self.config.appPostgresUsername,
                     self.config.appPostgresCredential
                 )
+                m["materialize"] = weekly_claps_df
             with profiling.phase(JOB_NAME, "write", "weekly_claps", spark=self.spark) as m:
                 self.write_parquet(weekly_claps_df, f"{output_base_path}/weeklyClaps", metrics=m)
             # Process marketplace content
             self.logger.info("Processing marketplace content...")
-            with profiling.phase(JOB_NAME, "read", "marketplace_content", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "marketplace_content", spark=self.spark) as m:
                 marketplace_content_df = self.read_postgres_table(
                     appPostgresUrl,
                     "cios_content_entity",
                     self.config.appPostgresUsername,
                     self.config.appPostgresCredential
                 )
+                m["materialize"] = marketplace_content_df
 
             with profiling.phase(JOB_NAME, "write", "marketplace_content", spark=self.spark) as m:
                 self.write_parquet(marketplace_content_df, f"{output_base_path}/externalContent", metrics=m)
@@ -450,33 +467,36 @@ class DataExhaustModel:
 
             # Process marketplace enrolments
             self.logger.info("Processing marketplace enrolments...")
-            with profiling.phase(JOB_NAME, "read", "marketplace_enrolments", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "marketplace_enrolments", spark=self.spark) as m:
                 marketplace_enrolments_df = self.read_cassandra_table(
                     "sunbird_courses",
                     "user_external_enrolments"
                 )
+                m["materialize"] = marketplace_enrolments_df
 
             with profiling.phase(JOB_NAME, "write", "marketplace_enrolments", spark=self.spark) as m:
                 self.write_parquet(marketplace_enrolments_df, f"{output_base_path}/externalCourseEnrolments", metrics=m)
             marketplace_enrolments_df.unpersist()
 
             # audit table for unenrolled users
-            with profiling.phase(JOB_NAME, "read", "unenrolled_user_audit", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "unenrolled_user_audit", spark=self.spark) as m:
                 unenrolled_user_audit_df = self.read_cassandra_table(
                     "sunbird_courses",
                     "enrollment_history_by_action"
                 )
+                m["materialize"] = unenrolled_user_audit_df
 
             with profiling.phase(JOB_NAME, "write", "unenrolled_user_audit", spark=self.spark) as m:
                 self.write_parquet(unenrolled_user_audit_df, f"{output_base_path}/unenrolledUserAudit", metrics=m)
             unenrolled_user_audit_df.unpersist()
 
             self.logger.info("Processing old assessments...")
-            with profiling.phase(JOB_NAME, "read", "old_assessments", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "old_assessments", spark=self.spark) as m:
                 old_assessments_df = self.read_cassandra_safe_columns(
                     self.config.cassandraUserKeyspace,
                     self.config.cassandraOldAssesmentTable
                 )
+                m["materialize"] = old_assessments_df
 
             with profiling.phase(JOB_NAME, "write", "old_assessments", spark=self.spark) as m:
                 self.write_parquet(old_assessments_df, f"{output_base_path}/oldAssessmentDetails", metrics=m)
@@ -492,8 +512,9 @@ class DataExhaustModel:
 
             for table_name, keyspace, table in tables_to_process:
                 self.logger.info(f"Processing {table_name}...")
-                with profiling.phase(JOB_NAME, "read", table_name, spark=self.spark):
+                with profiling.phase(JOB_NAME, "read", table_name, spark=self.spark) as m:
                     df = self.read_cassandra_table(keyspace, table)
+                    m["materialize"] = df
                 with profiling.phase(JOB_NAME, "write", table_name, spark=self.spark) as m:
                     self.write_parquet(df, f"{output_base_path}/{table_name}", metrics=m)
                 df.unpersist()
@@ -521,7 +542,7 @@ class DataExhaustModel:
                     StructField("email", StringType(), True)  # nullable
                 ])
             )
-            with profiling.phase(JOB_NAME, "read", "event_data", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "event_data", spark=self.spark) as m:
                 event_data_df = utils.read_elasticsearch_data(
                     self.spark,
                     self.config.sparkElasticsearchConnectionHost,
@@ -530,6 +551,7 @@ class DataExhaustModel:
                     event_query,
                     fields_events,  # Pass all fields including optional ones
                     array_fields_events)
+                m["materialize"] = event_data_df
 
             # Only add columns if they're missing from the ES response
             for field in optional_fields:
@@ -589,6 +611,16 @@ class DataExhaustModel:
 
             # event_details_df.show(15, truncate=False)
 
+            # event_details_df's lineage covers everything since the event_data
+            # read above: the optional-field backfill loop, the explode_outer of
+            # createdFor/recordedLinks, the duration/speaker derived columns
+            # (including the speakerDetails JSON parse), the final select, and the
+            # dropDuplicates/fillna cleanup. Materializing it here (before the
+            # write phase) is what makes that real cost visible as "process" time
+            # instead of the write phase silently absorbing it.
+            with profiling.phase(JOB_NAME, "process", "event_details_df", spark=self.spark) as m:
+                m["materialize"] = event_details_df
+
             with profiling.phase(JOB_NAME, "write", "event_data", spark=self.spark) as m:
                 self.write_parquet(event_details_df, f"{output_base_path}/eventDetails", metrics=m)
 
@@ -603,7 +635,7 @@ class DataExhaustModel:
                 END
             """
 
-            with profiling.phase(JOB_NAME, "read", "event_enrolments", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "event_enrolments", spark=self.spark) as m:
                 events_enrolment_df = self.read_cassandra_table(
                     self.config.cassandraCourseKeyspace,
                     "user_entity_enrolments"
@@ -633,9 +665,11 @@ class DataExhaustModel:
                     col("certificate_id"),
                     col("completionpercentage").alias("completion_percentage")
                 )
+                m["materialize"] = events_enrolment_df
 
-            with profiling.phase(JOB_NAME, "process", "event_enrolments_join", spark=self.spark):
+            with profiling.phase(JOB_NAME, "process", "event_enrolments_join", spark=self.spark) as m:
                 events_enrolment_df = events_enrolment_df.join(event_details_df.select("event_id", "durationInSecs"), ["event_id"], "left")
+                m["materialize"] = events_enrolment_df
 
 
             # Add duration formatting for events
@@ -659,15 +693,26 @@ class DataExhaustModel:
             events_enrolment_with_duration_df = self.duration_format(events_enrolment_with_duration_df,
                                                                      "progress_duration")
 
+            # events_enrolment_with_duration_df's lineage covers everything since
+            # the event_enrolments_join phase above: the event_duration/
+            # progress_duration derived columns, the progress_details/
+            # durationInSecs column drop, and the two duration_format
+            # (format_string) passes. Materializing it here (before the write
+            # phase) is what makes that real cost visible as "process" time
+            # instead of the write phase silently absorbing it.
+            with profiling.phase(JOB_NAME, "process", "events_enrolment_with_duration_df", spark=self.spark) as m:
+                m["materialize"] = events_enrolment_with_duration_df
+
             with profiling.phase(JOB_NAME, "write", "event_enrolments", spark=self.spark) as m:
                 self.write_parquet(events_enrolment_with_duration_df.coalesce(1),
                                    f"{output_base_path}/eventEnrolmentDetails", metrics=m)
             event_details_df.unpersist()
             events_enrolment_df.unpersist()
 
-            with profiling.phase(JOB_NAME, "read", "user_extended_profile", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "user_extended_profile", spark=self.spark) as m:
                 userExtendedProfileDF = self.read_cassandra_table(self.config.cassandraUserKeyspace,
                                                                   self.config.cassandraUserExtendedProfileTable)
+                m["materialize"] = userExtendedProfileDF
             with profiling.phase(JOB_NAME, "write", "user_extended_profile", spark=self.spark) as m:
                 self.write_parquet(userExtendedProfileDF, f"{output_base_path}/userExtendedProfile", metrics=m)
             userExtendedProfileDF.unpersist()
@@ -687,7 +732,7 @@ class DataExhaustModel:
             fields_clause = ",".join([f'"{f}"' for f in fields])
             query = f'{{"_source":[{fields_clause}],"query":{{"bool":{{"must":[{must_clause},{context_categories_clause}]}}}}}}'
 
-            with profiling.phase(JOB_NAME, "read", "final_assessment_es_content", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "final_assessment_es_content", spark=self.spark) as m:
                 es_final_assessment_df = utils.read_elasticsearch_data(
                     self.spark,
                     self.config.sparkElasticsearchConnectionHost,
@@ -697,6 +742,7 @@ class DataExhaustModel:
                     fields,
                     array_fields
                 )
+                m["materialize"] = es_final_assessment_df
             with profiling.phase(JOB_NAME, "write", "final_assessment_es_content", spark=self.spark) as m:
                 self.write_parquet(es_final_assessment_df, f"{output_base_path}/esFinalAssessment", metrics=m)
             es_final_assessment_df.unpersist()
@@ -710,7 +756,7 @@ class DataExhaustModel:
             array_fields = ["createdFor", "language", "organisation"]
             query = f'{{"_source":[{fields_clause}],"query":{{"bool":{{"must":[{must_clause}]}}}}}}'
 
-            with profiling.phase(JOB_NAME, "read", "assessment_es_content", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "assessment_es_content", spark=self.spark) as m:
                 es_course_assessment_df = utils.read_elasticsearch_data(
                     self.spark,
                     self.config.sparkElasticsearchConnectionHost,
@@ -720,6 +766,7 @@ class DataExhaustModel:
                     fields,
                     array_fields
                 )
+                m["materialize"] = es_course_assessment_df
             with profiling.phase(JOB_NAME, "write", "assessment_es_content", spark=self.spark) as m:
                 self.write_parquet(es_course_assessment_df, f"{output_base_path}/esCourseAssessment", metrics=m)
             es_course_assessment_df.unpersist()
@@ -728,8 +775,9 @@ class DataExhaustModel:
 
             # Process access control settings for CAP
             self.logger.info("Processing access control settings for CAP...")
-            with profiling.phase(JOB_NAME, "read", "access_control_settings_cap", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "access_control_settings_cap", spark=self.spark) as m:
                 access_control_settings_df = self.read_cassandra_table("sunbird_courses", "access_setting_rules_v2")
+                m["materialize"] = access_control_settings_df
 
             with profiling.phase(JOB_NAME, "write", "access_control_settings_cap", spark=self.spark) as m:
                 self.write_parquet(access_control_settings_df, f"{output_base_path}/accessControlSettings", metrics=m)
@@ -742,7 +790,7 @@ class DataExhaustModel:
             fields_clause = ",".join([f'"{f}"' for f in fields])
             array_fields = ["responses.answer", "response.question"]
             query = f'{{"_source":[{fields_clause}],"query":{{"match_all":{{}}}}}}'
-            with profiling.phase(JOB_NAME, "read", "course_completion_survey", spark=self.spark):
+            with profiling.phase(JOB_NAME, "read", "course_completion_survey", spark=self.spark) as m:
                 course_completion_survey_df = utils.read_elasticsearch_data(
                     self.spark,
                     self.config.sparkIGotElasticsearchConnectionHost,
@@ -752,6 +800,7 @@ class DataExhaustModel:
                     fields,
                     array_fields
                 )
+                m["materialize"] = course_completion_survey_df
             with profiling.phase(JOB_NAME, "write", "course_completion_survey", spark=self.spark) as m:
                 self.write_parquet(course_completion_survey_df, f"{output_base_path}/courseCompletionSurvey", metrics=m)
             course_completion_survey_df.unpersist()

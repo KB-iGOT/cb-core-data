@@ -83,8 +83,9 @@ class UserUnenrolmentModel:
                 PRIMARY KEY (userid, action, actiondate)
             ) WITH CLUSTERING ORDER BY (action ASC, actiondate DESC)
             '''
-            with profiling.phase(JOB_NAME, "read", "unenrolmentAuditDF", spark=spark):
-                unenrolmentAuditDF = spark.read.parquet(ParquetFileConstants.UNENROLMENT_AUDIT_PARQUET_FILE) \
+            unenrolmentAuditDF_path = ParquetFileConstants.UNENROLMENT_AUDIT_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "unenrolmentAuditDF", spark=spark) as m:
+                unenrolmentAuditDF = spark.read.parquet(unenrolmentAuditDF_path) \
                 .filter(col('action') == 'UNENROLL') \
                 .select(
                     col("userid").alias("userID"),
@@ -97,13 +98,24 @@ class UserUnenrolmentModel:
                     col("updatedby").alias("unenrolmentUpdatedBy"),
                     col("action")
                 ).cache()
-            with profiling.phase(JOB_NAME, "read", "unenrolmentDF", spark=spark):
-                unenrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
-            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark):
-                userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
-            with profiling.phase(JOB_NAME, "read", "contentOrgDF", spark=spark):
-                contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(
+                m["materialize"] = unenrolmentAuditDF
+                m["input_mb"] = profiling.dir_size_mb(unenrolmentAuditDF_path)
+            unenrolmentDF_path = ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "unenrolmentDF", spark=spark) as m:
+                unenrolmentDF = spark.read.parquet(unenrolmentDF_path).filter(col('enrolment_status') == 'enrolled')
+                m["materialize"] = unenrolmentDF
+                m["input_mb"] = profiling.dir_size_mb(unenrolmentDF_path)
+            userOrgDF_path = ParquetFileConstants.USER_ORG_COMPUTED_FILE
+            with profiling.phase(JOB_NAME, "read", "userOrgDF", spark=spark) as m:
+                userOrgDF = spark.read.parquet(userOrgDF_path)
+                m["materialize"] = userOrgDF
+                m["input_mb"] = profiling.dir_size_mb(userOrgDF_path)
+            contentOrgDF_path = ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "contentOrgDF", spark=spark) as m:
+                contentOrgDF = spark.read.parquet(contentOrgDF_path).filter(
                     col("category").isin(primary_categories))
+                m["materialize"] = contentOrgDF
+                m["input_mb"] = profiling.dir_size_mb(contentOrgDF_path)
 
             print("🔄 Processing platform unenrolments...")
 
@@ -245,6 +257,17 @@ class UserUnenrolmentModel:
                                  .drop("userID", "courseID")
                                  )
 
+            # mdoPlatformReport's lineage covers everything since the contentOrgDF
+            # read above: preComputeUserOrgEnrolment's joins, the df transform chain,
+            # the inline ACBP_COMPUTED_FILE read + transforms, the enrolmentWithACBP
+            # joins with acbpAllEnrolmentDF and unenrolmentAuditDF, and this final
+            # select/dropDuplicates. None of that executes until forced - this
+            # phase's materialize is what makes that real cost visible as "process"
+            # time instead of silently landing inside the un-instrumented .count()
+            # calls below or the CSV write.
+            with profiling.phase(JOB_NAME, "process", "mdoPlatformReport", spark=spark) as m:
+                m["materialize"] = mdoPlatformReport
+
             platformWarehouseDF = (enrolmentWithACBP
                                    .withColumn("certificate_generated_on",
                                                date_format(
@@ -313,9 +336,21 @@ class UserUnenrolmentModel:
 
             print("📦 Writing warehouse data...")
             warehouseDF = platformWarehouseDF
-            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark):
+
+            # warehouseDF's lineage covers the platformWarehouseDF select/fillna/
+            # dropDuplicates over enrolmentWithACBP (built since the contentOrgDF
+            # read above, same shared upstream as mdoPlatformReport). Materializing
+            # it here (before the write phase, which would otherwise be the first
+            # real action to touch it) is what makes that real cost visible as
+            # "process" time instead of "write" time.
+            with profiling.phase(JOB_NAME, "process", "warehouseDF", spark=spark) as m:
+                m["materialize"] = warehouseDF
+
+            warehouseDF_output_path = f"{config.warehouseReportDir}/{config.dwUnenrollmentsTable}"
+            with profiling.phase(JOB_NAME, "write", "warehouseDF", spark=spark) as m:
                 warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
-                    f"{config.warehouseReportDir}/{config.dwUnenrollmentsTable}")
+                    warehouseDF_output_path)
+                m["output_mb"] = profiling.dir_size_mb(warehouseDF_output_path)
 
             print("✅ Processing completed successfully!")
 

@@ -54,11 +54,14 @@ class KCMModel:
 
             # Content - Competency Mapping data
             categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Standalone Assessment", "Curated Program"]
-            with profiling.phase(JOB_NAME, "read", "initial_df", spark=spark):
-                initial_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)\
+            initial_df_path = ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "initial_df", spark=spark) as m:
+                initial_df = spark.read.parquet(initial_df_path)\
                     .filter(F.col("category").isin(categories))\
                     .where("courseStatus IN ('Live', 'Retired')")\
                     .select("courseID", "competencyAreaRefId", "competencyThemeRefId", "competencySubThemeRefId", "courseName")
+                m["materialize"] = initial_df
+                m["input_mb"] = profiling.dir_size_mb(initial_df_path)
             
             schema = initial_df.schema
             competency_area_type = None
@@ -134,7 +137,19 @@ class KCMModel:
             competency_content_mapping_df = cbp_details \
                 .join(competency_joined_df, ["courseID"], "left") \
                 .dropDuplicates(["courseID", "competency_area_id", "competency_theme_id", "competency_sub_theme_id"])
-            
+
+            # competency_content_mapping_df's lineage covers everything since the
+            # initial_df read above: the array-vs-string competency ref-id parsing
+            # (cbp_details), the area/theme/sub-theme posexplode_outer + repartition
+            # calls, their join back together into competency_joined_df, and the
+            # join with cbp_details + dropDuplicates. None of that executes until
+            # forced - this phase's materialize is what makes that real cost
+            # visible as "process" time instead of silently landing inside the
+            # content_mapping_df write phase below (this DataFrame is also reused
+            # later for competency_reporting).
+            with profiling.phase(JOB_NAME, "process", "competency_content_mapping_df", spark=spark) as m:
+                m["materialize"] = competency_content_mapping_df
+
             content_mapping_df = competency_content_mapping_df \
                 .withColumn("data_last_generated_on", F.lit(self.current_date_time())) \
                 .select(
@@ -145,12 +160,17 @@ class KCMModel:
                     F.col("data_last_generated_on")
                 )
 
-            with profiling.phase(JOB_NAME, "write", "content_mapping_df", spark=spark):
-                content_mapping_df.distinct().coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}/")
+            content_mapping_df_output_path = f"{config.warehouseReportDir}/{config.dwKcmContentTable}/"
+            with profiling.phase(JOB_NAME, "write", "content_mapping_df", spark=spark) as m:
+                content_mapping_df.distinct().coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(content_mapping_df_output_path)
+                m["output_mb"] = profiling.dir_size_mb(content_mapping_df_output_path)
 
             # Load KCM v6 data
-            with profiling.phase(JOB_NAME, "read", "kcmv6", spark=spark):
-                kcmv6 = spark.read.parquet(ParquetFileConstants.KCMV6_PARQUET_FILE)
+            kcmv6_path = ParquetFileConstants.KCMV6_PARQUET_FILE
+            with profiling.phase(JOB_NAME, "read", "kcmv6", spark=spark) as m:
+                kcmv6 = spark.read.parquet(kcmv6_path)
+                m["materialize"] = kcmv6
+                m["input_mb"] = profiling.dir_size_mb(kcmv6_path)
 
             # Define the schema
             hierarchy_schema = """
@@ -264,8 +284,21 @@ class KCMModel:
                 F.lit(self.current_date_time()).alias("data_last_generated_on")
             ).distinct()
 
-            with profiling.phase(JOB_NAME, "write", "competency_details_df", spark=spark):
-                competency_details_df.distinct().write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
+            # competency_details_df's lineage covers everything since the kcmv6
+            # read above: the hierarchy_parsed from_json, the kcm_area/kcm_theme/
+            # kcm_subtheme_all posexplode/explode_outer chains (each re-parsing
+            # hierarchy_parsed independently), the area_theme_subtheme outer join,
+            # and the final join + select + distinct. Materializing it here (rather
+            # than letting the write below be the first real action to touch any of
+            # this) is what makes that real cost visible as "process" time instead
+            # of "write" time.
+            with profiling.phase(JOB_NAME, "process", "competency_details_df", spark=spark) as m:
+                m["materialize"] = competency_details_df
+
+            competency_details_df_output_path = f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}"
+            with profiling.phase(JOB_NAME, "write", "competency_details_df", spark=spark) as m:
+                competency_details_df.distinct().write.mode("overwrite").option("compression", "snappy").parquet(competency_details_df_output_path)
+                m["output_mb"] = profiling.dir_size_mb(competency_details_df_output_path)
 
             # Competency reporting
             competency_reporting = competency_content_mapping_df \
@@ -284,13 +317,23 @@ class KCMModel:
                 ) \
                 .orderBy("content_id") \
                 .distinct()
-            
+
+            # competency_reporting's lineage covers the join between the now-
+            # materialized competency_content_mapping_df and competency_details_df,
+            # plus the orderBy/distinct. Materializing it here (rather than letting
+            # the write below be the first real action to touch any of this) is
+            # what makes that real cost visible as "process" time instead of
+            # "write" time.
+            with profiling.phase(JOB_NAME, "process", "competency_reporting", spark=spark) as m:
+                m["materialize"] = competency_reporting
+
             temp_dir = f"{report_path_content_competency_mapping}/{file_name}_temp"
-            with profiling.phase(JOB_NAME, "write", "competency_reporting", spark=spark):
+            with profiling.phase(JOB_NAME, "write", "competency_reporting", spark=spark) as m:
                 competency_reporting.coalesce(1).write \
                     .mode("overwrite") \
                     .option("header", "true") \
                     .csv(temp_dir)
+                m["output_mb"] = profiling.dir_size_mb(temp_dir)
             
             # Move the part file to the desired filename
             import os

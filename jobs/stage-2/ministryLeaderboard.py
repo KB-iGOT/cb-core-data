@@ -276,8 +276,11 @@ class MinistryLeaderBoardModel:
 
             # Read back to Spark for Cassandra write
             print("\n[6/6] Writing to Cassandra...")
-            with profiling.phase(JOB_NAME, "read", "leaderboard_df", spark=spark):
-                leaderboard_df = spark.read.parquet(output_file)
+            leaderboard_df_path = output_file
+            with profiling.phase(JOB_NAME, "read", "leaderboard_df", spark=spark) as m:
+                leaderboard_df = spark.read.parquet(leaderboard_df_path)
+                m["materialize"] = leaderboard_df
+                m["input_mb"] = profiling.dir_size_mb(leaderboard_df_path)
             final_df = leaderboard_df.select(
                 col("org_id"),
                 col("row_num").cast("integer"),
@@ -295,6 +298,16 @@ class MinistryLeaderBoardModel:
 
             # Use coalesce instead of repartition to avoid shuffling
             final_df = final_df.coalesce(10)
+
+            # final_df's lineage covers everything since the leaderboard_df read
+            # above: the column select/cast, the org_id/row_num orderBy (a real
+            # shuffle sort), and the coalesce. None of that executes until forced -
+            # this phase's materialize is what makes that real cost visible as
+            # "process" time instead of silently landing inside the db_write phase
+            # below.
+            with profiling.phase(JOB_NAME, "process", "final_df", spark=spark) as m:
+                m["materialize"] = final_df
+
             with profiling.phase(JOB_NAME, "db_write", "final_df", spark=spark):
                 self.write_postgres_table(final_df, app_postgres_url,
                                           "slw_mdo_top_learners",
