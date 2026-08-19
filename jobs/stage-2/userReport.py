@@ -340,7 +340,7 @@ def processUserReport(config):
         }
 
         fixed_cols = [
-            "userID", "Full_Name", "Designation", "Email", "Phone_Number", "MDO_Name", "Group", "Tag",
+            "userID", "Full_Name", "Designation", "Email", "Phone_Number", "DOB", "MDO_Name", "Group", "Tag",
             "Ministry", "Department", "Organization", "User_Registration_Date", "Roles", "Gender",
             "Category", "External_System", "External_System_Id", "Employee_Id", "MDO_Created_On",
             "Profile_Status", "weekly_claps_day_before_yesterday", "Karma_Points", "Event_Enrolments",
