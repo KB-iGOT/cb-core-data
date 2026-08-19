@@ -267,6 +267,7 @@ def processUserReport(config):
                 col("professionalDetails.designation").alias("Designation"),
                 col("personalDetails.primaryEmail").alias("Email"),
                 col("personalDetails.mobile").alias("Phone_Number"),
+                col("personalDetails.dob").alias("DOB"),
                 col("userOrgName").alias("MDO_Name"),
                 col("professionalDetails.group").alias("Group"),
                 col("Tag"),

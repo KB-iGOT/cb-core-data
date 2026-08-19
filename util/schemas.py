@@ -27,6 +27,7 @@ personal_details_schema = StructType([
     StructField("pincode", StringType(), True),
     StructField("category", StringType(), True),
     StructField("mobile", StringType(), True),
+    StructField("dob", StringType(), True),
     StructField("primaryEmail", StringType(), True)
 ])
 

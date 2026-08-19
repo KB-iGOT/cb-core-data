@@ -56,6 +56,7 @@ def preComputeUser(spark: SparkSession) -> DataFrame:
         .withColumn("group", coalesce(col("professionalDetails.group"), lit(""))) \
         .withColumn("userPrimaryEmail", col("personalDetails.primaryEmail")) \
         .withColumn("userMobile", col("personalDetails.mobile")) \
+        .withColumn("userDob", col("personalDetails.dob")) \
         .withColumn("cadreDetails", col("profileDetails.cadreDetails")) \
         .withColumn("cadreName", col("cadreDetails.cadreName")) \
         .withColumn("civilServiceType", col("cadreDetails.civilServiceType")) \
