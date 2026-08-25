@@ -7,14 +7,10 @@ findspark.init()
 import time
 from pathlib import Path
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType, BooleanType, ArrayType, \
-    DateType
-from pyspark.sql.window import Window
-from pyspark.sql.functions import (col, row_number, struct, lit, to_json, count, current_timestamp,
-                                   current_date, date_format, broadcast, desc, unix_timestamp, when, sum, collect_list,
-                                   max, lit, concat_ws, from_unixtime, format_string, expr, coalesce, dense_rank,
-                                   add_months, last_day)
+from pyspark.sql.types import StructType, StructField, StringType, DateType
+from pyspark.sql.functions import (col, lit, current_date, lit, expr)
 from pyspark.sql.functions import udf
+from pyspark import StorageLevel
 from datetime import datetime, timedelta
 import sys
 import os
@@ -27,6 +23,7 @@ from jobs.default_config import create_config
 from jobs.config import get_environment_config
 
 
+
 class NPSUpgradedModel:
     def __init__(self):
         self.class_name = "org.ekstep.analytics.dashboard.leaderboard.LearnerLeaderBoardModel"
@@ -35,75 +32,64 @@ class NPSUpgradedModel:
         return "NPSUpgradedModel"
 
     def process_data(self, spark, config):
-        try:
-            users_submitted_rejected_df = self.npsUpgradedTriggerC1DataFrame(spark, config)  # has userid who submitted/rejected in last 15 days
-            users_enrolled_completed_df = self.npsUpgradedTriggerC2DataFrame(spark, config)  # has userid who enrolled/completed
-            users_rated_course_df = self.npsUpgradedTriggerC3DataFrame(spark, config)  # has userid who rated
+        users_submitted_rejected_df = self.npsUpgradedTriggerC1DataFrame(spark, config)  # has userid who submitted/rejected in last 15 days
+        users_enrolled_completed_df = self.npsUpgradedTriggerC2DataFrame(spark, config) # has userid who enrolled/completed
+        users_rated_course_df = self.npsUpgradedTriggerC3DataFrame(spark, config) # has userid who rated
 
-            print(f"DataFrame Count (submitted/rejected in last 15 days): {users_submitted_rejected_df.count()}")
-            print(f"DataFrame Count (enrolled or completed in last 15 days): {users_enrolled_completed_df.count()}")
-            print(f"DataFrame Count (rated at least one course in last 15 days): {users_rated_course_df.count()}")
 
-            # Eligible = (C2 ∪ C3) distinct userids
-            df = users_enrolled_completed_df.select("userid").unionByName(
-                users_rated_course_df.select("userid")
-            ).dropDuplicates(["userid"]).na.drop(subset=["userid"])
+        # Eligible = (C2 ∪ C3) distinct userids
+        df = users_enrolled_completed_df.select("userid").unionByName(
+            users_rated_course_df.select("userid")
+        ).dropDuplicates(["userid"]).na.drop(subset=["userid"])
 
-            # Remove users who already submitted/rejected (C1)
-            # Use set subtraction on the single key column to mirror Scala `except`
-            filtered_df = df.select("userid").subtract(
-                users_submitted_rejected_df.select("userid")
-            ).na.drop(subset=["userid"])
+        # Remove users who already submitted/rejected (C1)
+        # Use set subtraction on the single key column to mirror Scala `except`
+        filtered_df = df.join(users_submitted_rejected_df,
+                                "userid",
+                                "left_anti"
+                                ).na.drop(subset=["userid"])
 
-            total_count = df.count()
-            print(f"DataFrame Count (eligible users): {total_count}")
 
-            filtered_count = filtered_df.count()
-            print(f"DataFrame Count (eligible & not filled form): {filtered_count}")
+        # Check existing feed
+        cassandra_df = self.userUpgradedFeedFromCassandraDataFrame(spark, config).select("userid").dropDuplicates(["userid"])
 
-            # Check existing feed
-            cassandra_df = self.userUpgradedFeedFromCassandraDataFrame(spark, config).select("userid").dropDuplicates(["userid"])
-            existing_feed_count = cassandra_df.count()
-            print(f"DataFrame Count (users already having feed): {existing_feed_count}")
-
-            store_to_cassandra_df = filtered_df.select("userid").subtract(cassandra_df)
-            filtered_store_to_cassandra_df = (
-                store_to_cassandra_df
-                .filter(
-                    (col("userid").isNotNull()) &
-                    (col("userid") != "") &
-                    (col("userid") != "''")
-                )
-                .dropDuplicates(["userid"])
+        store_to_cassandra_df = (filtered_df.join(cassandra_df,
+                                                    "userid",
+                                                    "left_anti")
+                                                    )
+        
+        filtered_store_to_cassandra_df = (
+            store_to_cassandra_df
+            .filter(
+                (col("userid").isNotNull()) &
+                (col("userid") != "") &
+                (col("userid") != "''")
             )
+            .dropDuplicates(["userid"])
+        )
 
-            final_feed_count = filtered_store_to_cassandra_df.count()
-            print(f"DataFrame Count (final users to create feed): {final_feed_count}")
+        additional_df = (
+            filtered_store_to_cassandra_df
+            .withColumn("category", lit("NPS2"))
+            .withColumn("id", expr("uuid()").cast(StringType()))
+            .withColumn("createdby", lit("platform_rating"))
+            .withColumn("createdon", current_date())
+            .withColumn("action",
+                        lit(f"{{\"dataValue\":\"yes\",\"actionData\":{{\"formId\":{config.platformRatingSurveyId}}}}}"))
+            .withColumn("expireon", lit(None).cast(DateType()))
+            .withColumn("priority", lit(1))
+            .withColumn("status", lit("unread"))
+            .withColumn("updatedby", lit(None).cast(StringType()))
+            .withColumn("updatedon", lit(None).cast(DateType()))
+            .withColumn("version", lit("v1"))
+        ).persist(StorageLevel.MEMORY_AND_DISK)
 
-            additional_df = (
-                filtered_store_to_cassandra_df
-                .withColumn("category", lit("NPS2"))
-                .withColumn("id", expr("uuid()").cast(StringType()))
-                .withColumn("createdby", lit("platform_rating"))
-                .withColumn("createdon", current_date())
-                .withColumn("action",
-                            lit(f"{{\"dataValue\":\"yes\",\"actionData\":{{\"formId\":{config.platformRatingSurveyId}}}}}"))
-                .withColumn("expireon", lit(None).cast(DateType()))
-                .withColumn("priority", lit(1))
-                .withColumn("status", lit("unread"))
-                .withColumn("updatedby", lit(None).cast(StringType()))
-                .withColumn("updatedon", lit(None).cast(DateType()))
-                .withColumn("version", lit("v1"))
-            )
+        utils.writeToCassandra(additional_df, config.cassandraUserFeedKeyspace, config.cassandraUserFeedTable)
+        utils.writeToCassandra(additional_df, "sunbird_notifications", "notification_feed_history")
 
-            utils.writeToCassandra(additional_df, config.cassandraUserFeedKeyspace, config.cassandraUserFeedTable)
-            utils.writeToCassandra(additional_df, "sunbird_notifications", "notification_feed_history")
+        additional_df.unpersist()
+        print("[SUCCESS] NpsUpgradeModel completed")
 
-            print("[SUCCESS] NpsUpgradeModel completed")
-
-        except Exception as e:
-            print(f"Error occurred during LearnerLeaderBoardModel processing: {str(e)}")
-            raise
 
     def nps_userids_schema(self):
         return StructType([StructField("userid", StringType(), True)])
@@ -161,17 +147,14 @@ def create_spark_session_with_packages(config):
     os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.elasticsearch:elasticsearch-spark-30_2.12:8.11.0,org.postgresql:postgresql:42.6.0 pyspark-shell'
     spark = SparkSession.builder \
         .appName("NPS Upgraded Model - Cached") \
-        .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "18g") \
-        .config("spark.driver.memory", "18g") \
-        .config("spark.executor.memoryFraction", "0.7") \
-        .config("spark.storage.memoryFraction", "0.2") \
-        .config("spark.storage.unrollFraction", "0.1") \
-        .config("spark.sql.execution.arrow.pyspark.enabled", "false") \
+        .master("local[*]") \
+        .config("spark.sql.shuffle.partitions", "16") \
+        .config("spark.driver.memory", "40g") \
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+        .config("spark.sql.files.maxPartitionBytes", "134217728") \
         .config("spark.cassandra.connection.host", config.sparkCassandraConnectionHost) \
         .config("spark.cassandra.connection.port", '9042') \
         .config("spark.cassandra.output.batch.size.rows", '10000') \
@@ -185,21 +168,23 @@ def create_spark_session_with_packages(config):
 def main():
     # Create model instance
     start_time = datetime.now()
-    print(f"[START] NPS processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    config_dict = get_environment_config()
-    config = create_config(config_dict)
-    spark = create_spark_session_with_packages(config)
-    model = NPSUpgradedModel()
-    model.process_data(spark, config)
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"[END] NPS completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[INFO] Total duration: {duration}")
-    spark.stop()
+    try:
+        print(f"[START] NPS processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        config_dict = get_environment_config()
+        config = create_config(config_dict)
+        spark = create_spark_session_with_packages(config)
+        model = NPSUpgradedModel()
+        model.process_data(spark, config)
+        end_time = datetime.now()
+        duration = end_time - start_time
+        print(f"[END] NPS completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"[INFO] Total duration: {duration}")
+    except:
+        print(f"[ERROR] NPS job failed: {e}")
+        raise
+    finally:
+        spark.stop()
 
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
