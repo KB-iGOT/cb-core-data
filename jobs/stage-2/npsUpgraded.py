@@ -179,7 +179,7 @@ def main():
         duration = end_time - start_time
         print(f"[END] NPS completed at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"[INFO] Total duration: {duration}")
-    except:
+    except Exception as e:
         print(f"[ERROR] NPS job failed: {e}")
         raise
     finally:
