@@ -139,7 +139,7 @@ class DSRComputationModel:
                 .distinct() \
                 .cache()
 
-            userDF = userDF.filter(~is_volunteer_expr).drop("is_volunteer_by_designation")
+            #userDF = userDF.filter(~is_volunteer_expr).drop("is_volunteer_by_designation")
 
             eventsEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.EVENT_ENROLMENT_PARQUET_FILE)
             contentEnrolmentDataDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_WAREHOUSE_COMPUTED_PARQUET_FILE)
