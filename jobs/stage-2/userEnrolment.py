@@ -97,9 +97,50 @@ class UserEnrolmentModel:
             userOrgDF = spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE)
             contentOrgDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(
                 col("category").isin(primary_categories))
+            # ================================================================
+            # CHANGE 2: Standalone Assessment enrolments - built entirely
+            # separately from the platform/marketplace enrolment logic below
+            # (Standalone Assessments have no real enrol event - no batch, no
+            # ENROLMENT_PARQUET_FILE record - so this is synthesized from
+            # assessment submission data instead). Nothing else in this file
+            # is touched by this block.
+            # ================================================================
+            print("🔄 Processing Standalone Assessment enrolments...")
+            standaloneAssessRawDF = assessmentDFUtil.standalone_assessment_enrolments_dataframe(spark)
 
+            standaloneAssessWarehouseDF = standaloneAssessRawDF \
+                .withColumn("enrolled_on",
+                            date_format(from_unixtime(col("enrolled_on_epoch")), ParquetFileConstants.DATE_TIME_FORMAT)) \
+                .withColumn("content_last_accessed_on",
+                            date_format(from_unixtime(col("last_accessed_epoch")), ParquetFileConstants.DATE_TIME_FORMAT)) \
+                .withColumn("data_last_generated_on", currentDateTime) \
+                .select(
+                col("userID").alias("user_id"),
+                col("batchID").alias("batch_id"),
+                col("content_id"),
+                col("enrolled_on"),
+                col("content_progress_percentage").cast("decimal(17,2)"),
+                lit(0).alias("resource_count_consumed"),
+                col("user_consumption_status"),
+                col("enrolment_status"),
+                lit(None).cast(StringType()).alias("first_completed_on"),
+                lit(None).cast(StringType()).alias("first_certificate_generated_on"),
+                lit(None).cast(StringType()).alias("last_completed_on"),
+                lit(None).cast(StringType()).alias("last_certificate_generated_on"),
+                col("content_last_accessed_on"),
+                col("certificate_generated"),
+                lit(0).alias("number_of_certificate"),
+                lit("Not Available").alias("user_rating"),
+                lit("").alias("certificate_id"),
+                lit(False).alias("live_cbp_plan_mandate"),
+                lit(None).cast(StringType()).alias("badge_id"),
+                lit(0).cast(IntegerType()).alias("karma_points"),
+                col("data_last_generated_on")
+            )
+            # ================================================================
+            # END CHANGE 2
+            # ================================================================
             print("🔄 Processing platform enrolments...")
-
             # Compute and cache the main platform join result
             allCourseProgramCompletionWithDetailsDFWithRating = enrolmentDFUtil.preComputeUserOrgEnrolment(enrolmentDF,
                                                                                                            contentOrgDF,
@@ -451,14 +492,6 @@ class UserEnrolmentModel:
             platform_enrolments_df = mdoPlatformReport
             marketplace_enrolments_df = mdoMarketplaceReport
 
-            print("===== igot and marketplace enrolments summary =====")
-            print(f"----- igot enrolled count: {platform_enrolments_df.filter(col('enrolment_status') == 'enrolled').count()} ---")
-            print(f"----- igot unenrolled count: {platform_enrolments_df.filter(col('enrolment_status') == 'unenrolled').count()} ---")
-            print(f"----- igot count: {platform_enrolments_df.count()} ---")
-            print(f"----- marketplace count: {marketplace_enrolments_df.count()} ---")
-            print(f"----- combined count: {platform_enrolments_df.count() + marketplace_enrolments_df.count()} ---")
-            print("===== end of summary =====")
-
             # ---- Govt / Non-Govt classification ----
             # Exact (trimmed, case-insensitive) match on Designation, and an exact
             # match against any element of the Roles array. Using .contains(...)
@@ -534,7 +567,7 @@ class UserEnrolmentModel:
                 print("ℹ️  No Non-Govt (VOLUNTEER) users found in this run — skipping Non-Govt CSV write.")
 
             print("📦 Writing warehouse data...")
-            warehouseDF = platformWarehouseDF.unionByName(marketPlaceWarehouseDF)
+            warehouseDF = platformWarehouseDF.unionByName(marketPlaceWarehouseDF).unionByName(standaloneAssessWarehouseDF)
             warehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
                 f"{config.warehouseReportDir}/{config.dwEnrollmentsTable}")
 

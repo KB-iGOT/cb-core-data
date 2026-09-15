@@ -413,6 +413,7 @@ class CourseBasedAssessmentModel:
                             when(col("assessCourseCategory") == "Comprehensive Assessment Program",
                                  "Comprehensive Assessment Program")
                             .when(col("assessCourseCategory") == "Standalone Assessment", "Standalone Assessment")
+                            .when(col("assessCourseCategory") == "Pre Enrolment Assessment", "Pre Enrolment Assessment")
                             .otherwise(col("assessment_type"))) \
                 .withColumn(
                 "cut_off_percentage",
