@@ -333,6 +333,119 @@ def assessment_children_dataframe(assess_with_hierarchy_df: DataFrame) -> DataFr
         print(f"❌ Error in assessment_children_dataframe: {str(e)}")
         raise
 
+def standalone_assessment_enrolments_dataframe(spark: SparkSession) -> DataFrame:
+    """
+    Standalone Assessments have no real 'enrolment' event (no batch, no
+    ENROLMENT_PARQUET_FILE record) - users just attempt the assessment
+    directly. This synthesizes ONE enrolment-style row per (userID, parent
+    assessID), so a Standalone Assessment with multiple child leaf assessments
+    (e.g. 'Baseline Survey' + 'Final Assessment') still produces a single row
+    per user, matching user_enrolments' one-row-per-(user_id, content_id) shape.
+
+    Logic (per user, per parent assessID, across ALL of that assessment's
+    children combined):
+      - If the user has ANY SUBMITTED attempt on any child: pick the SINGLE
+        highest-scored submitted attempt across all children (same ranking
+        logic as CourseBasedAssessmentModel Stage 5: assessOverallResult, or
+        assessTotalSectionMarks for sectional assessments) - this is "the"
+        row, matching what assessment_detail would show as their best result.
+          -> user_consumption_status = 'completed'
+          -> enrolled_on = that row's assessEndTime (submission/attempt time)
+          -> certificate_generated = 'Yes'/'No' from that row's assessPass
+          -> content_progress_percentage = 100.0
+      - Else (only non-submitted attempts exist): pick their most recent
+        attempt.
+          -> user_consumption_status = 'in-progress'
+          -> enrolled_on = that row's assessStartTime
+          -> certificate_generated = 'No'
+          -> content_progress_percentage = 0.0
+
+    .img phantom parent IDs (see CourseBasedAssessmentModel fix) are excluded
+    up front so they can't collide with the real assessID here either.
+    """
+    from pyspark.sql.functions import col, when, lit, row_number
+    from pyspark.sql.window import Window
+
+    # --- Standalone Assessment content only, .img phantoms excluded ---
+    assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE) \
+        .filter(col("assessCategory") == "Standalone Assessment") \
+        .filter(~col("assessID").endswith(".img"))
+
+    hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
+    organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
+
+    assWithHierarchyData = add_hierarchy_column(
+        assessmentDF, hierarchyDF, id_col="assessID", as_col="data",
+        spark=spark, children=True, competencies=True, l2_children=True
+    )
+    assessWithHierarchyDF = transform_assessment_data(assWithHierarchyData, organizationDF)
+    assessChildrenDF = assessment_children_dataframe(assessWithHierarchyDF)  # assessID (parent), assessChildID
+
+    # --- Raw attempts, ALL statuses (need non-submitted ones for 'in-progress') ---
+    rawUserAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE) \
+        .withColumn("assessStartTime", col("assessStartTimestamp").cast("long")) \
+        .withColumn("assessEndTime", col("assessEndTimestamp").cast("long"))
+
+    # Attach parent assessID to every attempt (inner join naturally drops
+    # attempts against non-Standalone-Assessment content).
+    userWithParentDF = rawUserAssessmentDF.join(
+        assessChildrenDF.select("assessID", "assessChildID"), on="assessChildID", how="inner"
+    )
+
+    # --- COMPLETED branch: single highest-scored SUBMITTED attempt per
+    #     (assessID, userID), ranked ACROSS all children of that parent ---
+    submittedDF = userWithParentDF.filter(col("assessUserStatus") == "SUBMITTED")
+
+    windowBasicAll = Window.partitionBy("assessID", "userID").orderBy(col("assessOverallResult").desc())
+    windowSectionalAll = Window.partitionBy("assessID", "userID").orderBy(col("assessTotalSectionMarks").desc())
+
+    completedDF = submittedDF \
+        .withColumn("rn",
+                    when(col("assessTotalSectionMarks").isNull(), row_number().over(windowBasicAll))
+                    .otherwise(row_number().over(windowSectionalAll))) \
+        .filter(col("rn") == 1) \
+        .drop("rn") \
+        .select(
+        col("assessID").alias("content_id"),
+        col("userID"),
+        col("assessEndTime").alias("enrolled_on_epoch"),      # submit time of the highest-scored attempt
+        col("assessEndTime").alias("last_accessed_epoch"),
+        lit("completed").alias("user_consumption_status"),
+        when(col("assessPass") == 1, "Yes").otherwise("No").alias("certificate_generated"),
+        lit(100.0).alias("content_progress_percentage")
+    )
+
+    # --- IN-PROGRESS branch: users with only non-submitted attempts, most
+    #     recent one picked (no score exists yet to rank by) ---
+    inProgressRaw = userWithParentDF.filter(col("assessUserStatus") != "SUBMITTED")
+    windowRecent = Window.partitionBy("assessID", "userID").orderBy(col("assessStartTime").desc())
+
+    inProgressPicked = inProgressRaw \
+        .withColumn("rn", row_number().over(windowRecent)) \
+        .filter(col("rn") == 1) \
+        .drop("rn") \
+        .select(
+        col("assessID").alias("content_id"),
+        col("userID"),
+        col("assessStartTime").alias("enrolled_on_epoch"),
+        col("assessStartTime").alias("last_accessed_epoch"),
+        lit("in-progress").alias("user_consumption_status"),
+        lit("No").alias("certificate_generated"),
+        lit(0.0).alias("content_progress_percentage")
+    )
+
+    # A user who already has a completed row for this assessID should not
+    # ALSO show as in-progress for the same assessID.
+    inProgressFinal = inProgressPicked.join(
+        completedDF.select("content_id", "userID"),
+        on=["content_id", "userID"], how="left_anti"
+    )
+
+    result = completedDF.unionByName(inProgressFinal) \
+        .withColumn("batchID", lit("Not Available")) \
+        .withColumn("enrolment_status", lit("enrolled"))
+
+    return result
 
 def user_assessment_children_dataframe(user_assessment_df: DataFrame, assess_children_df: DataFrame) -> DataFrame:
     """
@@ -370,7 +483,6 @@ def user_assessment_children_dataframe(user_assessment_df: DataFrame, assess_chi
     except Exception as e:
         print(f"❌ Error in user_assessment_children_dataframe: {str(e)}")
         raise
-
 
 def user_assessment_children_details_dataframe(
         user_assess_children_df: DataFrame,
