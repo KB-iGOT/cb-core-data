@@ -41,18 +41,61 @@ class WeeklyClapsModel:
             StructField("platformEngagementTime", FloatType(), nullable=True),
             StructField("sessionCount", IntegerType(), nullable=True)
         ])
-    def users_platform_engagement_dataframe(self, week_start: str, week_end: str, spark: SparkSession, config):
-        query = f"""SELECT uid AS userid, SUM(total_time_spent) / 60.0 AS platformEngagementTime, 
-                   COUNT(*) AS sessionCount FROM "summary-events" WHERE dimensions_type = 'app' 
-                   AND __time >= TIMESTAMP '{week_start}' AND __time <= TIMESTAMP '{week_end}' 
-                   AND uid IS NOT NULL AND REGEXP_LIKE(uid, '^[0-9a-fA-F]{{8}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{12}}')  GROUP BY 1"""
-        print(query)
-        df = utils.druidDFOption(query, config.sparkDruidRouterHost, limit=1000000, spark=spark)
-        if df is None:
-            print("Druid returned empty data, returning empty DataFrame with expected schema.")
-            return spark.createDataFrame([], self.get_users_platform_engagement_schema())
+    def _fetch_batched_offset(self, base_query: str, host: str, spark, batch_size: int = 200000):
+        all_dfs = []
+        offset = 0
+        batch_num = 0
+        schema = StructType([
+            StructField("userid", StringType(), nullable=True),
+            StructField("platformEngagementTime", FloatType(), nullable=True),
+            StructField("sessionCount", IntegerType(), nullable=True)
+        ])
 
-        return df
+        while True:
+            paginated_query = f"{base_query.rstrip()} LIMIT {batch_size} OFFSET {offset}"
+            print(f"[Batch {batch_num}] Fetching rows {offset:,}-{offset + batch_size:,}")
+
+            try:
+                df = utils.druidDFOption(paginated_query, host, spark=spark, limit=batch_size)
+
+                if df is None or df.count() == 0:
+                    print(f"[Batch {batch_num}] ✓ No more data")
+                    break
+
+                batch_count = df.count()
+                all_dfs.append(df)
+                print(f"[Batch {batch_num}] ✓ Got {batch_count:,} rows")
+
+                if batch_count < batch_size:
+                    break
+
+                offset += batch_size
+                batch_num += 1
+
+            except Exception as e:
+                print(f"[Batch {batch_num}] ❌ Error: {e}")
+                raise
+
+        if not all_dfs:
+            return spark.createDataFrame([], schema)
+
+        result = all_dfs[0]
+        for df in all_dfs[1:]:
+            result = result.unionByName(df)
+
+        print(f"✅ Total: {result.count():,} rows\n")
+        return result
+
+    def users_platform_engagement_dataframe(self, week_start: str, week_end: str, spark, config):
+        base_query = f"""SELECT uid AS userid, SUM(total_time_spent) / 60.0 AS platformEngagementTime, 
+                    COUNT(*) AS sessionCount FROM "summary-events" WHERE dimensions_type = 'app' 
+                    AND __time >= TIMESTAMP '{week_start}' AND __time <= TIMESTAMP '{week_end}' 
+                    AND uid IS NOT NULL AND REGEXP_LIKE(uid, '^[0-9a-fA-F]{{8}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{4}}-[0-9a-fA-F]{{12}}')  
+                    GROUP BY 1"""
+
+        # Just swap in the batched fetch - everything else stays the same!
+        return self._fetch_batched_offset(base_query, config.sparkDruidRouterHost, spark, batch_size=200000)
+
     def get_this_week_dates(self, date_format: str = "%Y-%m-%d", datetime_format: str = "%Y-%m-%d %H:%M:%S"):
         now = datetime.now(IST)
         data_till_date = now - timedelta(days=1)
