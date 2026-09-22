@@ -50,7 +50,7 @@ class KCMModel:
             file_name = config.kcmReport
 
             # Content - Competency Mapping data
-            categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Standalone Assessment", "Curated Program"]
+            categories = ["Course", "Program", "Blended Program", "CuratedCollections", "Standalone Assessment", "Curated Program", "Moderated Course"]
             initial_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)\
                 .filter(F.col("category").isin(categories))\
                 .where("courseStatus IN ('Live', 'Retired')")\
