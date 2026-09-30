@@ -3,7 +3,7 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark import StorageLevel
 from pyspark.sql.types import StringType
 from pyspark.sql.functions import (
-    col,when, lit, transform, struct, concat_ws, size)
+    col, when, lit, transform, struct, concat_ws, size, to_json)
 import requests
 from requests.auth import HTTPBasicAuth
 import json
@@ -149,25 +149,25 @@ def zip_and_sync_reports(complete_path: str, report_path: str,config):
     """
     Zip report folder and sync to blob storage.
     Instance method version that can access self.sync_reports
-    
+
     Args:
         complete_path: Complete local path to the report folder
         report_path: Remote path for blob storage sync
     """
     try:
         print(f"Starting zip and sync for: {complete_path}")
-        
+
         folder = Path(complete_path)
         zip_file_path = f"{complete_path}.zip"
-        
+
         # Step 1: Delete existing .zip file if it exists
         report_name = folder.name
         existing_zip_file = folder / f"{report_name}.zip"
-        
+
         if existing_zip_file.exists():
             print(f"Deleting existing zip file: {existing_zip_file}")
             existing_zip_file.unlink()
-        
+
         # Step 2: Delete .crc files (Hadoop checksum files)
         if folder.exists() and folder.is_dir():
             crc_files = list(folder.glob("*.crc"))
@@ -175,19 +175,19 @@ def zip_and_sync_reports(complete_path: str, report_path: str,config):
                 print(f"Deleting {len(crc_files)} .crc files")
                 for crc_file in crc_files:
                     crc_file.unlink()
-        
+
         # Step 3: Zip the folder
         print(f"Creating zip file: {zip_file_path}")
-        
+
         with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zipf:
             for root, dirs, files in os.walk(complete_path):
                 for file in files:
                     file_path = os.path.join(root, file)
                     arcname = os.path.relpath(file_path, os.path.dirname(complete_path))
                     zipf.write(file_path, arcname)
-        
+
         print(f"Zip file created successfully: {zip_file_path}")
-        
+
         # Step 4: Clean directory contents
         if folder.exists() and folder.is_dir():
             print(f"Cleaning directory: {complete_path}")
@@ -196,20 +196,20 @@ def zip_and_sync_reports(complete_path: str, report_path: str,config):
                     item.unlink()
                 elif item.is_dir():
                     shutil.rmtree(item)
-        
+
         # Step 5: Move zip file inside the parent directory
         zip_file_name = Path(zip_file_path).name
         destination_zip_file_path = folder / zip_file_name
-        
+
         print(f"Moving zip file to: {destination_zip_file_path}")
         shutil.move(zip_file_path, str(destination_zip_file_path))
-        
+
         # Step 6: Sync to blob storage
         print(f"Syncing to blob storage: {report_path}")
         sync_reports(complete_path, report_path,config)
-        
+
         print(f"Successfully zipped and synced: {complete_path}")
-        
+
     except Exception as e:
         print(f"Error in zip_and_sync_reports: {str(e)}")
         import traceback
@@ -401,6 +401,53 @@ def dispatch_df_to_kafka(df, topic: str, broker_list: str):
             producer.close()
 
     df.foreachPartition(send_partition)
+
+def dispatch_df_to_kafka_updated(df, topic: str, broker_list: str, num_partitions: int = 4):
+    if not topic:
+        print("ERROR: topic is blank, skipping kafka dispatch")
+        return
+    if not broker_list:
+        print("ERROR: broker list is blank, skipping kafka dispatch")
+        return
+
+    payload_df = df.select(
+        to_json(struct(*df.columns), {"ignoreNullFields": "false"}).alias("kafka_value")
+    )
+
+    current_partitions = payload_df.rdd.getNumPartitions()
+    if current_partitions > num_partitions:
+        print(f"🔧 Coalescing Kafka dispatch from {current_partitions} to {num_partitions} partitions")
+        payload_df = payload_df.coalesce(num_partitions)
+
+    def send_partition(rows_iter):
+        from confluent_kafka import Producer  # import INSIDE the closure — required, see note below
+
+        conf = {
+            'bootstrap.servers': broker_list,
+            'compression.type': 'lz4',
+            'linger.ms': 100,
+            'batch.size': 1048576,
+            'queue.buffering.max.messages': 500000,
+            'queue.buffering.max.kbytes': 524288,
+            'acks': 1,
+        }
+        producer = Producer(conf)
+        sent = 0
+
+        def delivery_report(err, msg):
+            if err is not None:
+                print(f"❌ Delivery failed: {err}")
+
+        for row in rows_iter:
+            producer.produce(topic, value=row.kafka_value.encode("utf-8"), callback=delivery_report)
+            sent += 1
+            if sent % 50000 == 0:
+                producer.poll(0)  # serve delivery callbacks periodically, non-blocking
+
+        producer.flush()
+        print(f"✅ Partition dispatched {sent} messages")
+
+    payload_df.foreachPartition(send_partition)
 
 def read_elasticsearch_data_scroll(spark: SparkSession, host: str, port: str, index: str, fields: list = None, scroll_size: int = 1000, scroll_timeout: str = "2m", query: dict = None, es_user: str = None, es_pass: str = None) -> DataFrame:
     """
