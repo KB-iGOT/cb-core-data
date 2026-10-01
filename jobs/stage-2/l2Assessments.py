@@ -290,7 +290,9 @@ class L2AssessmentReport:
                 col("user_groups"),
                 col("user_designation"),
                 col("due_by").alias("cbplan_due_by"),
-                col("apar_allocated_on").alias("cbplan_start_date")
+                col("apar_allocated_on").alias("cbplan_start_date"),
+                col("plan_year"),
+                col("isMandatory")
             )
 
             # Step 6: Join with KCM mapping
@@ -332,7 +334,9 @@ class L2AssessmentReport:
                 col("user_designation"),
                 col("cbplan_due_by"),
                 col("cbplan_start_date"),
-                col("competency_areas").alias("kcm_competency_type")
+                col("competency_areas").alias("kcm_competency_type"),
+                col("plan_year"),
+                col("isMandatory")
             )
 
             # Filter for valid APAR consumption
@@ -518,7 +522,9 @@ class L2AssessmentReport:
                 col("cbplan_due_by").cast("timestamp").alias("cbp_plan_end_date"),
                 lit(None).cast("string").alias("parichay_id"),
                 col("enrol_user_consumption_status").alias("consumption_status"),
-                lit(None).alias("assessment_date")
+                lit(None).alias("assessment_date"),
+                col("plan_year"),
+                col("isMandatory")
             )
 
             # Map CAP columns to final schema
@@ -577,7 +583,9 @@ class L2AssessmentReport:
                 lit(None).alias("cbp_plan_end_date"),
                 lit(None).alias("parichay_id"),
                 col("cap_enrol_user_consumption_status").alias("consumption_status"),
-                col("assess_assessment_date").cast("timestamp").alias("assessment_date")
+                col("assess_assessment_date").cast("timestamp").alias("assessment_date"),
+                lit(None).cast("string").alias("plan_year"),
+                lit(False).cast("boolean").alias("isMandatory")
             )
 
             # Union both dataframes

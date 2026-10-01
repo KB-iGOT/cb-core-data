@@ -21,6 +21,7 @@ DATABASE_CONFIG = {
     'cassandraContentHierarchyTable': '{{ dashboards_cassandra_content_hierarchy_table }}',
     'cassandraRatingSummaryTable': '{{ dashboards_cassandra_rating_summary_table }}',
     'cassandraAcbpTable': '{{ dashboards_cassandra_acbp_table }}',
+    'cassandraUserGroupInfoTable': '{{ dashboards_cassandra_user_group_info_table }}',
     'cassandraRatingsTable': '{{ dashboards_cassandra_ratings_table }}',
     'cassandraUserRolesTable': '{{ dashboards_cassandra_user_roles_table }}',
     'cassandraOrgTable': '{{ dashboards_cassandra_org_table }}',

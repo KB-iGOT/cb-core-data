@@ -30,7 +30,8 @@ IS_ON_CENTRAL_DEPUTATION_EXPR = """
 STANDARD_CRITERIA_TYPES = (
     "'rootorgid','alluser','user','customuser',"
     "'designation','cadre','group','batch',"
-    "'service','isoncentraldeputation'"
+    "'service','isoncentraldeputation',"
+    "'ministryorstateid'"
 )
 
 
@@ -43,6 +44,23 @@ def preComputeACBPData(spark):
     spark.conf.set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS")
 
     acbp_df = spark.read.parquet(ParquetFileConstants.ACBP_PARQUET_FILE)
+    user_group_info = spark.read.parquet(ParquetFileConstants.USER_GROUP_INFO_PARQUET_FILE)
+
+    usergroup_df = (user_group_info
+             .filter(F.lower(F.trim(col("status"))) == "active")
+             .withColumn("ug_criteria", expr("""
+             flatten(
+               transform(
+                 filter(criteria, m -> m IS NOT NULL),
+                 m -> transform(map_keys(m), k ->
+                        named_struct('criteriaKey', k, 'criteriaValue', m[k]))
+               )
+             )
+         """))
+             .select(F.trim(col("usergroupid")).alias("ug_id"),
+                     col("orgid").alias("ug_orgid"),
+                     col("ug_criteria"))
+             .dropDuplicates(["ug_id"]))
 
     acbp_df = acbp_df.withColumn("contextdata",
                                  F.regexp_replace(col("contextdata"),
@@ -54,23 +72,22 @@ def preComputeACBPData(spark):
     acbp_select_df = (acbp_df
                       .withColumn("context_data", from_json(col("contextdata"), schemas.accessControlSchema))
                       .withColumn("userGroup", explode(col("context_data.accessControl.userGroups")))
-                      .withColumn("criteria_keys", expr("transform(userGroup.userGroupCriteriaList, x -> lower(x.criteriaKey))"))
-                      # raw_criteria_values: array of first-element strings, used only for userOrgID extraction
-                      # (same as original concat_ws approach for the rootorgid lookup — rootorgid always has 1 value)
+                      .join(F.broadcast(usergroup_df), F.trim(col("userGroup.userGroupId")) == col("ug_id"), "left")
+                      .withColumn("criteriaList",
+                                  F.when(F.size(col("userGroup.userGroupCriteriaList")) > 0,
+                                         col("userGroup.userGroupCriteriaList"))
+                                  .otherwise(col("ug_criteria")))
+                      .withColumn("criteria_keys", expr("transform(criteriaList, x -> lower(x.criteriaKey))"))
+                      .withColumn("json_criteria_values", expr("transform(criteriaList, x -> to_json(x.criteriaValue))"))
+                      .withColumn("assignmentType", array_join(col("criteria_keys"), "|"))
+                      .withColumn("assignmentTypeInfo", array_join(col("json_criteria_values"), "|"))
+                      .withColumn("userOrgID", F.coalesce(
+        expr("element_at(filter(criteriaList, x -> lower(x.criteriaKey) = 'rootorgid')[0].criteriaValue, 1)"),
+        col("ug_orgid")))
                       .withColumn("raw_criteria_values", expr("transform(userGroup.userGroupCriteriaList, x -> concat_ws(', ', x.criteriaValue))"))
                       # json_criteria_values: array of JSON-serialized arrays, used for assignmentTypeInfo
                       # preserves multi-value entries like ["deputy director (research, statistics and analysis)","deputy director"]
                       # so DuckDB can unnest them without comma-splitting ambiguity
-                      .withColumn("json_criteria_values", expr("transform(userGroup.userGroupCriteriaList, x -> to_json(x.criteriaValue))"))
-                      .withColumn("assignmentType", array_join(col("criteria_keys"), "|"))
-                      .withColumn("assignmentTypeInfo", array_join(col("json_criteria_values"), "|"))
-                      .withColumn("userOrgID", expr("""
-                            CASE
-                              WHEN array_contains(criteria_keys, 'rootorgid') THEN
-                                filter(raw_criteria_values, (value, idx) -> criteria_keys[idx] = 'rootorgid')[0]
-                              ELSE NULL
-                            END
-                        """))
                       .select(
         col("planid").alias("acbpID"),
         col("userOrgID").alias("orgID"),
@@ -181,7 +198,8 @@ def _chunked_user_join(con, pairs_table, pairs_count, users_view,
                         '|'
                     ) AS assignmentTypeInfo,
                     p.completionDueDate, p.allocatedOn, p.acbpCourseIDList,
-                    p.acbpStatus, p.acbpCreatedBy, p.cbPlanName
+                    p.acbpStatus, p.acbpCreatedBy, p.cbPlanName,
+                    p.planyear, p.plantype
                 FROM {pairs_table}_rn qp
                 INNER JOIN {users_view} u ON qp.userID = u.userID
                 INNER JOIN {plan_info_table} p ON qp.acbpID = p.acbpID
@@ -284,6 +302,7 @@ def explodeAcbpData(spark, acbp_df: DataFrame, user_extended_profile_df: DataFra
         "acbpID", "orgID", "acbpStatus", "acbpCreatedBy", "isapar", "cbPlanName",
         "completionDueDate", "allocatedOn", "acbpCourseIDList",
         "assignmentType", "assignmentTypeInfo",
+        "planyear", "plantype",
         "criteria_type", "criteria_value", "criteria_value_lower"
     )
 
@@ -356,7 +375,8 @@ def explodeAcbpData(spark, acbp_df: DataFrame, user_extended_profile_df: DataFra
         SELECT DISTINCT
             acbpID, orgID, isapar, assignmentType, assignmentTypeInfo,
             completionDueDate, allocatedOn, acbpCourseIDList,
-            acbpStatus, acbpCreatedBy, cbPlanName
+            acbpStatus, acbpCreatedBy, cbPlanName,
+            planyear, plantype
         FROM acbp_criteria
     """)
 
@@ -391,7 +411,7 @@ def explodeAcbpData(spark, acbp_df: DataFrame, user_extended_profile_df: DataFra
         COPY (
             SELECT
                 userID, fullName, userPrimaryEmail, userMobile,
-                designation, "group", userOrgID,
+                designation, "group", userOrgID, ministryOrStateId,
                 ministry_name, dept_name, userOrgName,
                 cadreName, civilServiceType, civilServiceName,
                 cadreBatch, organised_service, userStatus,employmentDetails.employeeCode,
@@ -441,6 +461,17 @@ def explodeAcbpData(spark, acbp_df: DataFrame, user_extended_profile_df: DataFra
                                         ON ce.criteria_type = 'rootorgid'
                                             AND u.userOrgID = ce.criteria_value
                     """)
+
+        # ministryorgstateid
+        con.execute("""
+                    INSERT INTO user_criteria_matches
+                    SELECT DISTINCT u.userID, ce.acbpID, ce.criteria_group_id, 'ministryorstateid'
+                    FROM users_chunk u
+                             INNER JOIN criteria_exploded ce
+                                        ON ce.criteria_type = 'ministryorstateid'
+                                            AND u.ministryOrStateId = ce.criteria_value
+                    """)
+        # what will be the value of ministryOrStateId this column in userComputed file for a ministry user.
 
         # alluser
         con.execute("""
@@ -602,7 +633,7 @@ def explodeAcbpData(spark, acbp_df: DataFrame, user_extended_profile_df: DataFra
         CREATE OR REPLACE VIEW users AS
         SELECT
             userID, fullName, userPrimaryEmail, userMobile,
-            designation, "group", userOrgID,
+            designation, "group", userOrgID, ministryOrStateId,
             ministry_name, dept_name, userOrgName,
             cadreName, civilServiceType, civilServiceName,
             cadreBatch, organised_service, userStatus,employmentDetails.employeeCode,
@@ -682,7 +713,8 @@ def explodeAcbpData(spark, acbp_df: DataFrame, user_extended_profile_df: DataFra
             CREATE OR REPLACE TABLE global_plan_info AS
             SELECT DISTINCT acbpID, isapar, assignmentType, assignmentTypeInfo,
                             completionDueDate, allocatedOn, acbpCourseIDList,
-                            acbpStatus, acbpCreatedBy, cbPlanName
+                            acbpStatus, acbpCreatedBy, cbPlanName,
+                            planyear, plantype
             FROM global_acbp_criteria
         """)
 
@@ -790,6 +822,19 @@ def explodeAcbpData(spark, acbp_df: DataFrame, user_extended_profile_df: DataFra
                 ON ro.acbpID            = ce.acbpID
                 AND ro.criteria_group_id = ce.criteria_group_id
             WHERE ro.org_value IS NULL OR u.userOrgID = ro.org_value
+            
+            UNION ALL
+            SELECT DISTINCT u.userID, ce.acbpID, ce.criteria_group_id, 'ministryorstateid'
+            FROM users u
+            INNER JOIN global_criteria_exploded ce 
+                ON ce.criteria_type = 'ministryorstateid'
+                AND LOWER(u.ministryorstateid) = ce.criteria_value
+            LEFT JOIN global_rootorgid_lookup ro
+                ON ro.acbpID            = ce.acbpID
+                AND ro.criteria_group_id = ce.criteria_group_id
+            WHERE ro.org_value IS NULL OR u.userOrgID = ro.org_value
+            
+            --check for ministry users. 
 
             {global_custom_fields_union}
         """)
