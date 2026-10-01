@@ -1,19 +1,12 @@
 import findspark
 
 findspark.init()
-import sys
 import time
 from pathlib import Path
-import pandas as pd
 from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.functions import bround, col, broadcast, concat_ws, split, coalesce, lit, when, from_unixtime, regexp_replace
-from pyspark.sql.functions import col, lit, coalesce, concat_ws, create_map, when, broadcast, get_json_object, rtrim
-from pyspark.sql.functions import col, trim, array_join, from_json, explode_outer, coalesce, lit, format_string, count, countDistinct
-from pyspark.sql.types import StructType, ArrayType, StringType, BooleanType, StructField
-from pyspark.sql.types import MapType, StringType, StructType, StructField, FloatType, LongType, DateType, IntegerType
-from pyspark.sql.functions import col, when, size, lit, expr, unix_timestamp, date_format, from_json, current_timestamp, \
-    to_date, round, explode, to_utc_timestamp, from_utc_timestamp, to_timestamp, sum as spark_sum
-from pyspark.sql.functions import col, desc, row_number, udf
+from pyspark.sql.types import StringType, StructType, StructField, LongType, ArrayType, BooleanType
+from pyspark.sql.functions import col, desc, row_number, udf, create_map, trim, array_join, countDistinct, split, \
+    regexp_replace, when,lit, date_format, from_json, current_timestamp, explode, sum as spark_sum
 from pyspark.sql.window import Window
 from itertools import chain
 from datetime import datetime
@@ -75,8 +68,16 @@ class ACBPModel:
 
             acbpAllEnrolDF = spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
 
+            course_schema = StructType([
+                StructField("identifier", StringType(), True),
+                StructField("mandatory", BooleanType(), True),
+            ])
+
             acbpAllEnrolmentDF = (acbpAllEnrolDF \
-                                  .withColumn("courseID", explode(col("acbpCourseIDList"))) \
+                                  .withColumn("courseIDList", explode(col("acbpCourseIDList"))) \
+                                  .withColumn("courseIDList", from_json(col("courseIDList"), course_schema)) \
+                                  .withColumn("courseID", col("courseIDList.identifier")) \
+                                  .withColumn("isACBPMandatory", col("courseIDList.mandatory")) \
                                   .withColumn("courseID", regexp_replace(col("courseID"), r"^\s*\[|\]\s*$|\s+", "")) \
                                   .join(allCourseProgramDetailsDF, ["courseID"], "left") \
                                   .join(enrolmentDF, ["courseID", "userID"], "left") \
@@ -96,15 +97,19 @@ class ACBPModel:
                 'batch': 'cadre_batch',
                 'service': 'civil_services',
                 'isprofileverified': 'is_verified_karmayogi',
-                'isoncentraldeputation': 'is_on_central_deputation'
+                'isoncentraldeputation': 'is_on_central_deputation',
+                'ministryorstateid': 'ministry_or_state_id'
             }
 
             mapping_expr = create_map([lit(x) for x in chain(*assignment_type_mapping.items())])
 
             acbpSelectEnrolmentDF = spark.read.parquet(ParquetFileConstants.ACBP_SELECT_FILE) \
-                .withColumn("courseID", explode(col("acbpCourseIDList"))) \
+                .withColumn("courseIDList", explode(col("acbpCourseIDList"))) \
+                .withColumn("courseIDList", from_json(col("courseIDList"), course_schema)) \
+                .withColumn("courseID", col("courseIDList.identifier")) \
+                .withColumn("isACBPMandatory", col("courseIDList.mandatory")) \
                 .join(allCourseProgramDetailsDF, ["courseID"], "left") \
-                .drop("acbpCourseIDList") \
+                .drop("acbpCourseIDList", "courseIDList") \
                 .withColumn("assignmentTypeInfo",
                             array_join(
                                 F.transform(
@@ -120,7 +125,7 @@ class ACBPModel:
                 .select(
                 "orgID", "acbpCreatedBy", "acbpID", "cbPlanName", "isapar",
                 "assignmentType", "assignmentTypeInfo", "courseID",
-                "allocatedOn", "completionDueDate", "acbpStatus"
+                "allocatedOn", "completionDueDate", "acbpStatus", "planyear", "plantype", "isACBPMandatory"
             ) \
                 .withColumn("data_last_generated_on", lit(currentDateTime)) \
                 .select(
@@ -131,10 +136,13 @@ class ACBPModel:
                 col("assignmentType").alias("allotment_type"),
                 col("assignmentTypeInfo").alias("allotment_to"),
                 col("courseID").alias("content_id"),
+                col("isACBPMandatory").alias("isMandatory"),
                 date_format(col("allocatedOn"), ParquetFileConstants.DATE_TIME_FORMAT).alias("allocated_on"),
                 date_format(col("completionDueDate"), ParquetFileConstants.DATE_TIME_FORMAT).alias("due_by"),
                 col("acbpStatus").alias("status"),
                 col("isapar"),
+                col("planyear").alias("plan_year"),
+                col("plantype").alias("plan_type"),
                 col("data_last_generated_on")
             ) \
                 .dropDuplicates() \
@@ -158,7 +166,8 @@ class ACBPModel:
                 "designation", "ministry_name", "dept_name", "cadreName", "civilServiceType", "civilServiceName",
                 "cadreBatch", "organised_service", "courseName", "isapar",
                 "userOrgID", "dbCompletionStatus", "courseCompletedTimestamp",
-                "allocatedOn", "completionDueDate", "employeeCode"
+                "allocatedOn", "completionDueDate", "employeeCode",
+                "planyear", "plantype", "isACBPMandatory"
             ) \
                 .withColumn(
                 "currentProgress",
@@ -216,6 +225,9 @@ class ACBPModel:
                 col("currentProgress").alias("Current Progress"),
                 col("completionDueDate").alias("Due Date of Completion"),
                 col("courseCompletedTimestamp").alias("Actual Date of Completion"),
+                col("planyear").alias("Plan year"),
+                col("plantype").alias("Plan type"),
+                col("isACBPMandatory").alias("is mandatory"),
                 col("userOrgID").alias("mdoid"),
                 lit(currentDateTime).alias("Report_Last_Generated_On")
             ) \
@@ -325,7 +337,10 @@ class ACBPModel:
                 col("externalSystemId").alias("external_system_id"),
                 col("competency_areas").alias("competency_type"),
                 lit(None).cast("string").alias("parichay_id"),
-                col("allocatedOn").cast("timestamp").alias("assigned_on")).dropDuplicates(["user_id", "content_id"])
+                col("allocatedOn").cast("timestamp").alias("assigned_on"),
+                col("planyear").alias("plan_year"),
+                col("isACBPMandatory").alias("isMandatory")
+            ).dropDuplicates(["user_id", "content_id"])
 
             resultDF.unpersist()
             kcmMappingDF.unpersist()

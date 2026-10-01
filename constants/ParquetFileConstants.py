@@ -10,6 +10,7 @@ class ParquetFileConstants:
 
     # Static constants for each Parquet file
     ACBP_PARQUET_FILE = str(INPUT_DIR / "acbp/**.parquet")
+    USER_GROUP_INFO_PARQUET_FILE = str(INPUT_DIR / "userGroupInfo/**.parquet")
     BATCH_PARQUET_FILE = str(INPUT_DIR / "batch/**.parquet")
     ENROLMENT_PARQUET_FILE = str(INPUT_DIR / "enrolment/**.parquet")
     ESCONTENT_PARQUET_FILE = str(INPUT_DIR / "esContent/**.parquet")

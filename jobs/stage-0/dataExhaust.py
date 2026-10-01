@@ -277,6 +277,16 @@ class DataExhaustModel:
             self.write_parquet(acbp_df, f"{output_base_path}/acbp")
             acbp_df.unpersist()
 
+            # Process cp plan user group info
+            self.logger.info("Processing User group info data...")
+            user_group_info = self.read_cassandra_table(
+                self.config.cassandraUserKeyspace,
+                self.config.cassandraUserGroupInfoTable
+            )
+
+            self.write_parquet(user_group_info, f"{output_base_path}/userGroupInfo")
+            user_group_info.unpersist()
+
             # Process ratings
             self.logger.info("Processing ratings...")
             rating_df = self.read_cassandra_table(
