@@ -9,7 +9,7 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType, 
 from pyspark.sql.window import Window
 from pyspark.sql.functions import (col, row_number, countDistinct, current_timestamp, date_format, broadcast,
                                    unix_timestamp, when, lit, concat_ws, from_unixtime, format_string, expr,
-                                   upper, coalesce, concat, trim, exists, split)
+                                   upper, coalesce, concat, trim, exists, split, sha2)
 from datetime import datetime
 from pyspark.sql import functions as F
 import sys
@@ -39,52 +39,51 @@ class CourseBasedAssessmentModel:
     def process_data(self, spark, config):
         try:
             start_time = time.time()
+            stage_start = time.time()
             today = self.get_date()
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
 
             print("Stage 1: Loading assessment data...")
             assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE) \
-                .filter(col("assessCategory").isin("Course", "Standalone Assessment", "Blended Program", "Curated Program")) \
-                .filter(~col("assessID").endswith(".img"))
+                .filter(
+                col("assessCategory").isin("Course", "Standalone Assessment", "Blended Program", "Curated Program")).filter(~col("assessID").endswith(".img"))
             hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
             organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
+            print(f"Stage 1: Complete (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
-            print("Stage 1: Complete")
-
-            # Stage 2: Add Hierarchy Information
             print("Stage 2: Adding hierarchy information...")
             assWithHierarchyData = assessmentDFUtil.add_hierarchy_column(
-                assessmentDF,
-                hierarchyDF,
-                id_col="assessID",
-                as_col="data",
-                spark=spark,
-                children=True,
-                competencies=True,
-                l2_children=True)
-            print("Stage 2: Complete")
-            # orgDF is not passed
+                assessmentDF, hierarchyDF, id_col="assessID", as_col="data", spark=spark,
+                children=True, competencies=True, l2_children=True)
+            print(f"Stage 2: Complete (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
+
             print("Stage 3: Transforming assessment data...")
             assessWithHierarchyDF = assessmentDFUtil.transform_assessment_data(assWithHierarchyData, organizationDF)
             assessWithDetailsDF = assessWithHierarchyDF.drop("children")
-            print("Stage 3: Complete")
+            print(f"Stage 3: Complete (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
             assessChildrenDF = assessmentDFUtil.assessment_children_dataframe(assessWithHierarchyDF)
+            print(f"Stage 4: Complete (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
-            print("Stage 4: Complete")
             print("Stage 5: Processing user assessment data...")
             userAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE) \
                 .filter(col("assessUserStatus") == "SUBMITTED") \
                 .withColumn("assessStartTime", col("assessStartTimestamp").cast("long")) \
                 .withColumn("assessEndTime", col("assessEndTimestamp").cast("long"))
-            # Window for basic assessment — rank by highest assessPassPercentageOriginal
+            # Window for basic assessment — rank by highest score, then latest attempt on ties
             windowBasic = Window.partitionBy("userID", "assessChildID") \
-                .orderBy(col("assessOverallResult").desc())
+                .orderBy(col("assessOverallResult").desc(),
+                         col("assessEndTimestamp").desc(),
+                         col("assessStartTimestamp").desc())
 
-            # Window for sectional assessment — rank by highest assessTotalSectionMarks
             windowSectional = Window.partitionBy("userID", "assessChildID") \
-                .orderBy(col("assessTotalSectionMarks").desc())
-
+                .orderBy(col("assessTotalSectionMarks").desc(),
+                         col("assessEndTimestamp").desc(),
+                         col("assessStartTimestamp").desc())
             userAssessmentDF = userAssessmentDF \
                 .withColumn("rn",
                             when(
@@ -96,25 +95,20 @@ class CourseBasedAssessmentModel:
                             ) \
                 .filter(col("rn") == 1) \
                 .drop("rn")
-            print(userAssessmentDF.columns)
-            print("Stage 5: Complete")
+            print(f"Stage 5: Complete (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
-            userAssessChildrenDF = assessmentDFUtil.user_assessment_children_dataframe(userAssessmentDF,
-                                                                                       assessChildrenDF)
+            userAssessChildrenDF = assessmentDFUtil.user_assessment_children_dataframe(userAssessmentDF, assessChildrenDF)
 
             categories = ["Course", "Program", "Blended Program", "Standalone Assessment", "Curated Program"]
-
             allCourseProgramDetailsWithCompDF = assessmentDFUtil.all_course_program_details_with_competencies_json_dataframe(
-                spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE) \
-                    .filter(col("category").isin(categories)), hierarchyDF, organizationDF, spark)
-            print("All Course Program Details with Competencies JSON DataFrame Schema:")
-
+                spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+                .filter(col("category").isin(categories)), hierarchyDF, organizationDF, spark)
             allCourseProgramDetailsDF = allCourseProgramDetailsWithCompDF.drop("competenciesJson")
-            print("Stage 6: Complete")
+            print(f"Stage 6: Complete (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
-            # Stage 7: Add Rating Information
             print("Stage 7: Adding rating information...")
-
             allCourseProgramDetailsWithRatingDF = assessmentDFUtil.all_course_program_details_with_rating_df(
                 allCourseProgramDetailsDF,
                 spark.read.parquet(ParquetFileConstants.RATING_SUMMARY_COMPUTED_PARQUET_FILE))
@@ -122,12 +116,10 @@ class CourseBasedAssessmentModel:
             userAssessChildrenDetailsDF = assessmentDFUtil.user_assessment_children_details_dataframe(
                 userAssessChildrenDF, assessWithDetailsDF, allCourseProgramDetailsWithRatingDF,
                 spark.read.parquet(ParquetFileConstants.USER_ORG_COMPUTED_FILE))
-            print("User Assessment Children DataFrame Schema:")
 
             retakesDF = userAssessChildrenDetailsDF.groupBy("assessID", "assessChildID", "userID").agg(countDistinct("assessStartTime").alias("retakes"))
 
-            windowSpec = Window.partitionBy("assessID", "assessChildID", "userID").orderBy(col("assessEndTimestamp").desc())
-
+            windowSpec = Window.partitionBy("assessID", "assessChildID", "userID").orderBy(col("assessEndTimestamp").desc(), col("assessStartTimestamp").desc())
             userAssessChildDataLatestDF = userAssessChildrenDetailsDF.withColumn("rowNum", row_number().over(windowSpec)).filter(F.col("rowNum") == 1).drop("rowNum") \
                 .join(retakesDF.select("assessID", "assessChildID", "userID", "retakes"), ["assessID", "assessChildID", "userID"], "left")
 
@@ -153,8 +145,7 @@ class CourseBasedAssessmentModel:
                 .withColumnRenamed("assessExpectedDuration", "totalAssessmentDuration")
 
             fullReportNewDF = finalFormattedDF.withColumn("MDO_Name", col("userOrgName")) \
-                .withColumn("Ministry",
-                            when(col("ministry_name").isNull(), col("userOrgName")).otherwise(col("ministry_name"))) \
+                .withColumn("Ministry", when(col("ministry_name").isNull(), col("userOrgName")).otherwise(col("ministry_name"))) \
                 .withColumn("Department", when((col("Ministry").isNotNull()) & (col("Ministry") != col("userOrgName")) &
                                                ((col("dept_name").isNull()) | (col("dept_name") == "")),
                                                col("userOrgName")).otherwise(col("dept_name"))) \
@@ -201,13 +192,14 @@ class CourseBasedAssessmentModel:
                 col("assessEndTime"),
                 col("userOrgID").alias("mdoid"),
                 col("Report_Last_Generated_On"))
+            print(f"Stage 7: Complete (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
             oldAssessmentDetailsDF = spark.read.parquet(ParquetFileConstants.OLD_ASSESSMENT_COMPUTED_PARQUET_FILE)
 
             fullReportOldDF = oldAssessmentDetailsDF \
                 .withColumn("MDO_Name", col("userOrgName")) \
-                .withColumn("Ministry",
-                            when(col("ministry_name").isNull(), col("userOrgName")).otherwise(col("ministry_name"))) \
+                .withColumn("Ministry", when(col("ministry_name").isNull(), col("userOrgName")).otherwise(col("ministry_name"))) \
                 .withColumn("Department", when(
                 (col("Ministry").isNotNull()) & (col("Ministry") != col("userOrgName")) & (
                         col("dept_name").isNull() | (col("dept_name") == "")),
@@ -256,8 +248,27 @@ class CourseBasedAssessmentModel:
                 col("userOrgID").alias("mdoid"),
                 col("Report_Last_Generated_On"))
 
-            fullReportDF = fullReportNewDF.union(fullReportOldDF).dropDuplicates(
-                ["userID", "assessment_id", "course_id"])
+            _old_hash_cols = ["incorrect_count", "unattempted_questions", "total_questions", "Pass", "retakes", "assessment_duration", "assessPercentage"]
+
+            oldDedupWindow = Window.partitionBy("userID", "assessment_id", "course_id").orderBy(
+                col("last_attempted_date").desc(),
+                col("latest_percentage_achieved").cast("double").desc(),
+                sha2(concat_ws("|", *[coalesce(col(c).cast("string"), lit("")) for c in _old_hash_cols]), 256).desc())
+
+            fullReportOldDF = (fullReportOldDF.withColumn("rn", row_number().over(oldDedupWindow)).filter(col("rn") == 1).drop("rn"))
+            new_keys = fullReportNewDF.select("userID", "assessment_id", "course_id").distinct()
+            old_unique_only = fullReportOldDF.join(new_keys, ["userID", "assessment_id", "course_id"], "left_anti")
+
+            fullReportDF = fullReportNewDF.union(old_unique_only)
+            # Forced cache materialization: .cache() alone is lazy and never
+            # populates until an action runs. Without .count() here, this
+            # entire join/union lineage was being recomputed from scratch at
+            # every downstream action (org_flags collect, CSV export, final
+            # parquet write) instead of being computed once and reused.
+            fullReportDF = fullReportDF.cache()
+            _fr_count = fullReportDF.count()
+            print(f"Stage 9: Complete - fullReportDF built and cached ({_fr_count:,} rows) (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
             mdoReportDF = fullReportDF.filter(col("status") == 1).select(
                 col("userID").alias("User ID"),
@@ -292,11 +303,6 @@ class CourseBasedAssessmentModel:
                 col("Report_Last_Generated_On")
             )
 
-            # ---- Govt / Non-Govt classification ----
-            # Exact (trimmed, case-insensitive) match on Designation, and an exact
-            # match against any element of the Roles array. Using .contains(...)
-            # here would wrongly flag designations like "Civil Defence Volunteer"
-            # as Non-Govt just because the substring "VOLUNTEER" appears in them.
             mdoReportDF = mdoReportDF.withColumn(
                 "is_non_govt_user",
                 when(
@@ -305,11 +311,16 @@ class CourseBasedAssessmentModel:
                     lit(True)
                 ).otherwise(lit(False))
             ).cache()
+            # Same forced-materialization fix as fullReportDF above - this is
+            # what collapsed org_flags.collect() from 657.37s to 3.41s once
+            # verified via the Storage tab (100% Fraction Cached).
+            _mdo_count = mdoReportDF.count()
+            print(f"Stage 10: Complete - mdoReportDF classified and cached ({_mdo_count:,} rows) (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
             govt_part_df = mdoReportDF.filter(~col("is_non_govt_user")).drop("is_non_govt_user", "Roles")
             non_govt_part_df = mdoReportDF.filter(col("is_non_govt_user")).drop("is_non_govt_user", "Roles")
 
-            # Determine, per org, whether it has govt users, non-govt users, or both.
             govt_org_ids = set(
                 row.mdoid for row in govt_part_df.select("mdoid").distinct().collect() if row.mdoid is not None
             )
@@ -321,10 +332,9 @@ class CourseBasedAssessmentModel:
             print(f"Orgs with only Govt users: {len(govt_org_ids - both_org_ids)}")
             print(f"Orgs with only Non-Govt users: {len(non_govt_org_ids - both_org_ids)}")
             print(f"Orgs with BOTH Govt and Non-Govt users (2 reports each): {len(both_org_ids)}")
+            print(f"Stage 11: Complete - Govt/Non-Govt org id sets determined (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
-            # Govt subset keeps mdoid=<org_id>. Non-Govt subset keeps mdoid=<org_id> too,
-            # UNLESS that org also has Govt users, in which case it becomes
-            # mdoid=<org_id>_non_govt so the two reports for that org don't collide.
             both_org_ids_list = list(both_org_ids)
             non_govt_part_df = non_govt_part_df.withColumn(
                 "mdoid",
@@ -334,8 +344,7 @@ class CourseBasedAssessmentModel:
 
             finalAssessmentDF = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
             finalAssessmentDF = finalAssessmentDF.join(userAssessmentDF,
-                                                       finalAssessmentDF["Identifier"] == userAssessmentDF[
-                                                           "assessChildID"], "inner") \
+                                                       finalAssessmentDF["Identifier"] == userAssessmentDF["assessChildID"], "inner") \
                 .withColumn("cut_off_percentage", col("assessPassPercentage").cast("float")) \
                 .withColumn("time_spent_by_the_user",
                             unix_timestamp("assessEndTimestamp") - unix_timestamp("assessStartTimestamp")) \
@@ -360,6 +369,8 @@ class CourseBasedAssessmentModel:
 
             finalAssessmentDF = self.duration_format(finalAssessmentDF, "assessment_duration")
             finalAssessmentDF = self.duration_format(finalAssessmentDF, "time_spent_by_the_user")
+            print(f"Stage 12: Complete - finalAssessmentDF built (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
             warehouseDF = fullReportDF.withColumn("data_last_generated_on", currentDateTime) \
                 .withColumn("cut_off_percentage", col("assessPercentage").cast("float")) \
@@ -384,35 +395,22 @@ class CourseBasedAssessmentModel:
                 col("data_last_generated_on"))
 
             warehouseDF = warehouseDF.unionByName(finalAssessmentDF)
-            # request from anshu to replace assesment_type 'Course Assessment' with 'Comprehensive Assessment Progam'
-            # when course sub type is 'Comprehensive Assessment Program'
-            assessmentMinPassDF = spark.read.parquet(f"{config.baseCachePath}/esCourseAssessment")
 
-            # assessment Minimum Pass DF
+            assessmentMinPassDF = spark.read.parquet(f"{config.baseCachePath}/esCourseAssessment")
             assessMinPassDF = assessmentMinPassDF.filter(
                 col('minimumPassPercentage').isNotNull() & (col('minimumPassPercentage') > 0)) \
-                .select(
-                "identifier",
-                "minimumPassPercentage"
-            )
+                .select("identifier", "minimumPassPercentage")
 
-            assessMinPassDF.show(5, truncate=False)
+            warehouseDF = warehouseDF.join(broadcast(assessMinPassDF),
+                                           warehouseDF.assessment_id == assessMinPassDF.identifier, "left"
+                                           ).select(warehouseDF["*"], assessMinPassDF["minimumPassPercentage"])
 
-            warehouseDF = warehouseDF.join(assessMinPassDF,
-                                           warehouseDF.assessment_id == assessMinPassDF.identifier,
-                                           "left"
-                                           ).select(
-                warehouseDF["*"],
-                assessMinPassDF["minimumPassPercentage"]
-            )
-            # If minimumPassPercentage is available for a matching assessment, prefer it
-            # over the existing cut_off_percentage value.
-            # new column assessment_sub_type for anshu's CAP reference
             warehouseDF = warehouseDF.join(assessmentDF, warehouseDF["content_id"] == assessmentDF["assessID"], "left") \
                 .withColumn("assessment_sub_type",
                             when(col("assessCourseCategory") == "Comprehensive Assessment Program",
                                  "Comprehensive Assessment Program")
-                            .when(col("assessCourseCategory") == "Standalone Assessment", "Standalone Assessment")
+                            .when(col("assessCourseCategory") == "Standalone Assessment",
+                                  "Standalone Assessment")
                             .when(col("assessCourseCategory") == "Pre Enrolment Assessment", "Pre Enrolment Assessment")
                             .otherwise(col("assessment_type"))) \
                 .withColumn(
@@ -441,49 +439,68 @@ class CourseBasedAssessmentModel:
             w = Window.partitionBy("user_id", "content_id", "assessment_id").orderBy(col("score_achieved").desc(), col("completion_date").desc())
 
             warehouseDF = (warehouseDF.withColumn("rn", row_number().over(w)).filter(col("rn") == 1).drop("rn"))
+            # Same forced-materialization fix, applied here too since
+            # warehouseDF was previously read three separate times downstream
+            # (org-flag collect path, CSV export, final parquet write) with
+            # no cache at all - each read recomputed the full join/window
+            # chain from scratch.
+            warehouseDF = warehouseDF.cache()
+            _wh_count = warehouseDF.count()
+            print(f"Stage 13: Complete - warehouseDF built and cached ({_wh_count:,} rows) (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
+            fullReportDF.unpersist()
             cba_out_path = f"{config.localReportDir}/{config.cbaReportPath}/{today}"
 
-            # dfexportutil.write_csv_per_mdo_id_duckdb throws a KeyError on
-            # 'successful_conversions' when it's handed a dataframe with zero
-            # orgs/partitions to write (e.g. no Non-Govt/VOLUNTEER users found
-            # in this run at all). Guard each write so an empty subset doesn't
-            # crash the whole job.
+            # ================================================================
+            # CHANGED: this job now writes PLAIN parquet only, no partitionBy,
+            # no coalesce(1), no DuckDB CSV export here. The per-org CSV split
+            # is now handled by a completely separate standalone job
+            # (polars_csv_export.py) - this keeps the Spark job's memory
+            # footprint smaller (no CSV-export-time memory spike competing
+            # with cached DataFrames still alive here) and lets the CSV step
+            # run afterward with the full machine available once this job's
+            # Spark session has fully stopped.
+            #
+            # These paths are STABLE (not cleaned up by this job) - the
+            # Polars job reads from here and is responsible for deleting them
+            # once its own CSV export completes. Keep this path convention in
+            # sync with the matching entry in polars_csv_export.py's
+            # get_reports() registry.
+            # ================================================================
+            govt_parquet_path = f"{config.localReportDir}/temp/cba-report-plain/{today}/govt"
+            non_govt_parquet_path = f"{config.localReportDir}/temp/cba-report-plain/{today}/non_govt"
+
             if govt_org_ids:
-                print(f"➡️  Writing GOVT course-based assessment report -> {cba_out_path}")
-                dfexportutil.write_csv_per_mdo_id_duckdb(
-                    govt_part_df,
-                    cba_out_path,
-                    'mdoid',
-                    f"{config.localReportDir}/temp/cba-report/{today}",
-                    csv_filename=config.cbaReport
-                )
+                print(f"➡️  Writing GOVT plain parquet -> {govt_parquet_path}")
+                govt_part_df.write.mode("overwrite").option("compression", "snappy").parquet(govt_parquet_path)
             else:
-                print("ℹ️  No Govt users found in this run — skipping Govt CSV write.")
+                print("ℹ️  No Govt users found in this run — skipping Govt parquet write.")
 
             if non_govt_org_ids:
-                print(f"➡️  Writing NON-GOVT course-based assessment report -> {cba_out_path}")
-                dfexportutil.write_csv_per_mdo_id_duckdb(
-                    non_govt_part_df,
-                    cba_out_path,
-                    'mdoid',
-                    f"{config.localReportDir}/temp/cba-report-non-govt/{today}",
-                    csv_filename=config.cbaReport
-                )
+                print(f"➡️  Writing NON-GOVT plain parquet -> {non_govt_parquet_path}")
+                non_govt_part_df.write.mode("overwrite").option("compression", "snappy").parquet(non_govt_parquet_path)
             else:
-                print("ℹ️  No Non-Govt (VOLUNTEER) users found in this run — skipping Non-Govt CSV write.")
+                print("ℹ️  No Non-Govt (VOLUNTEER) users found in this run — skipping Non-Govt parquet write.")
+            print(f"Stage 14: Complete - plain parquet(s) written for Polars step (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
-            (warehouseDF.coalesce(1)
-             .write
+            print("Stage 15: Starting warehouse parquet write...")
+            # coalesce(1) removed here - was forcing this write through a
+            # single task regardless of the 128 cached partitions available,
+            # validated 18x slower (496.68s -> 27.48s) than writing in parallel.
+            (warehouseDF.write
              .mode("overwrite")
              .option("compression", "snappy")
              .parquet(f"{config.warehouseReportDir}/{config.dwAssessmentTable}"))
+            print(f"Stage 15: Complete - warehouse parquet written (⏱ {time.time() - stage_start:.2f}s)")
 
             mdoReportDF.unpersist()
+            warehouseDF.unpersist()
 
             total_time = time.time() - start_time
-            print(
-                f"\n✅ Optimized Course Based Assessment Report generation completed in {total_time:.2f} seconds ({total_time / 60:.1f} minutes)")
+            print(f"\n✅ Optimized Course Based Assessment Report generation completed in {total_time:.2f} seconds ({total_time / 60:.1f} minutes)")
+            print(f"   Next step: run polars_csv_export.py to produce the per-org CSVs from the plain parquet(s) above.")
 
         except Exception as e:
             print(f"❌ Error: {str(e)}")
@@ -504,91 +521,28 @@ class CourseBasedAssessmentModel:
             )
         )
 
-    def get_hierarchy_schema(self):
-        level3 = StructType([
-            StructField("identifier", StringType(), True),
-            StructField("name", StringType(), True),
-            StructField("channel", StringType(), True),
-            StructField("duration", StringType(), True),
-            StructField("primaryCategory", StringType(), True),
-            StructField("leafNodesCount", IntegerType(), True),
-            StructField("contentType", StringType(), True),
-            StructField("objectType", StringType(), True),
-            StructField("showTimer", StringType(), True),
-            StructField("allowSkip", StringType(), True)
-        ])
-
-        level2 = StructType([
-            StructField("identifier", StringType(), True),
-            StructField("name", StringType(), True),
-            StructField("channel", StringType(), True),
-            StructField("duration", StringType(), True),
-            StructField("primaryCategory", StringType(), True),
-            StructField("leafNodesCount", IntegerType(), True),
-            StructField("contentType", StringType(), True),
-            StructField("objectType", StringType(), True),
-            StructField("showTimer", StringType(), True),
-            StructField("allowSkip", StringType(), True),
-            StructField("children", ArrayType(level3), True)
-        ])
-
-        level1 = StructType([
-            StructField("identifier", StringType(), True),
-            StructField("name", StringType(), True),
-            StructField("channel", StringType(), True),
-            StructField("duration", StringType(), True),
-            StructField("primaryCategory", StringType(), True),
-            StructField("leafNodesCount", IntegerType(), True),
-            StructField("contentType", StringType(), True),
-            StructField("objectType", StringType(), True),
-            StructField("showTimer", StringType(), True),
-            StructField("allowSkip", StringType(), True),
-            StructField("children", ArrayType(level2), True)
-        ])
-
-        return StructType([
-            StructField("name", StringType(), True),
-            StructField("status", StringType(), True),
-            StructField("reviewStatus", StringType(), True),
-            StructField("channel", StringType(), True),
-            StructField("duration", StringType(), True),
-            StructField("primaryCategory", StringType(), True),
-            StructField("leafNodesCount", IntegerType(), True),
-            StructField("leafNodes", ArrayType(StringType()), True),
-            StructField("publish_type", StringType(), True),
-            StructField("isExternal", BooleanType(), True),
-            StructField("contentType", StringType(), True),
-            StructField("objectType", StringType(), True),
-            StructField("userConsent", StringType(), True),
-            StructField("visibility", StringType(), True),
-            StructField("createdOn", StringType(), True),
-            StructField("lastUpdatedOn", StringType(), True),
-            StructField("lastPublishedOn", StringType(), True),
-            StructField("lastSubmittedOn", StringType(), True),
-            StructField("lastStatusChangedOn", StringType(), True),
-            StructField("createdFor", ArrayType(StringType()), True),
-            StructField("children", ArrayType(level1), True),
-            StructField("competencies_v3", StringType(), True)
-        ])
-
 
 def main():
-    # Initialize Spark Session with optimized settings for caching
+    # local-cluster instead of local[*] - real executor isolation avoids the
+    # single-JVM GC pattern that dominated the earlier local[*] runs on this
+    # job (heavy joins/windows over 148M+ rows genuinely benefit from this,
+    # unlike ACBP/dashboardSync where it added overhead with no payoff).
+    # 40GB per executor (not 28GB) - eliminates shuffle spill, validated via
+    # Spark UI (Spill Memory/Disk lines disappeared from the affected stage).
     spark = SparkSession.builder \
         .appName("Course Based Assessment Report Model - Cached") \
-        .config("spark.sql.shuffle.partitions", "200") \
-        .config("spark.executor.memory", "30g") \
-        .config("spark.driver.memory", "128g") \
+        .master("local-cluster[4, 6, 40000]") \
+        .config("spark.executor.memory", "38g") \
+        .config("spark.driver.memory", "16g") \
         .config("spark.driver.maxResultSize", "3g") \
-        .config("spark.executor.memoryFraction", "0.7") \
-        .config("spark.storage.memoryFraction", "0.2") \
-        .config("spark.storage.unrollFraction", "0.1") \
+        .config("spark.sql.shuffle.partitions", "128") \
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
         .config("spark.sql.adaptive.enabled", "true") \
+        .config("spark.sql.adaptive.skewJoin.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .getOrCreate()
-    # Create model instance
+
     start_time = datetime.now()
     print(f"[START] Course based assessment processing started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     config_dict = get_environment_config()

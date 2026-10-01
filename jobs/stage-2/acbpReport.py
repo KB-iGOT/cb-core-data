@@ -1,12 +1,19 @@
 import findspark
 
 findspark.init()
+import sys
+import time
 from pathlib import Path
+import pandas as pd
 from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.functions import (split, regexp_replace, col, desc, row_number, create_map, trim, array_join,
-                                   countDistinct, when, lit, date_format, from_json, current_timestamp,
-                                   explode, sum as spark_sum)
-from pyspark.sql.types import ArrayType, StringType, LongType
+from pyspark.sql.functions import bround, col, broadcast, concat_ws, split, coalesce, lit, when, from_unixtime, regexp_replace
+from pyspark.sql.functions import col, lit, coalesce, concat_ws, create_map, when, broadcast, get_json_object, rtrim
+from pyspark.sql.functions import col, trim, array_join, from_json, explode_outer, coalesce, lit, format_string, count, countDistinct
+from pyspark.sql.types import StructType, ArrayType, StringType, BooleanType, StructField
+from pyspark.sql.types import MapType, StringType, StructType, StructField, FloatType, LongType, DateType, IntegerType
+from pyspark.sql.functions import col, when, size, lit, expr, unix_timestamp, date_format, from_json, current_timestamp, \
+    to_date, round, explode, to_utc_timestamp, from_utc_timestamp, to_timestamp, sum as spark_sum
+from pyspark.sql.functions import col, desc, row_number, udf
 from pyspark.sql.window import Window
 from itertools import chain
 from datetime import datetime
@@ -35,6 +42,8 @@ class ACBPModel:
 
     def process_data(self, spark, config):
         try:
+            start_time = time.time()
+            stage_start = time.time()
             today = self.get_date()
             currentDateTime = date_format(current_timestamp(), ParquetFileConstants.DATE_TIME_WITH_AMPM_FORMAT)
             primary_categories = ["Course", "Program", "Blended Program", "Curated Program", "Standalone Assessment"]
@@ -65,7 +74,6 @@ class ACBPModel:
             enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
 
             acbpAllEnrolDF = spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
-            #acbpAllEnrolDF.printSchema()
 
             acbpAllEnrolmentDF = (acbpAllEnrolDF \
                                   .withColumn("courseID", explode(col("acbpCourseIDList"))) \
@@ -91,27 +99,13 @@ class ACBPModel:
                 'isoncentraldeputation': 'is_on_central_deputation'
             }
 
-            # Create mapping expression
             mapping_expr = create_map([lit(x) for x in chain(*assignment_type_mapping.items())])
 
-            # Read select file and process same as computed
-            '''acbpSelectEnrolmentDF = spark.read.parquet(ParquetFileConstants.ACBP_SELECT_FILE) \
-             .withColumn("courseID", explode(col("acbpCourseIDList")))\
-             .join(allCourseProgramDetailsDF, ["courseID"], "left") \
-             .drop("acbpCourseIDList") \
-             .withColumn("assignmentTypeInfo", when(col("assignmentType") == "alluser", lit("AllUser")
-             ).otherwise(col("assignmentTypeInfo"))) \
-             .withColumn("assignmentType", array_join(F.transform(
-                split(col("assignmentType"), "\\|"), 
-                lambda x: mapping_expr[trim(x)]),"|"))'''
             acbpSelectEnrolmentDF = spark.read.parquet(ParquetFileConstants.ACBP_SELECT_FILE) \
                 .withColumn("courseID", explode(col("acbpCourseIDList"))) \
                 .join(allCourseProgramDetailsDF, ["courseID"], "left") \
                 .drop("acbpCourseIDList") \
                 .withColumn("assignmentTypeInfo",
-                            # Each pipe-segment is a JSON array string — parse and re-join with quoted values
-                            # e.g. ["deputy director (research, statistics and analysis)","deputy director"]
-                            # becomes "deputy director (research, statistics and analysis)", "deputy director"
                             array_join(
                                 F.transform(
                                     split(col("assignmentTypeInfo"), "\\|"),
@@ -122,12 +116,11 @@ class ACBPModel:
                 .withColumn("assignmentTypeInfo", when(col("assignmentType") == "alluser", lit("AllUser")).otherwise(col("assignmentTypeInfo"))) \
                 .withColumn("assignmentType", array_join(F.transform(split(col("assignmentType"), "\\|"), lambda x: mapping_expr[trim(x)]), "|"))
 
-            # Write to warehouse with mapped names
             cbPlanWarehouseDF = acbpSelectEnrolmentDF \
                 .select(
                 "orgID", "acbpCreatedBy", "acbpID", "cbPlanName", "isapar",
                 "assignmentType", "assignmentTypeInfo", "courseID",
-                "allocatedOn", "completionDueDate", "acbpStatus", "planyear", "plantype"
+                "allocatedOn", "completionDueDate", "acbpStatus"
             ) \
                 .withColumn("data_last_generated_on", lit(currentDateTime)) \
                 .select(
@@ -142,8 +135,6 @@ class ACBPModel:
                 date_format(col("completionDueDate"), ParquetFileConstants.DATE_TIME_FORMAT).alias("due_by"),
                 col("acbpStatus").alias("status"),
                 col("isapar"),
-                col("planyear").alias("plan_year"),
-                col("plantype").alias("plan_type"),
                 col("data_last_generated_on")
             ) \
                 .dropDuplicates() \
@@ -157,16 +148,12 @@ class ACBPModel:
                 .filter(col("row_num") == 1) \
                 .drop("row_num")
 
-            # kafkaDispatch(timestamped_df, conf.acbpEnrolmentTopic)
-
             ministry_is_empty = (col("ministry_name").isNull()) | (col("ministry_name") == "")
             dept_is_empty = (col("dept_name").isNull()) | (col("dept_name") == "")
 
-            # Process all transformations in a single chain to minimize passes
             enrolmentReportDF = acbpEnrolmentDF \
                 .filter(col("userStatus").cast("int") == 1) \
                 .select(
-                # Select only needed columns early to reduce data shuffling
                 "fullName", "userPrimaryEmail", "userMobile", "userOrgName", "group",
                 "designation", "ministry_name", "dept_name", "cadreName", "civilServiceType", "civilServiceName",
                 "cadreBatch", "organised_service", "courseName", "isapar",
@@ -234,16 +221,32 @@ class ACBPModel:
             ) \
                 .fillna("")
 
-            print("📝 Writing combined CSV reports for enrollment...")
-            dfexportutil.write_csv_combined(
-                df=enrolmentReportDF,
-                single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPEnrollmentReport/{config.cbpEnrolmentReport}",
-                partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoEnrolmentReportPath}/{today}",
-                partition_column='mdoid',
-                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-enrolment-report/{today}",
-                csv_filename=config.cbpEnrolmentReport)
+            print(f"Stage 1: Complete - source data + enrolment report built (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
+
+            # ================================================================
+            # CHANGED: this job now writes PLAIN parquet only - no in-job
+            # Polars/DuckDB CSV export at all. Calling Polars from inside this
+            # Spark job (as a previous draft did) kept Spark's reserved
+            # executor/driver memory alive the whole time Polars' own
+            # partition_by() memory spike was happening - the exact
+            # contention risk already fixed for courseBasedAssessmentReport.
+            # The per-org CSV split now happens entirely in the separate,
+            # standalone polars_csv_export.py process, run AFTER this job's
+            # Spark session has fully stopped.
+            #
+            # This path is STABLE (not cleaned up by this job) - keep it in
+            # sync with the matching entry in polars_csv_export.py's
+            # get_reports() registry.
+            # ================================================================
+            print("📝 Writing plain parquet for enrollment report...")
+            enrolmentReportPlainPath = f"{config.localReportDir}/temp/cbp-enrolment-report-plain/{today}"
+            enrolmentReportDF.write.mode("overwrite").option("compression", "snappy").parquet(enrolmentReportPlainPath)
+
             enrolmentReportDF.write.mode("overwrite").option("compression", "snappy").parquet(
                 f"{config.warehouseReportDir}/cbp_enrollments")
+            print(f"Stage 2: Complete - enrollment plain parquet + warehouse write (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
             ######################################################
             # creating data for apar enrollment report for sahil
@@ -251,11 +254,9 @@ class ACBPModel:
 
             print("📝 Start Apar enrollment report data...")
 
-            #getting KCM dataframes
             kcmDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmDictionaryTable}")
             kcmMappingDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwKcmContentTable}")
 
-            # kcm dictionary dataframe
             kcmMappingDF = kcmMappingDF.join(kcmDF, kcmDF.competency_area_id == kcmMappingDF.competency_area_id, "left").select(
                 col("course_id"),
                 kcmMappingDF["competency_area_id"],
@@ -266,7 +267,7 @@ class ACBPModel:
             kc = (
                 kcmDF
                 .alias("kc")
-                .withColumnRenamed("competency_area", "kc_competency_area")  # prevent ambiguity
+                .withColumnRenamed("competency_area", "kc_competency_area")
             )
 
             resultDF = (
@@ -283,14 +284,11 @@ class ACBPModel:
                 )
             )
 
-            resultDF.show(5, truncate=False)
 
             print("📝 Preparing Apar enrollment report data...")
 
-            # joining user additional properties to get external system details
             userAdditionalProperties = userOrgDF.select("userID", "externalSystem","externalSystemId")
 
-            # preparing apar enrollment data
             aparEnrolmentData = acbpAllEnrolmentDF.where((col("acbpStatus") == "Live") & (col("isapar") == True)) \
                 .join(userAdditionalProperties, "userID", "left") \
                 .join(resultDF, acbpAllEnrolmentDF.courseID == resultDF.course_id, "left") \
@@ -333,14 +331,12 @@ class ACBPModel:
             kcmMappingDF.unpersist()
             kcmDF.unpersist()
             print("✅ Apar enrollment report data prepared successfully!")
+            print(f"Stage 3: Complete - Apar enrollment data prepared (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
             ######################################################
             # end of apar enrollment report for sahil
             ######################################################
-
-            # -----------------------------------------------
-            # 1. Normalize organizational fields BEFORE groupBy
-            # -----------------------------------------------
 
             ministry_is_empty = (col("ministry_name").isNull()) | (col("ministry_name") == "")
             dept_is_empty = (col("dept_name").isNull()) | (col("dept_name") == "")
@@ -368,10 +364,6 @@ class ACBPModel:
                     col("userOrgName")
                 ).otherwise(lit(""))
             )
-
-            # -----------------------------------------------
-            # 2. Group using normalized columns
-            # -----------------------------------------------
 
             userSummaryReportDF = cleanDF \
                 .groupBy(
@@ -414,50 +406,60 @@ class ACBPModel:
                 lit(currentDateTime).alias("Report_Last_Generated_On")
             )
 
-            print("📝 Writing combined CSV reports for user summary...")
-            dfexportutil.write_csv_combined(
-                df=userSummaryReportDF,
-                single_csv_path=f"{config.localReportDir}/{config.acbpReportPath}/{today}/CBPUserSummaryReport/{config.cbpSummaryReport}",
-                partitioned_output_dir=f"{config.localReportDir}/{config.acbpMdoSummaryReportPath}/{today}",
-                partition_column='mdoid',
-                parquet_tmp_path=f"{config.localReportDir}/temp/cbp-summary-report/{today}",
-                csv_filename=config.cbpSummaryReport
-            )
+            # Same reasoning as the enrollment report above - plain parquet
+            # only, CSV split handled by the separate polars_csv_export.py run.
+            print("📝 Writing plain parquet for user summary report...")
+            summaryReportPlainPath = f"{config.localReportDir}/temp/cbp-summary-report-plain/{today}"
+            userSummaryReportDF.write.mode("overwrite").option("compression", "snappy").parquet(summaryReportPlainPath)
+            print(f"Stage 4: Complete - user summary plain parquet written (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
 
             print("📦 Writing warehouse data...")
-            cbPlanWarehouseDF.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+            # coalesce(1) removed - was forcing this write through a single
+            # task regardless of available parallelism, same validated fix
+            # as courseBasedAssessmentReport (there: 496.68s -> 27.48s).
+            cbPlanWarehouseDF.write.mode("overwrite").option("compression", "snappy").parquet(
                 f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
+            print(f"Stage 5: Complete - cbPlanWarehouseDF written (⏱ {time.time() - stage_start:.2f}s)")
+            stage_start = time.time()
             print("✅ Processing completed successfully!")
 
-            # apar enrollment report for Sahil
             print("📝 Writing Apar enrollment parquet report for warehouse...")
-            aparEnrolmentData.coalesce(1).write.mode("overwrite").option("compression", "snappy").parquet(
+            # coalesce(1) removed here too - this was the write that showed
+            # up in Spark UI as a single task blocking 6 pending stages for
+            # 2.3+ minutes (Job 59, "0/1 (1 running)").
+            aparEnrolmentData.write.mode("overwrite").option("compression", "snappy").parquet(
                 f"{config.warehouseReportDir}/{config.dwAparCBPEnrollmentTable}")
+            print(f"Stage 6: Complete - aparEnrolmentData written (⏱ {time.time() - stage_start:.2f}s)")
             print("✅ Apar enrollment parquet report written successfully!")
+
+            total_time = time.time() - start_time
+            print(f"\n✅ ACBPModel processing completed in {total_time:.2f} seconds ({total_time / 60:.1f} minutes)")
+            print("   Next step: run polars_csv_export.py to produce the per-org CSVs from the plain parquet(s) above.")
 
         except Exception as e:
             print(f"❌ Error occurred during ACBPModel processing: {str(e)}")
             raise e
-            sys.exit(1)
 
 
 def main():
-    # Initialize Spark Session with optimized settings for caching
+    # Reverted from local-cluster back to local[*] - measured no benefit for
+    # this job (25:14 min on local[*] vs 25:08 min on local-cluster[4,8,40000],
+    # essentially unchanged). Confirms this job's bottleneck is the un-batched
+    # DuckDB path and the coalesce(1) writes, not GC/spill - same conclusion
+    # reached for dashboardSync. local-cluster's executor-isolation/GC benefit
+    # doesn't pay for its own coordination + serialization overhead when the
+    # real cost lives elsewhere.
     spark = SparkSession.builder \
         .appName("ACBP Report") \
-        .config("spark.sql.shuffle.partitions", "240") \
-        .config("spark.executor.memory", "30g") \
-        .config("spark.driver.memory", "128g") \
+        .config("spark.sql.shuffle.partitions", "120") \
+        .config("spark.driver.memory", "120g") \
         .config("spark.driver.memoryOverhead", "20g") \
-        .config("spark.executor.memoryFraction", "0.7") \
-        .config("spark.storage.memoryFraction", "0.2") \
-        .config("spark.storage.unrollFraction", "0.1") \
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
         .getOrCreate()
-    # Create model instance
 
     config_dict = get_environment_config()
     config = create_config(config_dict)
@@ -473,6 +475,5 @@ def main():
     spark.stop()
 
 
-# Example usage:
 if __name__ == "__main__":
     main()
