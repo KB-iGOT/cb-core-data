@@ -1260,7 +1260,12 @@ function mountSearchBar(mountId, opts) {
     suggestBox.classList.remove('open');
     goTo('job', job.id, q);
   }
-  input.addEventListener('input', () => { persistQuery(input.value.trim()); renderSuggestions(input.value.trim()); });
+  input.addEventListener('input', () => {
+    const v = input.value.trim();
+    persistQuery(v);
+    renderSuggestions(v);
+    if (opts.onInput) opts.onInput(v);
+  });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); if (items.length) { activeIdx = (activeIdx+1) % items.length; highlight(); } }
     else if (e.key === 'ArrowUp') { e.preventDefault(); if (items.length) { activeIdx = (activeIdx-1+items.length) % items.length; highlight(); } }
@@ -1360,7 +1365,7 @@ function setFilter(f) {
 }
 
 function renderJobIndex(q) {
-  mountSearchBar('jobsSearchMount', { size: 'lg', placeholder: 'Search by job name, file path, table, or keyword…', value: q || '', autofocus: false });
+  mountSearchBar('jobsSearchMount', { size: 'lg', placeholder: 'Search by job name, file path, table, or keyword…', value: q || '', autofocus: false, onInput: (v) => applyFilters(v) });
   setFilter(activeFilter);
   applyFilters(q || '');
 }
