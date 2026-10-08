@@ -187,7 +187,8 @@ class CourseReportModel:
                 .withColumn("courseBatchEndDate", to_date(col("courseBatchEndDate"), ParquetFileConstants.DATE_FORMAT)) \
                 .withColumn("lastStatusChangedOn", to_date(col("lastStatusChangedOn"), ParquetFileConstants.DATE_FORMAT)) \
                 .withColumn("ArchivedOn", when(col("courseStatus") == "Retired", to_date(col("lastStatusChangedOn"), ParquetFileConstants.DATE_FORMAT))) \
-                .withColumn("Report_Last_Generated_On", currentDateTime)
+                .withColumn("Report_Last_Generated_On", currentDateTime) \
+                .dropDuplicates(["courseID"])
             print(f"Stage 4: Complete (⏱ {time.time() - stage_start:.2f}s)")
             stage_start = time.time()
 
@@ -219,7 +220,7 @@ class CourseReportModel:
                 col("completedCount"), col("notStartedCount"), col("inProgressCount"), col("courseStatus"),
                 col("totalCertificatesIssued"), col("firstCompletedOn"), col("lastCompletedOn"),
                 col("data_last_generated_on")
-            )
+            ).dropDuplicates(["content_id"])
             print(f"Stage 5: Complete (⏱ {time.time() - stage_start:.2f}s)")
             stage_start = time.time()
 
@@ -414,7 +415,7 @@ class CourseReportModel:
             )
             platformContentWarehouseDF = platformContentWarehouseDF.unionByName(es_final_assessment_df)
 
-            df_warehouse = platformContentWarehouseDF.union(marketPlaceContentWarehouseDF)
+            df_warehouse = platformContentWarehouseDF.union(marketPlaceContentWarehouseDF).dropDuplicates(["content_id"])
 
             # CHANGED: removed coalesce(1) - same fix as above, forces
             # single-task write regardless of data volume.
