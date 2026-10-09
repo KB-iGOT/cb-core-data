@@ -102,7 +102,8 @@ def preComputeACBPData(spark):
         col("assignmentType"),
         col("assignmentTypeInfo"),
         col("planyear"),
-        col("plantype")
+        col("plantype"),
+        col("calinkedid")
     )
                       .na.fill({"cbPlanName": ""})
                       )
@@ -112,7 +113,8 @@ def preComputeACBPData(spark):
 
     draft_cbp_data = (acbp_select_df
                       .filter((col("acbpStatus") == "draft") & col("draftdata").isNotNull())
-                      .select("acbpID", "orgID", "draftdata", "acbpStatus", "acbpCreatedBy", "isapar", "planyear", "plantype")
+                      .select("acbpID", "orgID", "draftdata", "acbpStatus", "acbpCreatedBy", "isapar", "planyear", "plantype",
+                              "calinkedid")
                       .withColumn("draftData", from_json(col("draftdata"), schemas.cbplan_draft_data_schema))
                       .withColumn("cbPlanName", col("draftData.name"))
                       .withColumn("assignmentType", col("draftData.assignmentType"))

@@ -1,6 +1,7 @@
 from datetime import datetime
 from unittest import case
 import findspark
+from pyspark.sql.types import StructType, StringType, BooleanType, StructField
 
 findspark.init()
 import sys
@@ -11,7 +12,7 @@ from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.window import Window
 from pyspark.sql.functions import (
     col, explode, split, regexp_replace, trim,
-    when, lit, row_number
+    when, lit, row_number, from_json
 )
 
 # Add parent directory to sys.path for importing project-specific modules
@@ -69,6 +70,29 @@ class L2AssessmentReport:
             userDF = userDF.join(dwOrgDF.select("mdo_id", "mdo_name"), "mdo_id", "left")
             dwcbPlanDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
             assessmentMinPassDF = spark.read.parquet(f"{config.baseCachePath}/esCourseAssessment")
+
+            acbpSelectDF = spark.read.parquet(ParquetFileConstants.ACBP_SELECT_FILE)
+
+            planMetaDF = (
+                acbpSelectDF
+                .select(
+                    F.trim(col("acbpID")).alias("acbpID"),
+                    when(F.trim(col("calinkedid")) == "", lit(None))
+                    .otherwise(F.trim(col("calinkedid"))).alias("calinkedid"),
+                    col("planyear")
+                )
+                .filter(col("acbpID").isNotNull())
+                .groupBy("acbpID")
+                .agg(F.max("calinkedid").alias("calinkedid"),
+                     F.max("planyear").alias("planyear"))
+            )
+
+            caPlanYearDF = (
+                planMetaDF
+                .select("acbpID",
+                        "calinkedid",
+                        col("planyear").alias("linked_plan_year"))
+)
 
             # assessment Minimum Pass DF
             assessmentMinPassDF.printSchema()
@@ -137,10 +161,31 @@ class L2AssessmentReport:
 
             # ==================== APAR CONSUMPTION PROCESSING ====================
             print("\nStage 1: Processing APAR plans...")
-            apar_plans_exploded = acbpAllEnrolDF \
+            course_schema = StructType([
+                StructField("identifier", StringType(), True),
+                StructField("mandatory", BooleanType(), True),
+            ])
+
+            aparBaseDF = acbpAllEnrolDF \
                 .filter(col("isapar") == 'true') \
-                .withColumn("courseID", explode(col("acbpCourseIDList"))) \
+                .join(F.broadcast(caPlanYearDF), "acbpID", "left")
+
+            # Rows from the plan's content list
+            aparCourseRowsDF = aparBaseDF \
+                .withColumn("rawCourse", explode(col("acbpCourseIDList"))) \
+                .withColumn("parsedCourse", from_json(col("rawCourse"), course_schema)) \
+                .withColumn("courseID", F.coalesce(col("parsedCourse.identifier"), col("rawCourse"))) \
                 .withColumn("courseID", regexp_replace(col("courseID"), r"^\s*\[|\]\s*$|\s+", "")) \
+                .withColumn("isACBPMandatory", col("parsedCourse.mandatory")) \
+                .drop("rawCourse", "parsedCourse")
+
+            # One extra row per (user, plan) for calinkedid
+            aparLinkedRowsDF = aparBaseDF \
+                .filter(col("calinkedid").isNotNull()) \
+                .withColumn("courseID", col("calinkedid")) \
+                .withColumn("isACBPMandatory", lit(False))
+
+            apar_plans_exploded = aparCourseRowsDF.unionByName(aparLinkedRowsDF) \
                 .select(
                 col("userID").alias("apar_user_id"),
                 col("acbpID").alias("apar_cbp_plan_id"),
@@ -150,7 +195,9 @@ class L2AssessmentReport:
                 col("cbPlanName").alias("apar_cbPlanName"),
                 col("userOrgID").alias("apar_mdo_id"),
                 col("userOrgName").alias("apar_mdo_name"),
-                col("fullName").alias("apar_full_name")
+                col("fullName").alias("apar_full_name"),
+                F.coalesce(col("linked_plan_year"), col("planyear")).alias("apar_plan_year"),
+                F.coalesce(col("isACBPMandatory"), lit(False)).alias("apar_is_mandatory")
             )
 
             # Step 2: Join with enrolment data
@@ -178,7 +225,9 @@ class L2AssessmentReport:
                 col("certificate_id").alias("enrol_certificate_id"),
                 col("content_last_accessed_on").alias("enrol_content_last_accessed_on"),
                 col("first_completed_on").alias("enrol_first_completed_on"),
-                col("user_consumption_status").alias("enrol_user_consumption_status")
+                col("user_consumption_status").alias("enrol_user_consumption_status"),
+                col("apar_plan_year"),
+                col("apar_is_mandatory")
             )
 
             # Step 3: Join with content data
@@ -210,7 +259,9 @@ class L2AssessmentReport:
                 col("content_type").alias("content_content_type"),
                 col("content_sub_type").alias("content_content_sub_type"),
                 col("content_duration").alias("content_content_duration"),
-                col("content_status").alias("content_content_status")
+                col("content_status").alias("content_content_status"),
+                col("apar_plan_year"),
+                col("apar_is_mandatory")
             )
 
             # Step 4: Join with user data
@@ -249,15 +300,19 @@ class L2AssessmentReport:
                 col("email").alias("user_email"),
                 col("cadre").alias("user_cadre"),
                 col("groups").alias("user_groups"),
-                col("designation").alias("user_designation")
+                col("designation").alias("user_designation"),
+                col("apar_plan_year"),
+                col("apar_is_mandatory")
             )
 
             # Step 5: Join with CB Plan data
             print("\nStage 5: Joining with CB plan data...")
+            cbPlanDatesDF = dwcbPlanDF.groupBy("cb_plan_id").agg(F.max("due_by").alias("due_by"))
+
             apar_with_cbplan = apar_with_user \
                 .join(
-                dwcbPlanDF,
-                apar_with_user.apar_cbp_plan_id == dwcbPlanDF.cb_plan_id,
+                cbPlanDatesDF,
+                apar_with_user.apar_cbp_plan_id == cbPlanDatesDF.cb_plan_id,
                 "left"
             ) \
                 .select(
@@ -291,8 +346,8 @@ class L2AssessmentReport:
                 col("user_designation"),
                 col("due_by").alias("cbplan_due_by"),
                 col("apar_allocated_on").alias("cbplan_start_date"),
-                col("plan_year"),
-                col("isMandatory")
+                col("apar_plan_year").alias("plan_year"),
+                col("apar_is_mandatory").alias("isMandatory")
             )
 
             # Step 6: Join with KCM mapping
