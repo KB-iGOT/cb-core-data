@@ -75,6 +75,7 @@ class DataWarehouseModel:
 
             print("📚 Step 2: Loading Content Data...")
             contentDF = spark.read.parquet(f"{warehouse_path}/{config.dwCourseTable}") \
+                .drop("endDate") \
                 .withColumn("resource_count", col("resource_count").cast("int")) \
                 .withColumn("total_certificates_issued", col("total_certificates_issued").cast("int")) \
                 .withColumn("content_rating", col("content_rating").cast("float")) \

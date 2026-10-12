@@ -314,7 +314,7 @@ class DataExhaustModel:
             should_clause = ",".join([f'{{"match":{{"primaryCategory.raw":"{pc}"}}}}' for pc in primary_categories])
             fields = ["identifier", "name", "primaryCategory", "status", "reviewStatus", "channel",
                       "duration", "leafNodesCount", "lastPublishedOn", "lastStatusChangedOn",
-                      "createdFor", "competencies_v6", "programDirectorName", "language",
+                      "createdFor", "competencies_v6", "programDirectorName", "language","endDate",
                       "courseCategory", "organisation", "childNodes", "difficultyLevel", "badgeDetails_v1"]
             array_fields = ["createdFor", "language", "organisation", "childNodes"]
             fields_clause = ",".join([f'"{f}"' for f in fields])

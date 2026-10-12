@@ -8,10 +8,11 @@ import os
 import time
 from pathlib import Path
 from pyspark.sql import SparkSession, functions as F
+from pyspark.sql.types import StructType, StructField, StringType, BooleanType
 from pyspark.sql.window import Window
 from pyspark.sql.functions import (
     col, explode, split, regexp_replace, trim,
-    when, lit, row_number
+    when, lit, row_number, from_json
 )
 
 # Add parent directory to sys.path for importing project-specific modules
@@ -69,6 +70,29 @@ class L2AssessmentReport:
             userDF = userDF.join(dwOrgDF.select("mdo_id", "mdo_name"), "mdo_id", "left")
             dwcbPlanDF = spark.read.parquet(f"{config.warehouseReportDir}/{config.dwCBPlanTable}")
             assessmentMinPassDF = spark.read.parquet(f"{config.baseCachePath}/esCourseAssessment")
+            acbpSelectDF = spark.read.parquet(ParquetFileConstants.ACBP_SELECT_FILE)
+
+            planMetaDF = (
+                acbpSelectDF
+                .select(
+                    F.trim(col("acbpID")).alias("acbpID"),
+                    when(F.trim(col("calinkedid")) == "", lit(None))
+                    .otherwise(F.trim(col("calinkedid"))).alias("calinkedid"),
+                    col("planyear")
+                )
+                .filter(col("acbpID").isNotNull())
+                .groupBy("acbpID")
+                .agg(F.max("calinkedid").alias("calinkedid"),
+                     F.max("planyear").alias("planyear"))
+            )
+
+            caPlanYearDF = (
+                planMetaDF
+                .select("acbpID",
+                        "calinkedid",
+                        col("planyear").alias("linked_plan_year"))
+            )
+
 
             # assessment Minimum Pass DF
             assessmentMinPassDF.printSchema()
@@ -137,10 +161,31 @@ class L2AssessmentReport:
 
             # ==================== APAR CONSUMPTION PROCESSING ====================
             print("\nStage 1: Processing APAR plans...")
-            apar_plans_exploded = acbpAllEnrolDF \
+            course_schema = StructType([
+                StructField("identifier", StringType(), True),
+                StructField("mandatory", BooleanType(), True),
+            ])
+
+            aparBaseDF = acbpAllEnrolDF \
                 .filter(col("isapar") == 'true') \
-                .withColumn("courseID", explode(col("acbpCourseIDList"))) \
+                .join(F.broadcast(caPlanYearDF), "acbpID", "left")
+
+            # Rows from the plan's content list
+            aparCourseRowsDF = aparBaseDF \
+                .withColumn("rawCourse", explode(col("acbpCourseIDList"))) \
+                .withColumn("parsedCourse", from_json(col("rawCourse"), course_schema)) \
+                .withColumn("courseID", F.coalesce(col("parsedCourse.identifier"), col("rawCourse"))) \
                 .withColumn("courseID", regexp_replace(col("courseID"), r"^\s*\[|\]\s*$|\s+", "")) \
+                .withColumn("isACBPMandatory", col("parsedCourse.mandatory")) \
+                .drop("rawCourse", "parsedCourse")
+
+            # One extra row per (user, plan) for calinkedid
+            aparLinkedRowsDF = aparBaseDF \
+                .filter(col("calinkedid").isNotNull()) \
+                .withColumn("courseID", col("calinkedid")) \
+                .withColumn("isACBPMandatory", lit(False))
+
+            apar_plans_exploded = aparCourseRowsDF.unionByName(aparLinkedRowsDF) \
                 .select(
                 col("userID").alias("apar_user_id"),
                 col("acbpID").alias("apar_cbp_plan_id"),
@@ -150,7 +195,9 @@ class L2AssessmentReport:
                 col("cbPlanName").alias("apar_cbPlanName"),
                 col("userOrgID").alias("apar_mdo_id"),
                 col("userOrgName").alias("apar_mdo_name"),
-                col("fullName").alias("apar_full_name")
+                col("fullName").alias("apar_full_name"),
+                F.coalesce(col("linked_plan_year"), col("planyear")).alias("apar_plan_year"),
+                F.coalesce(col("isACBPMandatory"), lit(False)).alias("apar_is_mandatory")
             )
 
             # Step 2: Join with enrolment data
@@ -178,7 +225,9 @@ class L2AssessmentReport:
                 col("certificate_id").alias("enrol_certificate_id"),
                 col("content_last_accessed_on").alias("enrol_content_last_accessed_on"),
                 col("first_completed_on").alias("enrol_first_completed_on"),
-                col("user_consumption_status").alias("enrol_user_consumption_status")
+                col("user_consumption_status").alias("enrol_user_consumption_status"),
+                col("apar_plan_year"),
+                col("apar_is_mandatory")
             )
 
             # Step 3: Join with content data
@@ -210,7 +259,9 @@ class L2AssessmentReport:
                 col("content_type").alias("content_content_type"),
                 col("content_sub_type").alias("content_content_sub_type"),
                 col("content_duration").alias("content_content_duration"),
-                col("content_status").alias("content_content_status")
+                col("content_status").alias("content_content_status"),
+                col("apar_plan_year"),
+                col("apar_is_mandatory")
             )
 
             # Step 4: Join with user data
@@ -249,15 +300,18 @@ class L2AssessmentReport:
                 col("email").alias("user_email"),
                 col("cadre").alias("user_cadre"),
                 col("groups").alias("user_groups"),
-                col("designation").alias("user_designation")
+                col("designation").alias("user_designation"),
+                col("apar_plan_year"),
+                col("apar_is_mandatory")
             )
 
             # Step 5: Join with CB Plan data
             print("\nStage 5: Joining with CB plan data...")
+            cbPlanDatesDF = dwcbPlanDF.groupBy("cb_plan_id").agg(F.max("due_by").alias("due_by"))
             apar_with_cbplan = apar_with_user \
                 .join(
-                dwcbPlanDF,
-                apar_with_user.apar_cbp_plan_id == dwcbPlanDF.cb_plan_id,
+                cbPlanDatesDF,
+                apar_with_user.apar_cbp_plan_id == cbPlanDatesDF.cb_plan_id,
                 "left"
             ) \
                 .select(
@@ -291,8 +345,8 @@ class L2AssessmentReport:
                 col("user_designation"),
                 col("due_by").alias("cbplan_due_by"),
                 col("apar_allocated_on").alias("cbplan_start_date"),
-                col("plan_year"),
-                col("isMandatory")
+                col("apar_plan_year").alias("plan_year"),
+                col("apar_is_mandatory").alias("isMandatory")
             )
 
             # Step 6: Join with KCM mapping
@@ -603,6 +657,38 @@ class L2AssessmentReport:
                 .drop("rn")
 
             masterFinalDF = apar_unified.unionByName(cap_unified_deduped)
+            # ── Derive plan_year for CAP content from end_date when missing ───
+            # end_date <= 31-Jul-2026 -> 2025-26, end_date > 31-Jul-2026 -> 2026-27
+            print("\nDeriving plan_year from CAP end_date where missing...")
+            CAP_SUB_TYPE = "Comprehensive Assessment Program"
+            PLAN_YEAR_CUTOFF = "2026-07-31"
+
+            contentEndDateDF = contentDF \
+                .select(
+                col("content_id").alias("ed_content_id"),
+                F.to_date(
+                    F.substring(col("end_date").cast("string"), 1, 10), "yyyy-MM-dd"
+                ).alias("cap_end_date")
+            ) \
+                .dropDuplicates(["ed_content_id"])
+
+            masterFinalDF = masterFinalDF \
+                .join(
+                F.broadcast(contentEndDateDF),
+                masterFinalDF.content_id == contentEndDateDF.ed_content_id,
+                "left"
+            ) \
+                .withColumn(
+                "plan_year",
+                when(
+                    (col("plan_year").isNull() | (trim(col("plan_year").cast("string")) == "")) &
+                    (col("content_sub_type") == CAP_SUB_TYPE) &
+                    col("cap_end_date").isNotNull(),
+                    when(col("cap_end_date") <= lit(PLAN_YEAR_CUTOFF).cast("date"), lit("2025-26"))
+                    .otherwise(lit("2026-27"))
+                ).otherwise(col("plan_year"))
+            ) \
+                .drop("ed_content_id", "cap_end_date")
 
             # Print schema and sample data
             print("\nFinal Schema:")
