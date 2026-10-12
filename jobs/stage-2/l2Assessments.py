@@ -657,6 +657,38 @@ class L2AssessmentReport:
                 .drop("rn")
 
             masterFinalDF = apar_unified.unionByName(cap_unified_deduped)
+            # ── Derive plan_year for CAP content from end_date when missing ───
+            # end_date <= 31-Jul-2026 -> 2025-26, end_date > 31-Jul-2026 -> 2026-27
+            print("\nDeriving plan_year from CAP end_date where missing...")
+            CAP_SUB_TYPE = "Comprehensive Assessment Program"
+            PLAN_YEAR_CUTOFF = "2026-07-31"
+
+            contentEndDateDF = contentDF \
+                .select(
+                col("content_id").alias("ed_content_id"),
+                F.to_date(
+                    F.substring(col("end_date").cast("string"), 1, 10), "yyyy-MM-dd"
+                ).alias("cap_end_date")
+            ) \
+                .dropDuplicates(["ed_content_id"])
+
+            masterFinalDF = masterFinalDF \
+                .join(
+                F.broadcast(contentEndDateDF),
+                masterFinalDF.content_id == contentEndDateDF.ed_content_id,
+                "left"
+            ) \
+                .withColumn(
+                "plan_year",
+                when(
+                    (col("plan_year").isNull() | (trim(col("plan_year").cast("string")) == "")) &
+                    (col("content_sub_type") == CAP_SUB_TYPE) &
+                    col("cap_end_date").isNotNull(),
+                    when(col("cap_end_date") <= lit(PLAN_YEAR_CUTOFF).cast("date"), lit("2025-26"))
+                    .otherwise(lit("2026-27"))
+                ).otherwise(col("plan_year"))
+            ) \
+                .drop("ed_content_id", "cap_end_date")
 
             # Print schema and sample data
             print("\nFinal Schema:")

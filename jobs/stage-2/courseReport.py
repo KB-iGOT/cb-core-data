@@ -246,7 +246,8 @@ class CourseReportModel:
                 lit("External Content").alias("content_sub_type"),
                 lit("0").alias("scorm_flag"),
                 lit(None).alias("difficulty_level"),
-                col("data_last_generated_on")
+                col("data_last_generated_on"),
+                lit(None).cast("string").alias("end_date")
             )
 
             marketPlaceContentMdoReportDF = marketPlaceContentWithEnrolmentsDF \
@@ -373,7 +374,8 @@ class CourseReportModel:
                 col("courseCategory").alias("content_sub_type"),
                 col("scorm_flag"),
                 col('difficultyLevel').alias('difficulty_level'),
-                col("data_last_generated_on")
+                col("data_last_generated_on"),
+                col("endDate").alias("end_date")
             )
             print(f"Stage 7: Complete (⏱ {time.time() - stage_start:.2f}s)")
             stage_start = time.time()
@@ -404,7 +406,8 @@ class CourseReportModel:
                 col("contextCategory").alias("content_sub_type"),
                 lit(0).alias("scorm_flag"),
                 lit(None).alias("difficulty_level"),
-                lit(currentDateTime).alias("data_last_generated_on")
+                lit(currentDateTime).alias("data_last_generated_on"),
+                lit(None).cast("string").alias("end_date")
             )
             es_final_assessment_df = es_final_assessment_df.join(
                 orgComputedDF,
@@ -415,7 +418,7 @@ class CourseReportModel:
             )
             platformContentWarehouseDF = platformContentWarehouseDF.unionByName(es_final_assessment_df)
 
-            df_warehouse = platformContentWarehouseDF.union(marketPlaceContentWarehouseDF).dropDuplicates(["content_id"])
+            df_warehouse = platformContentWarehouseDF.unionByName(marketPlaceContentWarehouseDF).dropDuplicates(["content_id"])
 
             # CHANGED: removed coalesce(1) - same fix as above, forces
             # single-task write regardless of data volume.
