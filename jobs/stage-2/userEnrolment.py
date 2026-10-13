@@ -1,28 +1,21 @@
 import findspark
 
 findspark.init()
-import sys
 from pathlib import Path
-import pandas as pd
-from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.functions import bround, col, broadcast, concat_ws, coalesce, lit, when, from_unixtime, split, regexp_replace
-from pyspark.sql.functions import col, lit, coalesce, concat_ws, when, broadcast, get_json_object, rtrim
-from pyspark.sql.functions import col, from_json, explode_outer, coalesce, lit, format_string, split
-from pyspark.sql.types import StructType, ArrayType, StringType, BooleanType, StructField
-from pyspark.sql.types import MapType, StringType, StructType, StructField, FloatType, LongType, DateType, IntegerType
-from pyspark.sql.functions import col, when, size, lit, expr, unix_timestamp, date_format, from_json, current_timestamp, \
-    to_date, round, explode, to_utc_timestamp, from_utc_timestamp, to_timestamp, sum as spark_sum, upper, concat, \
-    row_number, trim, exists
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StringType, DateType, IntegerType
+from pyspark.sql.functions import col, when, size, lit, expr, date_format, current_timestamp, \
+    to_date, round, explode, to_utc_timestamp, from_utc_timestamp, to_timestamp, upper, concat, \
+    row_number, trim, exists, explode_outer, coalesce, format_string, split, from_unixtime, regexp_replace
 from pyspark.sql.window import Window
 
 from datetime import datetime
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from dfutil.content import contentDFUtil
 from dfutil.enrolment import enrolmentDFUtil
-from dfutil.user import userDFUtil
 from dfutil.dfexport import dfexportutil
+from dfutil.assessment import assessmentDFUtil
 
 from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.default_config import create_config
