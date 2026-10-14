@@ -688,12 +688,7 @@ class L2AssessmentReport:
                     .otherwise(lit("2026-27"))
                 ).otherwise(col("plan_year"))
             ) \
-                .drop("ed_content_id", "cap_end_date")
-
-            # Print schema and sample data
-            print("\nFinal Schema:")
-            masterFinalDF.printSchema()
-            masterFinalDF.groupBy("comprehensive_level_assessment_status").count().show()
+                .drop("ed_content_id", "cap_end_date").na.fill("None", ["cbp_plan_end_date", "cbp_plan_start_date"])
 
             print("\nReport generation completed successfully!")
 
