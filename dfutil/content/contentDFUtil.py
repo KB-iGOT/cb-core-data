@@ -144,7 +144,7 @@ def preComputeExternalContentDataFrame(spark) -> DataFrame:
         exportDFToParquet(df,ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
 
 @staticmethod
-def infer_hierarchy_schema(spark, df, hierarchy_col, sample_fraction=0.3):
+def infer_hierarchy_schema(spark, df, hierarchy_col, sample_fraction=None):
     hierarchy_strings = df.select(hierarchy_col).filter(col(hierarchy_col).isNotNull())
     if sample_fraction:
         hierarchy_strings = hierarchy_strings.sample(fraction=sample_fraction, seed=42)
@@ -417,9 +417,6 @@ def precomputeContentHierarchyDataFrame(spark: SparkSession) -> DataFrame:
 
     exportDFToParquet(resultDF, ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_PARQUET_FILE)
 
-#def precomputeContentHierarchyDataFrame(spark: SparkSession) -> DataFrame:
-#contentHierarchydf = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE).select(col("identifier"), col("hierarchy"))
-#    exportDFToParquet(contentHierarchydf, ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
 @staticmethod
 def duration_format(df, in_col, out_col=None):
     out_col_name = out_col if out_col is not None else in_col

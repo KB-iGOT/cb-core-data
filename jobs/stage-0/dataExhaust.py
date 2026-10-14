@@ -1,7 +1,4 @@
-import json
-
 import findspark
-import requests
 
 findspark.init()
 from datetime import datetime
@@ -9,11 +6,8 @@ import sys
 from pathlib import Path
 import os
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import (
-    col, from_json, explode_outer, concat, substring, lit, when, size,
-    expr, date_format, to_utc_timestamp, current_timestamp, coalesce,
-    to_timestamp, isnan, isnull, format_string, array_join
-)
+import json
+import requests
 
 from pyspark.sql.functions import (
     col, from_json, explode, explode_outer, concat, substring, lit, when, size,
