@@ -11,6 +11,138 @@ from pyspark.sql.types import ( DateType)
 from constants.ParquetFileConstants import ParquetFileConstants
 from util import schemas
 from dfutil.enrolment import enrolmentDFUtil
+
+def esContentDataFrame(
+    spark: SparkSession
+) -> DataFrame:
+    return spark.read.parquet(ParquetFileConstants.ESCONTENT_PARQUET_FILE)
+
+def preComputeAllCourseProgramESDataFrame(spark: SparkSession) -> DataFrame:
+  
+    contentDF = esContentDataFrame(spark) \
+        .withColumn("courseOrgID", explode_outer(col("createdFor"))) \
+        .withColumn("contentLanguage", explode_outer(col("language"))) \
+        .withColumn("contentCreator", explode_outer(col("organisation"))) \
+        .withColumn("competencyAreaRefId", 
+                   F.when(F.col("competencies_v6").isNotNull(), 
+                         F.col("competencies_v6")["competencyAreaRefId"])
+                   .otherwise(F.array())) \
+        .withColumn("competencyThemeRefId", 
+                   F.when(F.col("competencies_v6").isNotNull(), 
+                         F.col("competencies_v6")["competencyThemeRefId"])
+                   .otherwise(F.array())) \
+        .withColumn("competencySubThemeRefId", 
+                   F.when(F.col("competencies_v6").isNotNull(), 
+                         F.col("competencies_v6")["competencySubThemeRefId"])
+                   .otherwise(F.array())) \
+        .select(
+            col("identifier").alias("courseID"),
+            col("primaryCategory").alias("category"),
+            col("name").alias("courseName"),
+            col("status").alias("courseStatus"),
+            col("reviewStatus").alias("courseReviewStatus"),
+            col("channel").alias("courseChannel"),
+            col("lastPublishedOn").alias("courseLastPublishedOn"),
+            col("duration").cast(FloatType()).alias("courseDuration"),
+            col("leafNodesCount").alias("courseResourceCount"),
+            col("lastStatusChangedOn").alias("lastStatusChangedOn"),
+            col("programDirectorName"),
+            col("courseOrgID"),
+            col("badgeDetails_v1"),
+            F.col("competencyAreaRefId"),
+            F.col("competencyThemeRefId"),
+            F.col("competencySubThemeRefId"),
+            col("contentLanguage"),
+            col("courseCategory"),
+            col("contentCreator"),
+            col("difficultyLevel"),
+            col("endDate")
+        ) \
+        .dropDuplicates(["courseID", "category"]) \
+        .fillna(0.0, subset=["courseDuration"]) \
+        .fillna(0, subset=["courseResourceCount"])
+        
+    exportDFToParquet(contentDF,ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE)
+
+def preComputeRatingAndSummaryDataFrame(spark):
+    ratingSummaryDF = spark.read.parquet(ParquetFileConstants.RATING_SUMMARY_PARQUET_FILE) \
+        .where(expr("total_number_of_ratings > 0")) \
+        .withColumn("ratingAverage", expr("sum_of_total_ratings / total_number_of_ratings")) \
+        .select(
+            col("activityid").alias("courseID"),
+            col("activitytype").alias("categoryLower"),
+            col("sum_of_total_ratings").alias("ratingSum"),
+            col("total_number_of_ratings").alias("ratingCount"),
+            col("ratingAverage"),
+            col("totalcount1stars").alias("count1Star"),
+            col("totalcount2stars").alias("count2Star"),
+            col("totalcount3stars").alias("count3Star"),
+            col("totalcount4stars").alias("count4Star"),
+            col("totalcount5stars").alias("count5Star")
+        ) \
+        .withColumn("categoryLower", lower(col("categoryLower"))) \
+        .dropDuplicates(["courseID", "categoryLower"])
+    
+    exportDFToParquet(ratingSummaryDF,ParquetFileConstants.RATING_SUMMARY_COMPUTED_PARQUET_FILE)
+
+    ratingRawDF = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)
+    ratingDF = ratingRawDF \
+        .select(
+            col("activityid").alias("courseID"),
+            col("userid").alias("userID"), 
+            col("rating").alias("userRating"),
+            col("activitytype").alias("cbpType"),
+            col("createdon").alias("createdOn")
+        )
+    exportDFToParquet(ratingDF,ParquetFileConstants.RATING_COMPUTED_PARQUET_FILE)
+
+
+    contentRating = ratingDF.filter(col("userRating").isNotNull()) \
+    .groupBy("courseID") \
+    .agg(
+        count("userRating").alias("totalRatings"),
+        avg("userRating").alias("rating")
+    ) \
+    .select("courseID", "totalRatings", "rating")
+
+    exportDFToParquet(contentRating,ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)
+
+def preComputeContentDataFrame(spark: SparkSession):
+    contentRatingDF=spark.read.parquet(ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)    
+    contentWithRatingDF=spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE).join(
+        contentRatingDF,"courseID","left").drop(contentRatingDF["courseID"])
+    
+    orgDF=spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE).select(
+      col("orgID").alias("courseOrgID"),
+      col("orgName").alias("courseOrgName"),
+      col("orgStatus").alias("courseOrgStatus")
+    )
+
+    contentWithOrgRatingDF=contentWithRatingDF.join(orgDF, contentWithRatingDF["courseOrgID"] == orgDF["courseOrgID"], "left") \
+        .drop(orgDF["courseOrgID"]) \
+        
+    exportDFToParquet(contentWithOrgRatingDF,ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+
+
+def preComputeExternalContentDataFrame(spark) -> DataFrame:
+        df = (
+            spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_PARQUET_FILE)
+            .withColumn("parsed_data", from_json(col("cios_data"), schemas.cios_data_schema))
+            .withColumnRenamed("courseid", "content_id")
+            .select(
+                col("content_id"),
+                col("parsed_data.content.name").alias("courseName"),
+                col("parsed_data.content.duration").alias("courseDuration"),
+                col("parsed_data.content.lastUpdatedOn").alias("courseLastPublishedOn"),
+                col("parsed_data.content.contentPartner.id").alias("courseOrgID"),
+                col("parsed_data.content.contentPartner.contentPartnerName").alias("courseOrgName"),
+                col("parsed_data.content.badgeDetails_v1").alias("badge"),
+                lit("External Content").alias("category"),
+                lit("LIVE").alias("courseStatus")
+            )
+        )
+        exportDFToParquet(df,ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
+
 @staticmethod
 def infer_hierarchy_schema(spark, df, hierarchy_col, sample_fraction=0.3):
     hierarchy_strings = df.select(hierarchy_col).filter(col(hierarchy_col).isNotNull())
@@ -155,7 +287,6 @@ def precomputeContentHierarchyEnhancedDataFrame(spark: SparkSession) -> DataFram
         .dropDuplicates(["root_content_id", "level", "identifier", "parent_id"])
     )
     #-----Joining with es metadata
-    #es_data = spark.read.parquet("/home/analytics/pyspark/data-res/pq_files/cache_pq/esContent-1")
     enriched_data = hierarchy_long_df.join(es_data, on="identifier", how="left")
 
     exportDFToParquet(enriched_data, ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
@@ -214,8 +345,6 @@ def precomputeContentHierarchyDataFrame(spark: SparkSession) -> DataFrame:
         .select(col("identifier").alias("root_content_id"),*parent_columns,col("hierarchy").alias("_node_0"))
     )
     current_struct = get_struct_type(contentHierarchyWithSchema, "_node_0")
-
-    MAX_CHILD_LEVEL = 4
 
     # ---- LEVELS 1-4 ----
     MAX_CHILD_LEVEL = 4
@@ -287,137 +416,6 @@ def precomputeContentHierarchyDataFrame(spark: SparkSession) -> DataFrame:
     resultDF = current_df.select(*final_cols)
 
     exportDFToParquet(resultDF, ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_PARQUET_FILE)
-
-def esContentDataFrame(
-    spark: SparkSession
-) -> DataFrame:
-    return spark.read.parquet(ParquetFileConstants.ESCONTENT_PARQUET_FILE)
-
-def preComputeAllCourseProgramESDataFrame(spark: SparkSession) -> DataFrame:
-  
-    contentDF = esContentDataFrame(spark) \
-        .withColumn("courseOrgID", explode_outer(col("createdFor"))) \
-        .withColumn("contentLanguage", explode_outer(col("language"))) \
-        .withColumn("contentCreator", explode_outer(col("organisation"))) \
-        .withColumn("competencyAreaRefId", 
-                   F.when(F.col("competencies_v6").isNotNull(), 
-                         F.col("competencies_v6")["competencyAreaRefId"])
-                   .otherwise(F.array())) \
-        .withColumn("competencyThemeRefId", 
-                   F.when(F.col("competencies_v6").isNotNull(), 
-                         F.col("competencies_v6")["competencyThemeRefId"])
-                   .otherwise(F.array())) \
-        .withColumn("competencySubThemeRefId", 
-                   F.when(F.col("competencies_v6").isNotNull(), 
-                         F.col("competencies_v6")["competencySubThemeRefId"])
-                   .otherwise(F.array())) \
-        .select(
-            col("identifier").alias("courseID"),
-            col("primaryCategory").alias("category"),
-            col("name").alias("courseName"),
-            col("status").alias("courseStatus"),
-            col("reviewStatus").alias("courseReviewStatus"),
-            col("channel").alias("courseChannel"),
-            col("lastPublishedOn").alias("courseLastPublishedOn"),
-            col("duration").cast(FloatType()).alias("courseDuration"),
-            col("leafNodesCount").alias("courseResourceCount"),
-            col("lastStatusChangedOn").alias("lastStatusChangedOn"),
-            col("programDirectorName"),
-            col("courseOrgID"),
-            col("badgeDetails_v1"),
-            F.col("competencyAreaRefId"),
-            F.col("competencyThemeRefId"),
-            F.col("competencySubThemeRefId"),
-            col("contentLanguage"),
-            col("courseCategory"),
-            col("contentCreator"),
-            col("difficultyLevel"),
-            col("endDate")
-        ) \
-        .dropDuplicates(["courseID", "category"]) \
-        .fillna(0.0, subset=["courseDuration"]) \
-        .fillna(0, subset=["courseResourceCount"])
-        
-    exportDFToParquet(contentDF,ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE)
-
-def preComputeRatingAndSummaryDataFrame(spark):
-    ratingSummaryDF = spark.read.parquet(ParquetFileConstants.RATING_SUMMARY_PARQUET_FILE) \
-        .where(expr("total_number_of_ratings > 0")) \
-        .withColumn("ratingAverage", expr("sum_of_total_ratings / total_number_of_ratings")) \
-        .select(
-            col("activityid").alias("courseID"),
-            col("activitytype").alias("categoryLower"),
-            col("sum_of_total_ratings").alias("ratingSum"),
-            col("total_number_of_ratings").alias("ratingCount"),
-            col("ratingAverage"),
-            col("totalcount1stars").alias("count1Star"),
-            col("totalcount2stars").alias("count2Star"),
-            col("totalcount3stars").alias("count3Star"),
-            col("totalcount4stars").alias("count4Star"),
-            col("totalcount5stars").alias("count5Star")
-        ) \
-        .withColumn("categoryLower", lower(col("categoryLower"))) \
-        .dropDuplicates(["courseID", "categoryLower"])
-    
-    exportDFToParquet(ratingSummaryDF,ParquetFileConstants.RATING_SUMMARY_COMPUTED_PARQUET_FILE)
-
-    ratingRawDF = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE)
-    ratingDF = ratingRawDF \
-        .select(
-            col("activityid").alias("courseID"),
-            col("userid").alias("userID"), 
-            col("rating").alias("userRating"),
-            col("activitytype").alias("cbpType"),
-            col("createdon").alias("createdOn")
-        )
-    exportDFToParquet(ratingDF,ParquetFileConstants.RATING_COMPUTED_PARQUET_FILE)
-
-
-    contentRating = ratingDF.filter(col("userRating").isNotNull()) \
-    .groupBy("courseID") \
-    .agg(
-        count("userRating").alias("totalRatings"),
-        avg("userRating").alias("rating")
-    ) \
-    .select("courseID", "totalRatings", "rating")
-
-    exportDFToParquet(contentRating,ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)
-
-def preComputeContentDataFrame(spark: SparkSession):
-    contentRatingDF=spark.read.parquet(ParquetFileConstants.CONTENT_RATING_COMPUTED_PARQUET_FILE)    
-    contentWithRatingDF=spark.read.parquet(ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE).join(
-        contentRatingDF,"courseID","left").drop(contentRatingDF["courseID"])
-    
-    orgDF=spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE).select(
-      col("orgID").alias("courseOrgID"),
-      col("orgName").alias("courseOrgName"),
-      col("orgStatus").alias("courseOrgStatus")
-    )
-
-    contentWithOrgRatingDF=contentWithRatingDF.join(orgDF, contentWithRatingDF["courseOrgID"] == orgDF["courseOrgID"], "left") \
-        .drop(orgDF["courseOrgID"]) \
-        
-    exportDFToParquet(contentWithOrgRatingDF,ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
-
-
-def preComputeExternalContentDataFrame(spark) -> DataFrame:
-        df = (
-            spark.read.parquet(ParquetFileConstants.EXTERNAL_CONTENT_PARQUET_FILE)
-            .withColumn("parsed_data", from_json(col("cios_data"), schemas.cios_data_schema))
-            .withColumnRenamed("courseid", "content_id")
-            .select(
-                col("content_id"),
-                col("parsed_data.content.name").alias("courseName"),
-                col("parsed_data.content.duration").alias("courseDuration"),
-                col("parsed_data.content.lastUpdatedOn").alias("courseLastPublishedOn"),
-                col("parsed_data.content.contentPartner.id").alias("courseOrgID"),
-                col("parsed_data.content.contentPartner.contentPartnerName").alias("courseOrgName"),
-                col("parsed_data.content.badgeDetails_v1").alias("badge"),
-                lit("External Content").alias("category"),
-                lit("LIVE").alias("courseStatus")
-            )
-        )
-        exportDFToParquet(df,ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
 
 #def precomputeContentHierarchyDataFrame(spark: SparkSession) -> DataFrame:
 #contentHierarchydf = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE).select(col("identifier"), col("hierarchy"))
