@@ -101,6 +101,7 @@ def main():
         ("All Course/Program (ES)", contentDFUtil.preComputeAllCourseProgramESDataFrame, False),
         ("Content Master Data", contentDFUtil.preComputeContentDataFrame, False),
         ("Content Hierarchy Computation", contentDFUtil.precomputeContentHierarchyDataFrame, False),
+        ("Content Hierarchy Computation", contentDFUtil.precomputeContentHierarchyEnhancedDataFrame, False),
         ("Assessment Master Data", assessmentDFUtil.precomputeAssessmentEsDataframe, False),
         ("External Content", contentDFUtil.preComputeExternalContentDataFrame, False),
         ("User Profile Computation", userDFUtil.preComputeUser, False),

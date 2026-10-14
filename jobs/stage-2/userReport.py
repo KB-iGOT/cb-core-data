@@ -4,13 +4,13 @@ import sys
 from pathlib import Path
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, when, coalesce, lit, upper, concat, exists, split, element_at,
-    current_timestamp, date_format, from_unixtime, concat_ws, from_json, explode, trim, length, first, expr,
-    sum as F_sum, max as F_max, get_json_object, size as F_size, bround, regexp_extract, broadcast
+    col, when, coalesce, lit, upper, concat, exists, split,
+    current_timestamp, date_format, from_unixtime, concat_ws, from_json, explode, trim, first, expr,
+    sum as F_sum, get_json_object, size as F_size, bround, regexp_extract, broadcast
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pyspark.sql.functions import collect_set
-from pyspark.sql.types import ArrayType
+from pyspark.sql.types import ArrayType, StructType, StructField, StringType
 import os
 import time
 from datetime import datetime
@@ -83,118 +83,130 @@ def processUserReport(config):
 
         # Step 3: Load Content Duration
         print("📖 Step 3: Loading Content Duration Data...")
-        base_hierarchy_df = (spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_PARQUET_FILE)
-        .select(
+        ROOT_CATEGORIES = [
+            "Course", "Pre Enrolment Assessment", "Moderated Course", "Moderated Assessment",
+            "Invite-Only Assessment", "Standalone Assessment", "Multilingual Course",
+            "Blended Program", "Comprehensive Assessment Program", "Curated Program", "Learning Pathway",
+        ]
+        CHILD_DURATION_CATEGORIES = ["Blended Program", "Comprehensive Assessment Program", "Curated Program"]
+
+        # Minimal schemas: from_json ignores fields not listed, and missing fields come back as null
+        # (so a missing sessionDetails_v2 no longer throws AnalysisException).
+        batches_schema = ArrayType(StructType([
+            StructField("batchAttributes", StructType([
+                StructField("sessionDetails_v2", ArrayType(StructType([
+                    StructField("sessionType", StringType()),
+                    StructField("sessionDuration", StringType()),
+                ]))),
+            ])),
+        ]))
+        milestones_schema = ArrayType(StructType([
+            StructField("assessmentDetail", StructType([
+                StructField("duration", StringType()),
+            ])),
+        ]))
+
+        print("📖 Step 3: Loading Content Duration Data...")
+        hierarchy_flattened = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
+
+        hierarchy_df = hierarchy_flattened.select(
+            "identifier", "root_content_id", "parent_id", "primaryCategory",
+            "courseCategory", "duration", "batches", "milestones_v1",
+        )
+
+        # ---- Root rows: one per root content -------------------------------------
+        # Requires the flattened parquet to contain a row for the root itself.
+        # If it doesn't, build root_df from CONTENT_COMPUTED_PARQUET_FILE instead.
+        root_df = (
+            hierarchy_df
+            .filter(col("identifier") == col("root_content_id"))
+            .filter(col("courseCategory").isin(ROOT_CATEGORIES))
+            .select(
+                "root_content_id",
+                "courseCategory",
+                coalesce(col("duration").cast("double"), lit(0.0)).alias("parent_duration"),
+                from_json(col("batches"), batches_schema).alias("parent_batches"),
+                from_json(col("milestones_v1"), milestones_schema).alias("parent_milestones_v1"),
+                # TODO: preliminary assessment id is NOT in the new flattened schema.
+                # Source it from the content table, or get it added to the flattened parquet.
+                lit(None).cast("string").alias("parent_preliminary_assessment_id"),
+            )
+            .dropDuplicates(["root_content_id"])
+        )
+
+        # Child rows without root-only columns (courseCategory is NULL on children anyway)
+        child_df = hierarchy_df.drop("courseCategory", "batches", "milestones_v1") \
+            .filter(col("identifier") != col("root_content_id"))
+
+        # ---- Level 1: direct children of the root (scoped to that root) ----------
+        l1_df = (
+            child_df
+            .filter(col("parent_id") == col("root_content_id"))
+            .join(root_df.select("root_content_id", "courseCategory"), "root_content_id", "inner")
+            .select(
+                "root_content_id", "courseCategory",
+                col("identifier").alias("l1_id"),
+                col("primaryCategory").alias("l1_primaryCategory"),
+                col("duration").cast("double").alias("l1_duration"),
+            )
+            .dropDuplicates(["root_content_id", "l1_id"])
+        )
+
+        # ---- Level 2: children of level-1 nodes, joined on root AND parent --------
+        l2_df = child_df.select(
             "root_content_id",
-            "first_level_child_identifier",
-            "courseCategory",
-            "first_level_child_primaryCategory",
-            "parent_duration",
-            "first_level_child_duration",
-            "parent_batches",
-            "second_level_child_identifier",
-            "second_level_child_duration",
-            "parent_milestones_v1",
-            "parent_preliminary_assessment_id"
+            col("parent_id").alias("l1_id"),
+            col("identifier").alias("l2_id"),
+            col("duration").cast("double").alias("l2_duration"),
         )
-        .filter(
-            col("courseCategory").isin(
-                "Course",
-                "Pre Enrolment Assessment",
-                "Moderated Course",
-                "Moderated Assessment",
-                "Invite-Only Assessment",
-                "Standalone Assessment",
-                "Multilingual Course",
-                "Blended Program",
-                "Comprehensive Assessment Program",
-                "Curated Program",
-                "Learning Pathway"
-            )
-        )
-        .withColumn(
-            "selected_child_duration",
-            when(
-                col("courseCategory") == "Blended Program",
-                when(
-                    col("first_level_child_primaryCategory") != "Course",
-                    col("first_level_child_duration").cast("double")
-                ).otherwise(lit(0.0))
-            )
-            .when(
-                col("courseCategory").isin(
-                    "Comprehensive Assessment Program",
-                    "Curated Program"
-                ),
-                when(
-                    col("first_level_child_primaryCategory") != "Course",
-                    col("first_level_child_duration").cast("double")
-                ).otherwise(lit(0.0))
-            )
-            .otherwise(lit(0.0))
-        )
-        )
+
         es_final_assessment_df = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
 
+        # Same logic as before: non-Course L1 children count; null duration falls back to
+        # final-assessment expectedDuration for CAP / Curated Program only.
         first_level_selected_duration_df = (
-            base_hierarchy_df
-            .select("root_content_id", "courseCategory", "first_level_child_identifier", "selected_child_duration")
-            .dropDuplicates(["root_content_id", "courseCategory", "first_level_child_identifier"])
-            .join(broadcast(
-                es_final_assessment_df
-                .select(
-                    col("identifier").alias("first_level_child_identifier"),
-                    col("expectedDuration").alias("assessment_expected_duration")
-                )
-            ),
-                on="first_level_child_identifier",
-                how="left"
+            l1_df
+            .filter(col("courseCategory").isin(CHILD_DURATION_CATEGORIES))
+            .join(
+                broadcast(es_final_assessment_df.select(
+                    col("identifier").alias("l1_id"),
+                    col("expectedDuration").alias("assessment_expected_duration"),
+                )),
+                "l1_id", "left",
+            )
+            .withColumn(
+                "selected_child_duration",
+                when(col("l1_primaryCategory") != "Course", col("l1_duration")).otherwise(lit(0.0)),
             )
             .withColumn(
                 "selected_child_duration",
                 coalesce(
                     col("selected_child_duration"),
-                    when(
-                        col("courseCategory").isin("Comprehensive Assessment Program", "Curated Program"),
-                        col("assessment_expected_duration").cast("double")
-                    ),
-                    lit(0.0)
-                )
+                    when(col("courseCategory").isin("Comprehensive Assessment Program", "Curated Program"),
+                         col("assessment_expected_duration").cast("double")),
+                    lit(0.0),
+                ),
             )
-            .groupBy("root_content_id", "courseCategory")
-            .agg(F_sum(coalesce(col("selected_child_duration"), lit(0.0))).alias("selected_child_duration"))
+            .groupBy("root_content_id")
+            .agg(F_sum("selected_child_duration").alias("selected_child_duration"))
         )
 
         root_agg_df = (
-            base_hierarchy_df
-            .groupBy("root_content_id", "courseCategory")
-            .agg(
-                F_max(coalesce(col("parent_duration"), lit(0.0))).cast("double").alias("parent_duration"),
-                #F_sum(coalesce(col("selected_child_duration"), lit(0.0))).alias("selected_child_duration"),
-                first("parent_batches", ignorenulls=True).alias("parent_batches"),
-                first("parent_milestones_v1", ignorenulls=True).alias("parent_milestones_v1"),
-                first("parent_preliminary_assessment_id", ignorenulls=True).alias("parent_preliminary_assessment_id")
-            ).join(first_level_selected_duration_df, on=["root_content_id", "courseCategory"], how="left")
+            root_df
+            .join(first_level_selected_duration_df, "root_content_id", "left")
             .withColumn("selected_child_duration", coalesce(col("selected_child_duration"), lit(0.0)))
         )
 
+        # Blended Program -> resources inside Course Units
         course_unit_duration_df = (
-            base_hierarchy_df
-            .filter(
-                (col("courseCategory") == "Blended Program") &
-                (col("first_level_child_primaryCategory") == "Course Unit")
-            )
-            .select(
-                "root_content_id",
-                "first_level_child_identifier",
-                "second_level_child_identifier",
-                col("second_level_child_duration").cast("double").alias("duration_component")
-            )
-            .dropDuplicates(["root_content_id", "first_level_child_identifier", "second_level_child_identifier"])
+            l1_df
+            .filter((col("courseCategory") == "Blended Program") & (col("l1_primaryCategory") == "Course Unit"))
+            .join(l2_df, ["root_content_id", "l1_id"], "inner")
+            .dropDuplicates(["root_content_id", "l1_id", "l2_id"])
             .groupBy("root_content_id")
-            .agg(F_sum(coalesce(col("duration_component"), lit(0.0))).alias("course_unit_duration"))
+            .agg(F_sum(coalesce(col("l2_duration"), lit(0.0))).alias("course_unit_duration"))
         )
-        # Blended Program -> offline sessions inside batches.
+        # Blended Program -> offline sessions inside batches (parent_batches is now a parsed array)
         offline_batch_duration_df = try_build(
             spark,
             lambda: (
@@ -222,7 +234,7 @@ def processUserReport(config):
                     coalesce(col("milestone.assessmentDetail.duration").cast("double"), lit(0.0))
                 )
                 .groupBy("root_content_id")
-                .agg(F_sum(col("milestone_total_duration")).alias("learning_pathway_duration"))
+                .agg(F_sum("milestone_total_duration").alias("learning_pathway_duration"))
             ),
             "root_content_id string, learning_pathway_duration double",
             "milestones_v1 / assessmentDetail"
@@ -835,7 +847,6 @@ def processUserReport(config):
         govt_mdo_wise_slim.unpersist()
         non_govt_mdo_wise_slim.unpersist()
         user_complete_data.unpersist()
-        base_hierarchy_df.unpersist()
         root_agg_df.unpersist()
 
     except Exception as e:

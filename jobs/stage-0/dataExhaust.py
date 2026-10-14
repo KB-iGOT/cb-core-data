@@ -6,11 +6,8 @@ import sys
 from pathlib import Path
 import os
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import (
-    col, from_json, explode_outer, concat, substring, lit, when, size,
-    expr, date_format, to_utc_timestamp, current_timestamp, coalesce,
-    to_timestamp, isnan, isnull, format_string, array_join
-)
+import json
+import requests
 
 from pyspark.sql.functions import (
     col, from_json, explode, explode_outer, concat, substring, lit, when, size,
@@ -18,7 +15,8 @@ from pyspark.sql.functions import (
     to_timestamp, isnan, isnull, format_string, array_join, first, count, sum, row_number
 )
 from pyspark.sql.functions import unix_timestamp, abs
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, FloatType, ArrayType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, FloatType, ArrayType, Row, \
+    LongType
 from pyspark import StorageLevel
 import logging
 
@@ -306,6 +304,120 @@ class DataExhaustModel:
 
             self.write_parquet(role_df, f"{output_base_path}/role")
             role_df.unpersist()
+
+            # Process Elasticsearch content data
+            self.logger.info("Processing ES content data enhanced...")
+            query_dict = {"bool": {"filter": [{"terms": {"objectType": ["collection", "content", "asset"]}}]}}
+            source_fields = ["identifier", "name", "primaryCategory", "status", "reviewStatus", "channel",
+                             "duration", "leafNodesCount", "lastPublishedOn", "lastStatusChangedOn",
+                             "createdFor", "competencies_v6", "programDirectorName", "language",
+                             "courseCategory", "organisation", "childNodes", "difficultyLevel","leafNodes",
+                             "badgeDetails_v1", "expectedDuration","mimeType", "isExternal", "batches", "milestones_v1"]
+            def fetch_all_docs(host, port, index, query_dict, source_fields, scroll_size=1000, scroll_timeout="2m"):
+                url = f"http://{host}:{port}/{index}/_search?scroll={scroll_timeout}"
+                headers = {"Content-Type": "application/json"}
+                payload = {"size": scroll_size, "_source": source_fields, "query": query_dict}
+
+                all_docs = []
+                resp = requests.post(url, headers=headers, data=json.dumps(payload))
+                resp.raise_for_status()
+                data = resp.json()
+                scroll_id = data.get("_scroll_id")
+                hits = data.get("hits", {}).get("hits", [])
+                all_docs.extend(h.get("_source", {}) for h in hits)
+
+                while scroll_id and hits:
+                    scroll_url = f"http://{host}:{port}/_search/scroll"
+                    scroll_payload = {"scroll": scroll_timeout, "scroll_id": scroll_id}
+                    resp = requests.post(scroll_url, headers=headers, data=json.dumps(scroll_payload))
+                    resp.raise_for_status()
+                    data = resp.json()
+                    scroll_id = data.get("_scroll_id")
+                    hits = data.get("hits", {}).get("hits", [])
+                    all_docs.extend(h.get("_source", {}) for h in hits)
+                    if not hits:
+                        break
+
+                return all_docs
+
+            raw_docs = fetch_all_docs(
+                self.config.sparkElasticsearchConnectionHost,
+                self.config.sparkElasticsearchConnectionPort,
+                "compositesearch",
+                query_dict,
+                source_fields
+            )
+            self.logger.info(f"Fetched {len(raw_docs)} raw documents from ES")
+            # ---- Build rows explicitly: typed fields extracted normally,
+            #      batches/milestones_v1 kept as raw JSON strings (untouched) ----
+            def as_str_list(v):
+                if v is None:
+                    return None
+                if isinstance(v, list):
+                    return v
+                return [v]
+
+            def to_row(doc):
+                return Row(
+                    identifier=doc.get("identifier"),
+                    name=doc.get("name"),
+                    primaryCategory=doc.get("primaryCategory"),
+                    status=doc.get("status"),
+                    reviewStatus=doc.get("reviewStatus"),
+                    channel=doc.get("channel"),
+                    duration=doc.get("duration"),
+                    leafNodesCount=doc.get("leafNodesCount"),
+                    lastPublishedOn=doc.get("lastPublishedOn"),
+                    lastStatusChangedOn=doc.get("lastStatusChangedOn"),
+                    createdFor=as_str_list(doc.get("createdFor")),
+                    competencies_v6=json.dumps(doc["competencies_v6"]) if doc.get("competencies_v6") is not None else None,
+                    programDirectorName=doc.get("programDirectorName"),
+                    language=as_str_list(doc.get("language")),
+                    courseCategory=doc.get("courseCategory"),
+                    organisation=as_str_list(doc.get("organisation")),
+                    childNodes=as_str_list(doc.get("childNodes")),
+                    difficultyLevel=doc.get("difficultyLevel"),
+                    leafNodes=as_str_list(doc.get("leafNodes")),
+                    badgeDetails_v1=json.dumps(doc["badgeDetails_v1"]) if doc.get("badgeDetails_v1") is not None else None,
+                    mimeType=doc.get("mimeType"),
+                    isExternal=doc.get("isExternal"),
+                    expectedDuration=doc.get("expectedDuration"),
+                    batches=json.dumps(doc["batches"]) if doc.get("batches") is not None else None,
+                    milestones_v1=json.dumps(doc["milestones_v1"]) if doc.get("milestones_v1") is not None else None,
+                )
+
+            rows = [to_row(d) for d in raw_docs]
+            schema = StructType([
+                StructField("identifier", StringType(), True),
+                StructField("name", StringType(), True),
+                StructField("primaryCategory", StringType(), True),
+                StructField("status", StringType(), True),
+                StructField("reviewStatus", StringType(), True),
+                StructField("channel", StringType(), True),
+                StructField("duration", StringType(), True),
+                StructField("leafNodesCount", LongType(), True),
+                StructField("lastPublishedOn", StringType(), True),
+                StructField("lastStatusChangedOn", StringType(), True),
+                StructField("createdFor", ArrayType(StringType()), True),
+                StructField("competencies_v6", StringType(), True),
+                StructField("programDirectorName", StringType(), True),
+                StructField("language", ArrayType(StringType()), True),
+                StructField("courseCategory", StringType(), True),
+                StructField("organisation", ArrayType(StringType()), True),
+                StructField("childNodes", ArrayType(StringType()), True),
+                StructField("difficultyLevel", StringType(), True),
+                StructField("leafNodes", ArrayType(StringType()), True),
+                StructField("badgeDetails_v1", StringType(), True),
+                StructField("mimeType", StringType(), True),
+                StructField("isExternal", BooleanType(), True),
+                StructField("expectedDuration", StringType(), True),
+                StructField("batches", StringType(), True),
+                StructField("milestones_v1", StringType(), True),
+            ])
+
+            es_content_df_new = self.spark.createDataFrame(rows, schema=schema)
+            print(es_content_df_new.count())
+            self.write_parquet(es_content_df_new, f"{output_base_path}/esContentExtended")
 
             # Process Elasticsearch content data
             self.logger.info("Processing ES content data...")
