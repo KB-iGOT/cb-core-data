@@ -4,13 +4,289 @@ from dfutil.content import contentDFUtil
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import col, explode_outer,from_json, lit,when, format_string, expr,lower,avg,count
 from pyspark.sql import functions as F
-from pyspark.sql.types import FloatType, StructType
+from pyspark.sql.types import FloatType, DateType, StructType
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import (col, lit, when, expr, format_string, date_format, current_timestamp, to_date, from_json, explode_outer, greatest, size,min as F_min, max as F_max, count as F_count, sum as F_sum,broadcast, trim)
+from pyspark.sql.functions import (col, lit, when, expr,coalesce, format_string, date_format, current_timestamp, to_date, from_json, explode_outer, greatest, size,min as F_min, max as F_max, count as F_count, sum as F_sum,broadcast, trim)
 from pyspark.sql.types import ( DateType)
 from constants.ParquetFileConstants import ParquetFileConstants
 from util import schemas
 from dfutil.enrolment import enrolmentDFUtil
+@staticmethod
+def infer_hierarchy_schema(spark, df, hierarchy_col, sample_fraction=0.3):
+    hierarchy_strings = df.select(hierarchy_col).filter(col(hierarchy_col).isNotNull())
+    if sample_fraction:
+        hierarchy_strings = hierarchy_strings.sample(fraction=sample_fraction, seed=42)
+    json_rdd = hierarchy_strings.rdd.map(lambda r: r[0])
+    return spark.read.json(json_rdd).schema
+
+@staticmethod
+def safe_field(struct_type, node_col, field_name, out_alias):
+    if struct_type is not None and field_name in [f.name for f in struct_type.fields]:
+        return col(f"{node_col}.{field_name}").cast("string").alias(out_alias)
+    return lit(None).cast("string").alias(out_alias)
+
+@staticmethod
+def get_struct_type(df: DataFrame, col_name: str):
+    if col_name not in df.schema.fieldNames():
+        return None
+    dtype = df.schema[col_name].dataType
+    return dtype if isinstance(dtype, StructType) else None
+
+@staticmethod
+def has_children(struct_type):
+    return struct_type is not None and "children" in [f.name for f in struct_type.fields]
+
+@staticmethod
+def safe_raw_field(struct_type, node_col, field_name, out_alias):
+    if struct_type is not None and field_name in [f.name for f in struct_type.fields]:
+        return col(f"{node_col}.{field_name}").alias(out_alias)
+    return lit(None).cast("string").alias(out_alias)
+LEVEL_LABELS = ["parent", "first_level_child", "second_level_child", "third_level_child", "fourth_level_child"]
+def precomputeContentHierarchyEnhancedDataFrame(spark: SparkSession) -> DataFrame:
+
+    es_data = (
+        spark.read.parquet(ParquetFileConstants.ESCONTENT_EXTENDED_PARQUET_FILE)
+        .dropDuplicates(["identifier"])          # avoids join fan-out; IDs untouched
+    )
+
+
+    hierarchy = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE).select(col("identifier"), col("hierarchy")).dropDuplicates(["identifier"])
+    es_roots = es_data.filter(col("courseCategory").isNotNull()).select("identifier")
+
+    contentHierarchydf = es_roots.join(hierarchy, "identifier", "full")
+
+    inferred_schema = infer_hierarchy_schema(spark, contentHierarchydf, "hierarchy")
+    parent_columns = [safe_field(inferred_schema, "hierarchy", "identifier", "parent_identifier")]
+
+    contentHierarchyWithSchema = (
+        contentHierarchydf.withColumn("hierarchy", from_json(col("hierarchy"), inferred_schema))
+        .select(
+            col("identifier").alias("root_content_id"),
+            col("identifier").alias("parent_identifier"),   # row key, not hierarchy.identifier
+            col("hierarchy").alias("_node_0"),
+        )
+    )
+
+    # ---- LEVELS 1-4 ----
+    MAX_CHILD_LEVEL = 4
+    current_df = contentHierarchyWithSchema
+    current_struct = get_struct_type(
+        current_df,
+        "_node_0"
+    )
+    # ---- LEVELS 1-4 ----
+    for level_idx in range(1, MAX_CHILD_LEVEL + 1):
+        label = LEVEL_LABELS[level_idx]
+        prev_node_col = f"_node_{level_idx - 1}"
+        this_node_col = f"_node_{level_idx}"
+
+        if has_children(current_struct):
+            exploded = current_df.select(
+                "*",
+                explode_outer(
+                    col(f"{prev_node_col}.children")
+                ).alias(this_node_col)
+            )
+
+            this_struct = get_struct_type(
+                exploded,
+                this_node_col
+            )
+
+            current_df = exploded.select(
+                "*",
+                safe_field(this_struct, this_node_col, "identifier", f"{label}_identifier")
+            )
+            current_struct = this_struct
+        else:
+            # No children at this level.
+            # Add NULL columns for every expected field.
+            current_df = current_df.select(
+                "*",
+                lit(None).cast("string").alias(f"{label}_identifier")
+            )
+            current_struct = None
+
+    final_cols = ["root_content_id", "parent_identifier"]
+    for level_idx in range(1, MAX_CHILD_LEVEL + 1):
+        label = LEVEL_LABELS[level_idx]
+        final_cols.append(f"{label}_identifier")
+
+    resultDF = current_df.select(*final_cols)
+
+    # ---- Unpivot into long format, carrying each row's IMMEDIATE parent (not root) ----
+    level0 = resultDF.select(
+        col("root_content_id"),
+        lit("parent").alias("level"),
+        col("parent_identifier").alias("identifier"),
+        lit(None).cast("string").alias("parent_id")
+    )
+    level1 = resultDF.select(
+        col("root_content_id"),
+        lit("first_level_child").alias("level"),
+        col("first_level_child_identifier").alias("identifier"),
+        col("parent_identifier").alias("parent_id")
+    )
+    level2 = resultDF.select(
+        col("root_content_id"),
+        lit("second_level_child").alias("level"),
+        col("second_level_child_identifier").alias("identifier"),
+        col("first_level_child_identifier").alias("parent_id")
+    )
+    level3 = resultDF.select(
+        col("root_content_id"),
+        lit("third_level_child").alias("level"),
+        col("third_level_child_identifier").alias("identifier"),
+        col("second_level_child_identifier").alias("parent_id")
+    )
+    level4 = resultDF.select(
+        col("root_content_id"),
+        lit("fourth_level_child").alias("level"),
+        col("fourth_level_child_identifier").alias("identifier"),
+        col("third_level_child_identifier").alias("parent_id")
+    )
+
+    hierarchy_long_df = (
+        level0.unionByName(level1)
+        .unionByName(level2)
+        .unionByName(level3)
+        .unionByName(level4)
+        .filter(col("identifier").isNotNull())
+        .dropDuplicates(["root_content_id", "level", "identifier", "parent_id"])
+    )
+    #-----Joining with es metadata
+    #es_data = spark.read.parquet("/home/analytics/pyspark/data-res/pq_files/cache_pq/esContent-1")
+    enriched_data = hierarchy_long_df.join(es_data, on="identifier", how="left")
+
+    exportDFToParquet(enriched_data, ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
+
+LEVEL_LABELS = ["parent", "first_level_child", "second_level_child", "third_level_child", "fourth_level_child"]
+def precomputeContentHierarchyDataFrame(spark: SparkSession) -> DataFrame:
+    contentHierarchydf = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE).select(col("identifier"), col("hierarchy"))
+    exportDFToParquet(contentHierarchydf, ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
+
+    hierarchy_fields = [
+        "identifier",
+        "primaryCategory",
+        "duration",
+        "mimeType",
+        "name",
+        "leafNodesCount",
+        "channel",
+        "contentType",
+        "objectType",
+        "showTimer",
+        "allowSkip",
+        "competencies_v3",
+        "createdFor",
+        "lastStatusChangedOn",
+        "lastSubmittedOn",
+        "lastPublishedOn",
+        "lastUpdatedOn",
+        "createdOn",
+        "visibility",
+        "userConsent",
+        "isExternal",
+        "publish_type",
+        "leafNodes"
+    ]
+    inferred_schema = infer_hierarchy_schema(spark, contentHierarchydf, "hierarchy")
+    parent_columns = [
+        safe_field(inferred_schema,"hierarchy",field,f"parent_{field}")
+        for field in hierarchy_fields
+    ]
+    # courseCategory is only required at parent level
+    parent_columns.append(
+        safe_field(inferred_schema,"hierarchy","courseCategory","courseCategory")
+    )
+    parent_columns.append(
+        safe_raw_field(inferred_schema, "hierarchy", "batches", "parent_batches")
+    )
+    parent_columns.append(
+        safe_raw_field(inferred_schema, "hierarchy", "milestones_v1", "parent_milestones_v1")
+    )
+    parent_columns.append(
+        safe_field(inferred_schema, "hierarchy", "preliminaryAssessment", "parent_preliminary_assessment_id")
+    )
+
+    contentHierarchyWithSchema = (
+        contentHierarchydf.withColumn("hierarchy",from_json(col("hierarchy"), inferred_schema))
+        .select(col("identifier").alias("root_content_id"),*parent_columns,col("hierarchy").alias("_node_0"))
+    )
+    current_struct = get_struct_type(contentHierarchyWithSchema, "_node_0")
+
+    MAX_CHILD_LEVEL = 4
+
+    # ---- LEVELS 1-4 ----
+    MAX_CHILD_LEVEL = 4
+    current_df = contentHierarchyWithSchema
+    current_struct = get_struct_type(
+        current_df,
+        "_node_0"
+    )
+    # ---- LEVELS 1-4 ----
+    for level_idx in range(1, MAX_CHILD_LEVEL + 1):
+        label = LEVEL_LABELS[level_idx]
+        prev_node_col = f"_node_{level_idx - 1}"
+        this_node_col = f"_node_{level_idx}"
+
+        if has_children(current_struct):
+            exploded = current_df.select(
+                "*",
+                explode_outer(
+                    col(f"{prev_node_col}.children")
+                ).alias(this_node_col)
+            )
+
+            this_struct = get_struct_type(
+                exploded,
+                this_node_col
+            )
+
+            # Extract all configured fields for this child level
+            child_columns = [
+                safe_field(
+                    this_struct,
+                    this_node_col,
+                    field,
+                    f"{label}_{field}"
+                )
+                for field in hierarchy_fields
+            ]
+
+            current_df = exploded.select(
+                "*",
+                *child_columns
+            )
+            current_struct = this_struct
+        else:
+            # No children at this level.
+            # Add NULL columns for every expected field.
+            null_columns = [
+                lit(None).cast("string").alias(
+                    f"{label}_{field}"
+                )
+                for field in hierarchy_fields
+            ]
+            current_df = current_df.select(
+                "*",
+                *null_columns
+            )
+            current_struct = None
+
+    final_cols = ["root_content_id"]
+    final_cols.extend(f"parent_{field}"for field in hierarchy_fields) # Parent fields
+    final_cols.append("courseCategory") # Parent-only courseCategory
+    final_cols.append("parent_batches")
+    final_cols.append("parent_milestones_v1")
+    final_cols.append("parent_preliminary_assessment_id")
+    for level_idx in range(1, 5):
+        label = LEVEL_LABELS[level_idx]
+        final_cols.extend(f"{label}_{field}"for field in hierarchy_fields) # Child levels 1-4
+
+    resultDF = current_df.select(*final_cols)
+
+    exportDFToParquet(resultDF, ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_PARQUET_FILE)
 
 def esContentDataFrame(
     spark: SparkSession
@@ -143,165 +419,9 @@ def preComputeExternalContentDataFrame(spark) -> DataFrame:
         )
         exportDFToParquet(df,ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
 
-@staticmethod
-def infer_hierarchy_schema(spark, df, hierarchy_col, sample_fraction=None):
-    hierarchy_strings = df.select(hierarchy_col).filter(col(hierarchy_col).isNotNull())
-    if sample_fraction:
-        hierarchy_strings = hierarchy_strings.sample(fraction=sample_fraction, seed=42)
-    json_rdd = hierarchy_strings.rdd.map(lambda r: r[0])
-    return spark.read.json(json_rdd).schema
-
-@staticmethod
-def safe_field(struct_type, node_col, field_name, out_alias):
-    if struct_type is not None and field_name in [f.name for f in struct_type.fields]:
-        return col(f"{node_col}.{field_name}").cast("string").alias(out_alias)
-    return lit(None).cast("string").alias(out_alias)
-
-@staticmethod
-def get_struct_type(df: DataFrame, col_name: str):
-    if col_name not in df.schema.fieldNames():
-        return None
-    dtype = df.schema[col_name].dataType
-    return dtype if isinstance(dtype, StructType) else None
-
-@staticmethod
-def has_children(struct_type):
-    return struct_type is not None and "children" in [f.name for f in struct_type.fields]
-
-@staticmethod
-def safe_raw_field(struct_type, node_col, field_name, out_alias):
-    if struct_type is not None and field_name in [f.name for f in struct_type.fields]:
-        return col(f"{node_col}.{field_name}").alias(out_alias)
-    return lit(None).cast("string").alias(out_alias)
-
-LEVEL_LABELS = ["parent", "first_level_child", "second_level_child", "third_level_child", "fourth_level_child"]
-def precomputeContentHierarchyDataFrame(spark: SparkSession) -> DataFrame:
-    contentHierarchydf = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE).select(col("identifier"), col("hierarchy"))
-    exportDFToParquet(contentHierarchydf, ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
-
-    hierarchy_fields = [
-        "identifier",
-        "primaryCategory",
-        "duration",
-        "mimeType",
-        "name",
-        "leafNodesCount",
-        "channel",
-        "contentType",
-        "objectType",
-        "showTimer",
-        "allowSkip",
-        "competencies_v3",
-        "createdFor",
-        "lastStatusChangedOn",
-        "lastSubmittedOn",
-        "lastPublishedOn",
-        "lastUpdatedOn",
-        "createdOn",
-        "visibility",
-        "userConsent",
-        "isExternal",
-        "publish_type",
-        "leafNodes"
-    ]
-    inferred_schema = infer_hierarchy_schema(spark, contentHierarchydf, "hierarchy")
-    parent_columns = [
-        safe_field(inferred_schema,"hierarchy",field,f"parent_{field}")
-        for field in hierarchy_fields
-    ]
-    # courseCategory is only required at parent level
-    parent_columns.append(
-        safe_field(inferred_schema,"hierarchy","courseCategory","courseCategory")
-    )
-    parent_columns.append(
-        safe_raw_field(inferred_schema, "hierarchy", "batches", "parent_batches")
-    )
-    parent_columns.append(
-        safe_raw_field(inferred_schema, "hierarchy", "milestones_v1", "parent_milestones_v1")
-    )
-    parent_columns.append(
-        safe_field(inferred_schema, "hierarchy", "preliminaryAssessment", "parent_preliminary_assessment_id")
-    )
-
-    contentHierarchyWithSchema = (
-        contentHierarchydf.withColumn("hierarchy",from_json(col("hierarchy"), inferred_schema))
-        .select(col("identifier").alias("root_content_id"),*parent_columns,col("hierarchy").alias("_node_0"))
-    )
-    current_struct = get_struct_type(contentHierarchyWithSchema, "_node_0")
-
-    MAX_CHILD_LEVEL = 4
-
-    # ---- LEVELS 1-4 ----
-    MAX_CHILD_LEVEL = 4
-    current_df = contentHierarchyWithSchema
-    current_struct = get_struct_type(
-        current_df,
-        "_node_0"
-    )
-    # ---- LEVELS 1-4 ----
-    for level_idx in range(1, MAX_CHILD_LEVEL + 1):
-        label = LEVEL_LABELS[level_idx]
-        prev_node_col = f"_node_{level_idx - 1}"
-        this_node_col = f"_node_{level_idx}"
-
-        if has_children(current_struct):
-            exploded = current_df.select(
-                "*",
-                explode_outer(
-                    col(f"{prev_node_col}.children")
-                ).alias(this_node_col)
-            )
-
-            this_struct = get_struct_type(
-                exploded,
-                this_node_col
-            )
-
-            # Extract all configured fields for this child level
-            child_columns = [
-                safe_field(
-                    this_struct,
-                    this_node_col,
-                    field,
-                    f"{label}_{field}"
-                )
-                for field in hierarchy_fields
-            ]
-
-            current_df = exploded.select(
-                "*",
-                *child_columns
-            )
-            current_struct = this_struct
-        else:
-            # No children at this level.
-            # Add NULL columns for every expected field.
-            null_columns = [
-                lit(None).cast("string").alias(
-                    f"{label}_{field}"
-                )
-                for field in hierarchy_fields
-            ]
-            current_df = current_df.select(
-                "*",
-                *null_columns
-            )
-            current_struct = None
-
-    final_cols = ["root_content_id"]
-    final_cols.extend(f"parent_{field}"for field in hierarchy_fields) # Parent fields
-    final_cols.append("courseCategory") # Parent-only courseCategory
-    final_cols.append("parent_batches")
-    final_cols.append("parent_milestones_v1")
-    final_cols.append("parent_preliminary_assessment_id")
-    for level_idx in range(1, 5):
-        label = LEVEL_LABELS[level_idx]
-        final_cols.extend(f"{label}_{field}"for field in hierarchy_fields) # Child levels 1-4
-
-    resultDF = current_df.select(*final_cols)
-
-    exportDFToParquet(resultDF, ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_PARQUET_FILE)
-    
+#def precomputeContentHierarchyDataFrame(spark: SparkSession) -> DataFrame:
+#contentHierarchydf = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE).select(col("identifier"), col("hierarchy"))
+#    exportDFToParquet(contentHierarchydf, ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
 @staticmethod
 def duration_format(df, in_col, out_col=None):
     out_col_name = out_col if out_col is not None else in_col

@@ -14,6 +14,7 @@ class ParquetFileConstants:
     BATCH_PARQUET_FILE = str(INPUT_DIR / "batch/**.parquet")
     ENROLMENT_PARQUET_FILE = str(INPUT_DIR / "enrolment/**.parquet")
     ESCONTENT_PARQUET_FILE = str(INPUT_DIR / "esContent/**.parquet")
+    ESCONTENT_EXTENDED_PARQUET_FILE = str(INPUT_DIR / "esContentExtended/**.parquet")
     EXTERNAL_COURSE_ENROLMENTS_PARQUET_FILE = str(INPUT_DIR / "externalCourseEnrolments/**.parquet")
     EXTERNAL_CONTENT_PARQUET_FILE = str(INPUT_DIR / "externalContent/**.parquet")
     EVENT_PARQUET_FILE = str(INPUT_DIR / "eventDetails/**.parquet")
@@ -75,6 +76,7 @@ class ParquetFileConstants:
     CONTENT_WAREHOUSE_COMPUTED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content-warehouse-computed/")
     GAMIFICATION_BADGE_USER_ENROLMENT_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "user_enrolment_badge_computed/")
     CONTENT_HIERARCHY_FLATTENED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content_hierarchy_flattened")
+    CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE = str(OUTPUT_COMPUTED_DIR / "content_hierarchy_flattened_enhanced")
     ###
     ###  Output CSV File
     ###
