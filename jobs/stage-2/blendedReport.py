@@ -28,6 +28,9 @@ from jobs.config import get_environment_config
 from jobs.default_config import create_config
 from util import schemas
 
+COLLECTION_MIME = "application/vnd.ekstep.content-collection"
+QUESTIONSET_MIME = "application/vnd.sunbird.questionset"
+
 class BlendedModel:
     def __init__(self):
         self.class_name = "org.ekstep.analytics.dashboard.report.BlendedModel"
@@ -159,10 +162,9 @@ class BlendedModel:
             bpCompletionWithUserDetailsDF = userOrgHierarchyDataDF.join(bpCompletionDF, ["userID"], "right")
             bpCompletionDF.unpersist(blocking=True)
 
-            hierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
-            parsedHierarchyDF = hierarchyDF.withColumn("data", from_json(col("hierarchy"), schemas.get_hierarchy_schema())) \
-                .select("identifier", "data.*")
-            bpChildDF = bpChildDataFrame(bpWithOrgDF, hierarchyDF, parsedHierarchyDF,spark)
+            hierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
+
+            bpChildDF = bpChildDataFrame(bpWithOrgDF, hierarchyDF)
 
             bpCompletionWithChildrenDF = bpCompletionWithUserDetailsDF.join(bpChildDF, ["bpID"], "left") \
                 .withColumn("bpChildMode", expr("CASE WHEN LOWER(bpChildCategory) = 'offline session' THEN 'Offline' ELSE '' END")) \
@@ -400,7 +402,7 @@ class BlendedModel:
                     col("bpChildName").alias("component_name"),
                     col("bpChildID").alias("component_id"),
                     col("bpChildCategory").alias("component_type"),
-                    col("bpChildBatchSessionType").alias("component_mode"),
+                    col("bpBatchSessionType").alias("component_mode"),
                     col("bpChildUserStatus").alias("component_status"),
                     col("bpBatchSessionDuration").alias("component_duration"),
                     col("bpChildProgressPercentage").alias("component_progress_percentage"),
@@ -429,83 +431,49 @@ class BlendedModel:
 
             
 
-def bpChildDataFrame(blendedProgramESDF: DataFrame, hierarchyDF: DataFrame, parsedHierarchyDF: DataFrame, spark: SparkSession) -> DataFrame:
-    # Cache frequently used DataFrames
-    bpIDsDF = blendedProgramESDF.select("bpID").cache()
-    
-    # Use broadcast for smaller DataFrame (parsedHierarchyDF is typically smaller)
-    currentDF = bpIDsDF \
-        .join(broadcast(parsedHierarchyDF), bpIDsDF.bpID == parsedHierarchyDF.identifier, "left") \
-        .withColumn("bpChild", explode_outer(col("children"))) \
-        .select(col("bpID"), col("bpChild.*")) \
-        .cache()  # Cache as it's used multiple times
-    
-    # Define common select columns to avoid repetition
-    childSelectCols = [
-        col("bpID"),
-        col("identifier").alias("bpChildID"),
-        col("name").alias("bpChildName"),
-        col("primaryCategory").alias("bpChildCategory"),
-        col("duration").alias("bpChildDuration"),
-        col("leafNodesCount").alias("bpChildResourceCount")
-    ]
-    
-    # Case 1: Not Course or Course Unit → pick directly
-    level1DirectDF = currentDF \
-        .filter(~col("primaryCategory").isin("Course", "Course Unit") & col("identifier").isNotNull()) \
-        .select(*childSelectCols)
-    
-    # Case 2: Course → Course Unit → LR
-    # Filter and cache courseDF as it's used multiple times
-    courseDF = currentDF \
-        .filter((col("primaryCategory") == "Course") & col("children").isNotNull()) \
-        .withColumn("courseUnit", explode_outer(col("children"))) \
-        .select(col("bpID"), col("courseUnit.*")) \
-        .cache()
-    
-    nonCourseUnitInCourseDF = courseDF \
-        .filter((col("primaryCategory") != "Course Unit") & col("identifier").isNotNull()) \
-        .select(*childSelectCols)
-    
-    # Course Unit → Learning Resource
-    courseUnitInCourseDF = courseDF \
-        .filter((col("primaryCategory") == "Course Unit") & col("children").isNotNull()) \
-        .withColumn("courseUnitChild", explode_outer(col("children"))) \
-        .select(
-            col("bpID"),
-            col("courseUnitChild.identifier").alias("bpChildID"),
-            col("courseUnitChild.name").alias("bpChildName"),
-            col("courseUnitChild.primaryCategory").alias("bpChildCategory"),
-            col("courseUnitChild.duration").alias("bpChildDuration"),
-            col("courseUnitChild.leafNodesCount").alias("bpChildResourceCount")
+def bpChildDataFrame(blendedProgramESDF: DataFrame, flatDF: DataFrame) -> DataFrame:
+    bp = blendedProgramESDF.select(col("bpID").alias("root_content_id")).distinct()
+
+    # Only nodes belonging to Blended Program trees
+    nodes = flatDF.join(bp, "root_content_id", "inner").select(
+        "root_content_id", "parent_id", "identifier", "name",
+        "primaryCategory", "duration", "leafNodesCount",
+    )
+
+    def children_of(parents: DataFrame) -> DataFrame:
+        # children of the given parent rows, scoped to the same BP tree
+        p = parents.select("root_content_id", col("identifier").alias("parent_id"))
+        return nodes.join(p, ["root_content_id", "parent_id"], "inner")
+
+    def to_child_cols(df: DataFrame) -> DataFrame:
+        return df.select(
+            col("root_content_id").alias("bpID"),
+            col("identifier").alias("bpChildID"),
+            col("name").alias("bpChildName"),
+            col("primaryCategory").alias("bpChildCategory"),
+            col("duration").alias("bpChildDuration"),
+            col("leafNodesCount").alias("bpChildResourceCount"),
         )
-    
-    # Case 3: Course Unit → LR
-    courseUnitDF = currentDF \
-        .filter((col("primaryCategory") == "Course Unit") & col("children").isNotNull()) \
-        .withColumn("unitChild", explode_outer(col("children"))) \
-        .select(
-            col("bpID"),
-            col("unitChild.identifier").alias("bpChildID"),
-            col("unitChild.name").alias("bpChildName"),
-            col("unitChild.primaryCategory").alias("bpChildCategory"),
-            col("unitChild.duration").alias("bpChildDuration"),
-            col("unitChild.leafNodesCount").alias("bpChildResourceCount")
-        )
-    
-    # Union all DataFrames with coalesce for better partitioning
-    resultDF = level1DirectDF \
-        .unionByName(nonCourseUnitInCourseDF) \
-        .unionByName(courseUnitInCourseDF) \
-        .unionByName(courseUnitDF) \
-        .coalesce(spark.sparkContext.defaultParallelism) \
-    
-    # Clean up intermediate cached DataFrames
-    currentDF.unpersist()
-    courseDF.unpersist()
-    bpIDsDF.unpersist()
-    
-    return resultDF
+
+    l1 = nodes.filter((col("parent_id") == col("root_content_id")) &
+                      (col("identifier") != col("root_content_id")))
+
+    # Case 1: L1 that is neither Course nor Course Unit -> itself
+    case1 = l1.filter(~col("primaryCategory").isin("Course", "Course Unit"))
+
+    # Case 2: L1 Course -> its children; Course Units inside it -> their children
+    l2_in_course = children_of(l1.filter(col("primaryCategory") == "Course"))
+    case2a = l2_in_course.filter(col("primaryCategory") != "Course Unit")
+    case2b = children_of(l2_in_course.filter(col("primaryCategory") == "Course Unit"))
+
+    # Case 3: L1 Course Unit -> its children
+    case3 = children_of(l1.filter(col("primaryCategory") == "Course Unit"))
+
+    return to_child_cols(case1) \
+        .unionByName(to_child_cols(case2a)) \
+        .unionByName(to_child_cols(case2b)) \
+        .unionByName(to_child_cols(case3))
+
 def bpBatchDataframe(spark):
     batch_df = spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE) \
         

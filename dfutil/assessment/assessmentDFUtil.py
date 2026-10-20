@@ -1,4 +1,3 @@
-from typing import List
 import time
 from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.content import contentDFUtil
@@ -202,6 +201,44 @@ def transform_assessment_data(assess_with_hierarchy_data: DataFrame, org_df: Dat
         print(f"❌ Error in transform_assessment_data: {str(e)}")
         raise
 
+def transform_assessment_data_flat(assessment_df: DataFrame, org_df: DataFrame) -> DataFrame:
+    """
+    Flat-hierarchy version of transform_assessment_data: org join + publish timestamp only.
+    The nested 'data' fields are no longer needed.
+    """
+    org_join_df = org_df.select(
+        col("orgID").alias("assessOrgID"),
+        col("orgName").alias("assessOrgName"),
+        col("orgStatus").alias("assessOrgStatus")
+    )
+    return assessment_df.join(org_join_df, on="assessOrgID", how="left") \
+        .withColumn("assessLastPublishedOn",
+                    unix_timestamp(col("assessLastPublishedOn"), "yyyy-MM-dd'T'HH:mm:ss").cast("long"))
+
+def assessment_children_from_flat_hierarchy(assessment_df: DataFrame, flat_hierarchy_df: DataFrame) -> DataFrame:
+    """
+    Direct (level-1) children of each assessment from the flat content hierarchy.
+    Same output columns as assessment_children_dataframe.
+    """
+    children_df = flat_hierarchy_df \
+        .filter((col("parent_id") == col("root_content_id")) &
+                (col("identifier") != col("root_content_id"))) \
+        .select(
+        col("root_content_id").alias("assessID"),
+        col("identifier").alias("assessChildID"),
+        col("name").alias("assessChildName"),
+        col("duration").cast(FloatType()).alias("assessChildDuration"),
+        col("primaryCategory").alias("assessChildPrimaryCategory"),
+        lit(None).cast("string").alias("assessChildContentType"),
+        lit(None).cast("string").alias("assessChildObjectType"),
+        lit(None).cast("string").alias("assessChildShowTimer"),
+        lit(None).cast("string").alias("assessChildAllowSkip")
+    )
+
+    # Keep only children of assessments in scope (old version derived children from assessment_df itself)
+    return children_df \
+        .join(assessment_df.select("assessID").distinct(), "assessID", "inner") \
+        .dropDuplicates(["assessID", "assessChildID"])
 
 def add_hierarchy_column(
         df: DataFrame,
@@ -371,15 +408,10 @@ def standalone_assessment_enrolments_dataframe(spark: SparkSession) -> DataFrame
         .filter(col("assessCategory") == "Standalone Assessment") \
         .filter(~col("assessID").endswith(".img"))
 
-    hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
-    organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
+    hierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE) \
+        .select("identifier", "root_content_id", "parent_id", "name", "primaryCategory", "duration")
 
-    assWithHierarchyData = add_hierarchy_column(
-        assessmentDF, hierarchyDF, id_col="assessID", as_col="data",
-        spark=spark, children=True, competencies=True, l2_children=True
-    )
-    assessWithHierarchyDF = transform_assessment_data(assWithHierarchyData, organizationDF)
-    assessChildrenDF = assessment_children_dataframe(assessWithHierarchyDF)  # assessID (parent), assessChildID
+    assessChildrenDF = assessment_children_from_flat_hierarchy(assessmentDF, hierarchyDF)  # assessID (parent), assessChildID
 
     # --- Raw attempts, ALL statuses (need non-submitted ones for 'in-progress') ---
     rawUserAssessmentDF = spark.read.parquet(ParquetFileConstants.USER_ASSESSMENT_PARQUET_FILE) \

@@ -307,7 +307,7 @@ class DataExhaustModel:
 
             # Process Elasticsearch content data
             self.logger.info("Processing ES content data enhanced...")
-            query_dict = {"bool": {"filter": [{"terms": {"objectType": ["collection", "content", "asset"]}}]}}
+            query_dict = {"bool": {"filter": [{"terms": {"objectType": ["collection", "content", "asset", "questionset"]}}]}}
             source_fields = ["identifier", "name", "primaryCategory", "status", "reviewStatus", "channel",
                              "duration", "leafNodesCount", "lastPublishedOn", "lastStatusChangedOn",
                              "createdFor", "competencies_v6", "programDirectorName", "language",
