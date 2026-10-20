@@ -1,12 +1,11 @@
-from constants.ParquetFileConstants import ParquetFileConstants
 from dfutil.user.userDFUtil import exportDFToParquet
 from dfutil.content import contentDFUtil
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, explode_outer,from_json, lit,when, format_string, expr,lower,avg,count
 from pyspark.sql import functions as F
-from pyspark.sql.types import FloatType, DateType, StructType
+from pyspark.sql.types import FloatType, StructType, StructField, StringType, IntegerType, BooleanType
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import (col, lit, when, expr,coalesce, format_string, date_format, current_timestamp, to_date, from_json, explode_outer, greatest, size,min as F_min, max as F_max, count as F_count, sum as F_sum,broadcast, trim)
+from pyspark.sql.functions import (col, lit, when, expr,coalesce, format_string, date_format, current_timestamp,
+                                   to_date, from_json, explode_outer, size,min as F_min, max as F_max,
+                                   count as F_count, sum as F_sum,broadcast, lower,avg,count)
 from pyspark.sql.types import ( DateType)
 from constants.ParquetFileConstants import ParquetFileConstants
 from util import schemas
@@ -143,279 +142,166 @@ def preComputeExternalContentDataFrame(spark) -> DataFrame:
         )
         exportDFToParquet(df,ParquetFileConstants.EXTERNAL_CONTENT_COMPUTED_PARQUET_FILE)
 
-@staticmethod
-def infer_hierarchy_schema(spark, df, hierarchy_col, sample_fraction=None):
-    hierarchy_strings = df.select(hierarchy_col).filter(col(hierarchy_col).isNotNull())
-    if sample_fraction:
-        hierarchy_strings = hierarchy_strings.sample(fraction=sample_fraction, seed=42)
-    json_rdd = hierarchy_strings.rdd.map(lambda r: r[0])
-    return spark.read.json(json_rdd).schema
+#=======================latest hierarchy code ==========================
+LEVEL_NAMES = {
+    1: "root",
+    2: "first_level_child",
+    3: "second_level_child",
+    4: "third_level_child",
+    5: "fourth_level_child",
+    6: "fifth_level_child",
+}
+HIERARCHY_COLS = ["root_content_id", "level", "parent_id", "node_type"]
 
-@staticmethod
-def safe_field(struct_type, node_col, field_name, out_alias):
-    if struct_type is not None and field_name in [f.name for f in struct_type.fields]:
-        return col(f"{node_col}.{field_name}").cast("string").alias(out_alias)
-    return lit(None).cast("string").alias(out_alias)
+def get_ancestor_descendant_pairs(df: DataFrame, id_col: str,
+                                  list_cols=("childNodes", "leafNodes")) -> DataFrame:
+    """
+    One row per (ancestor_id, descendant_id).
+    Programs list everything in childNodes; course units may list their
+    resources only in leafNodes, so both columns are needed.
+    """
+    available = [c for c in list_cols if c in df.columns]
+    if not available:
+        return df.sparkSession.createDataFrame([], "ancestor_id string, descendant_id string")
 
-@staticmethod
-def get_struct_type(df: DataFrame, col_name: str):
-    if col_name not in df.schema.fieldNames():
-        return None
-    dtype = df.schema[col_name].dataType
-    return dtype if isinstance(dtype, StructType) else None
+    lists_without_nulls = [F.coalesce(F.col(c), F.array().cast("array<string>")) for c in available]
+    all_listed_ids = F.array_distinct(F.concat(*lists_without_nulls))
 
-@staticmethod
-def has_children(struct_type):
-    return struct_type is not None and "children" in [f.name for f in struct_type.fields]
+    return (df.select(F.col(id_col).alias("ancestor_id"),
+                      F.explode(all_listed_ids).alias("descendant_id"))
+            .withColumn("descendant_id", F.trim("descendant_id"))
+            .filter(F.col("descendant_id").isNotNull()
+                    & (F.col("descendant_id") != "")
+                    & (F.col("descendant_id") != F.col("ancestor_id")))
+            .distinct())
 
-@staticmethod
-def safe_raw_field(struct_type, node_col, field_name, out_alias):
-    if struct_type is not None and field_name in [f.name for f in struct_type.fields]:
-        return col(f"{node_col}.{field_name}").alias(out_alias)
-    return lit(None).cast("string").alias(out_alias)
-LEVEL_LABELS = ["parent", "first_level_child", "second_level_child", "third_level_child", "fourth_level_child"]
-def precomputeContentHierarchyEnhancedDataFrame(spark: SparkSession) -> DataFrame:
+def get_leaf_ids(df: DataFrame, leaf_col: str = "leafNodes") -> DataFrame:
+    """Every id that appears in any leafNodes list = a lowermost child."""
+    if leaf_col not in df.columns:
+        return df.sparkSession.createDataFrame([], "leaf_id string")
+    return (df.select(F.explode(F.col(leaf_col)).alias("leaf_id"))
+            .withColumn("leaf_id", F.trim("leaf_id"))
+            .filter(F.col("leaf_id").isNotNull() & (F.col("leaf_id") != ""))
+            .distinct())
 
-    es_data = (
-        spark.read.parquet(ParquetFileConstants.ESCONTENT_EXTENDED_PARQUET_FILE)
-        .dropDuplicates(["identifier"])          # avoids join fan-out; IDs untouched
-    )
+def get_direct_parent_edges(pairs: DataFrame) -> DataFrame:
+    """
+    Keeps only the immediate parent of each node.
+    An ancestor is NOT the direct parent if another ancestor of the same
+    node sits under it (Program -> Course -> Module -> Resource:
+    for the Resource, Program and Course are dropped, Module is kept).
+    """
+    candidate = pairs.select(F.col("ancestor_id").alias("candidate_parent_id"),
+                             "descendant_id")
+    other = pairs.select(F.col("ancestor_id").alias("other_ancestor_id"),
+                         "descendant_id")
+    under_candidate = pairs.select(F.col("ancestor_id").alias("candidate_parent_id"),
+                                   F.col("descendant_id").alias("other_ancestor_id"))
 
+    not_direct_parents = (candidate.join(other, "descendant_id")
+                          .filter(F.col("candidate_parent_id") != F.col("other_ancestor_id"))
+                          .join(under_candidate, ["candidate_parent_id", "other_ancestor_id"])
+                          .select(F.col("candidate_parent_id").alias("ancestor_id"), "descendant_id")
+                          .distinct())
 
-    hierarchy = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE).select(col("identifier"), col("hierarchy")).dropDuplicates(["identifier"])
-    es_roots = es_data.filter(col("courseCategory").isNotNull()).select("identifier")
+    return (pairs.join(not_direct_parents, ["ancestor_id", "descendant_id"], "left_anti")
+            .select(F.col("ancestor_id").alias("parent_id"),
+                    F.col("descendant_id").alias("child_id")))
 
-    contentHierarchydf = es_roots.join(hierarchy, "identifier", "full")
+def get_root_ids(df: DataFrame, all_nodes: DataFrame, edges: DataFrame,
+                 id_col: str, category_col: str = "courseCategory") -> DataFrame:
+    """
+    A node is a root if either:
+      1. it is never anyone's child (top of a tree), or
+      2. it has a non-empty courseCategory - i.e. it can be consumed on its
+         own, even when it also sits inside a program. Such a node gets its
+         own tree in addition to appearing as a child under each parent.
 
-    inferred_schema = infer_hierarchy_schema(spark, contentHierarchydf, "hierarchy")
-    parent_columns = [safe_field(inferred_schema, "hierarchy", "identifier", "parent_identifier")]
+    Course Units, resources and question sets have no courseCategory
+    (NULL or ""), so they never become roots through rule 2.
+    """
+    top_roots = (all_nodes
+                 .join(edges, all_nodes.node_id == edges.child_id, "left_anti")
+                 .select("node_id"))
 
-    contentHierarchyWithSchema = (
-        contentHierarchydf.withColumn("hierarchy", from_json(col("hierarchy"), inferred_schema))
+    if category_col not in df.columns:
+        return top_roots
+
+    standalone_roots = (df
+                        .filter(F.length(F.trim(F.col(category_col))) > 0)
+                        .select(F.col(id_col).alias("node_id")))
+
+    return top_roots.unionByName(standalone_roots).distinct()
+
+def build_content_hierarchy_from_es(spark: SparkSession):
+    df = spark.read.parquet(ParquetFileConstants.ESCONTENT_EXTENDED_PARQUET_FILE)
+    id_col="identifier"
+    max_depth=5
+
+    pairs = get_ancestor_descendant_pairs(df, id_col).cache()
+    edges = get_direct_parent_edges(pairs).cache()
+
+    all_nodes = (df.select(F.col(id_col).alias("node_id"))
+                 .unionByName(edges.select(F.col("child_id").alias("node_id")))
+                 .distinct())
+
+    # roots = never anyone's child
+    roots = get_root_ids(df, all_nodes, edges, id_col)
+
+    current_level = roots.select(
+        "node_id",
+        F.col("node_id").alias("root_content_id"),
+        F.lit(None).cast("string").alias("parent_id"),
+        F.lit(1).alias("level_num"),
+        F.array("node_id").alias("path"),
+    ).localCheckpoint()
+    result = current_level
+
+    # walk down one level at a time
+    for _ in range(max_depth - 1):
+        next_level = (current_level.alias("cur")
+        .join(edges.alias("e"), F.col("cur.node_id") == F.col("e.parent_id"))
+        .filter(~F.array_contains(F.col("cur.path"), F.col("e.child_id")))  # cycle guard
         .select(
-            col("identifier").alias("root_content_id"),
-            col("identifier").alias("parent_identifier"),   # row key, not hierarchy.identifier
-            col("hierarchy").alias("_node_0"),
-        )
-    )
+            F.col("e.child_id").alias("node_id"),
+            F.col("cur.root_content_id"),
+            F.col("cur.node_id").alias("parent_id"),
+            (F.col("cur.level_num") + 1).alias("level_num"),
+            F.concat(F.col("cur.path"), F.array(F.col("e.child_id"))).alias("path"),
+        )).localCheckpoint()
+        if next_level.limit(1).count() == 0:
+            break
+        result = result.unionByName(next_level)
+        current_level = next_level
 
-    # ---- LEVELS 1-4 ----
-    MAX_CHILD_LEVEL = 4
-    current_df = contentHierarchyWithSchema
-    current_struct = get_struct_type(
-        current_df,
-        "_node_0"
-    )
-    # ---- LEVELS 1-4 ----
-    for level_idx in range(1, MAX_CHILD_LEVEL + 1):
-        label = LEVEL_LABELS[level_idx]
-        prev_node_col = f"_node_{level_idx - 1}"
-        this_node_col = f"_node_{level_idx}"
+    # level name: first_level_child, second_level_child, ...
+    level_map = F.create_map(*[F.lit(v) for kv in LEVEL_NAMES.items() for v in kv])
+    result = result.withColumn(
+        "level",
+        F.coalesce(level_map[F.col("level_num")],
+                   F.concat(F.lit("level_"), (F.col("level_num") - 1).cast("string"),
+                            F.lit("_child"))))
 
-        if has_children(current_struct):
-            exploded = current_df.select(
-                "*",
-                explode_outer(
-                    col(f"{prev_node_col}.children")
-                ).alias(this_node_col)
-            )
+    # nodes not reachable from any root (cycles): keep them with whatever is known
+    orphans = all_nodes.join(result.select("node_id"), "node_id", "left_anti")
 
-            this_struct = get_struct_type(
-                exploded,
-                this_node_col
-            )
+    orphan_rows = (orphans.join(edges, orphans.node_id == edges.child_id, "left")
+                   .select("node_id",
+                           F.lit(None).cast("string").alias("root_content_id"),
+                           F.lit("unmapped").alias("level"),
+                           "parent_id"))
 
-            current_df = exploded.select(
-                "*",
-                safe_field(this_struct, this_node_col, "identifier", f"{label}_identifier")
-            )
-            current_struct = this_struct
-        else:
-            # No children at this level.
-            # Add NULL columns for every expected field.
-            current_df = current_df.select(
-                "*",
-                lit(None).cast("string").alias(f"{label}_identifier")
-            )
-            current_struct = None
+    result = (result.select("node_id", "root_content_id", "level", "parent_id")
+              .unionByName(orphan_rows))
 
-    final_cols = ["root_content_id", "parent_identifier"]
-    for level_idx in range(1, MAX_CHILD_LEVEL + 1):
-        label = LEVEL_LABELS[level_idx]
-        final_cols.append(f"{label}_identifier")
+    other_cols = [c for c in df.columns if c != id_col]
+    out = (result.join(df, result.node_id == df[id_col], "left")
+           .withColumn(id_col, F.coalesce(F.col(id_col), F.col("node_id")))
+           .select(id_col, "root_content_id", "level", "parent_id", *other_cols))
 
-    resultDF = current_df.select(*final_cols)
-
-    # ---- Unpivot into long format, carrying each row's IMMEDIATE parent (not root) ----
-    level0 = resultDF.select(
-        col("root_content_id"),
-        lit("parent").alias("level"),
-        col("parent_identifier").alias("identifier"),
-        lit(None).cast("string").alias("parent_id")
-    )
-    level1 = resultDF.select(
-        col("root_content_id"),
-        lit("first_level_child").alias("level"),
-        col("first_level_child_identifier").alias("identifier"),
-        col("parent_identifier").alias("parent_id")
-    )
-    level2 = resultDF.select(
-        col("root_content_id"),
-        lit("second_level_child").alias("level"),
-        col("second_level_child_identifier").alias("identifier"),
-        col("first_level_child_identifier").alias("parent_id")
-    )
-    level3 = resultDF.select(
-        col("root_content_id"),
-        lit("third_level_child").alias("level"),
-        col("third_level_child_identifier").alias("identifier"),
-        col("second_level_child_identifier").alias("parent_id")
-    )
-    level4 = resultDF.select(
-        col("root_content_id"),
-        lit("fourth_level_child").alias("level"),
-        col("fourth_level_child_identifier").alias("identifier"),
-        col("third_level_child_identifier").alias("parent_id")
-    )
-
-    hierarchy_long_df = (
-        level0.unionByName(level1)
-        .unionByName(level2)
-        .unionByName(level3)
-        .unionByName(level4)
-        .filter(col("identifier").isNotNull())
-        .dropDuplicates(["root_content_id", "level", "identifier", "parent_id"])
-    )
-    #-----Joining with es metadata
-    enriched_data = hierarchy_long_df.join(es_data, on="identifier", how="left")
-
-    exportDFToParquet(enriched_data, ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
-
-LEVEL_LABELS = ["parent", "first_level_child", "second_level_child", "third_level_child", "fourth_level_child"]
-def precomputeContentHierarchyDataFrame(spark: SparkSession) -> DataFrame:
-    contentHierarchydf = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE).select(col("identifier"), col("hierarchy"))
-    exportDFToParquet(contentHierarchydf, ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
-
-    hierarchy_fields = [
-        "identifier",
-        "primaryCategory",
-        "duration",
-        "mimeType",
-        "name",
-        "leafNodesCount",
-        "channel",
-        "contentType",
-        "objectType",
-        "showTimer",
-        "allowSkip",
-        "competencies_v3",
-        "createdFor",
-        "lastStatusChangedOn",
-        "lastSubmittedOn",
-        "lastPublishedOn",
-        "lastUpdatedOn",
-        "createdOn",
-        "visibility",
-        "userConsent",
-        "isExternal",
-        "publish_type",
-        "leafNodes"
-    ]
-    inferred_schema = infer_hierarchy_schema(spark, contentHierarchydf, "hierarchy")
-    parent_columns = [
-        safe_field(inferred_schema,"hierarchy",field,f"parent_{field}")
-        for field in hierarchy_fields
-    ]
-    # courseCategory is only required at parent level
-    parent_columns.append(
-        safe_field(inferred_schema,"hierarchy","courseCategory","courseCategory")
-    )
-    parent_columns.append(
-        safe_raw_field(inferred_schema, "hierarchy", "batches", "parent_batches")
-    )
-    parent_columns.append(
-        safe_raw_field(inferred_schema, "hierarchy", "milestones_v1", "parent_milestones_v1")
-    )
-    parent_columns.append(
-        safe_field(inferred_schema, "hierarchy", "preliminaryAssessment", "parent_preliminary_assessment_id")
-    )
-
-    contentHierarchyWithSchema = (
-        contentHierarchydf.withColumn("hierarchy",from_json(col("hierarchy"), inferred_schema))
-        .select(col("identifier").alias("root_content_id"),*parent_columns,col("hierarchy").alias("_node_0"))
-    )
-    current_struct = get_struct_type(contentHierarchyWithSchema, "_node_0")
-
-    # ---- LEVELS 1-4 ----
-    MAX_CHILD_LEVEL = 4
-    current_df = contentHierarchyWithSchema
-    current_struct = get_struct_type(
-        current_df,
-        "_node_0"
-    )
-    # ---- LEVELS 1-4 ----
-    for level_idx in range(1, MAX_CHILD_LEVEL + 1):
-        label = LEVEL_LABELS[level_idx]
-        prev_node_col = f"_node_{level_idx - 1}"
-        this_node_col = f"_node_{level_idx}"
-
-        if has_children(current_struct):
-            exploded = current_df.select(
-                "*",
-                explode_outer(
-                    col(f"{prev_node_col}.children")
-                ).alias(this_node_col)
-            )
-
-            this_struct = get_struct_type(
-                exploded,
-                this_node_col
-            )
-
-            # Extract all configured fields for this child level
-            child_columns = [
-                safe_field(
-                    this_struct,
-                    this_node_col,
-                    field,
-                    f"{label}_{field}"
-                )
-                for field in hierarchy_fields
-            ]
-
-            current_df = exploded.select(
-                "*",
-                *child_columns
-            )
-            current_struct = this_struct
-        else:
-            # No children at this level.
-            # Add NULL columns for every expected field.
-            null_columns = [
-                lit(None).cast("string").alias(
-                    f"{label}_{field}"
-                )
-                for field in hierarchy_fields
-            ]
-            current_df = current_df.select(
-                "*",
-                *null_columns
-            )
-            current_struct = None
-
-    final_cols = ["root_content_id"]
-    final_cols.extend(f"parent_{field}"for field in hierarchy_fields) # Parent fields
-    final_cols.append("courseCategory") # Parent-only courseCategory
-    final_cols.append("parent_batches")
-    final_cols.append("parent_milestones_v1")
-    final_cols.append("parent_preliminary_assessment_id")
-    for level_idx in range(1, 5):
-        label = LEVEL_LABELS[level_idx]
-        final_cols.extend(f"{label}_{field}"for field in hierarchy_fields) # Child levels 1-4
-
-    resultDF = current_df.select(*final_cols)
-
-    exportDFToParquet(resultDF, ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_PARQUET_FILE)
+    exportDFToParquet(out, ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
+    pairs.unpersist()
+    edges.unpersist()
 
 @staticmethod
 def duration_format(df, in_col, out_col=None):
@@ -504,7 +390,8 @@ def preComputeContentWarehouseData(spark):
         # Load required data
         print("Loading platform data...")
         allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("category").isin(primary_categories))
-        contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
+        contentHierarchyDF = (spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
+                              .select("identifier", "root_content_id", "parent_id", "mimeType"))
         enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE)
         courseBatchDF = spark.read.parquet(ParquetFileConstants.BATCH_SELECT_PARQUET_FILE)
         
@@ -581,20 +468,24 @@ def preComputeContentWarehouseData(spark):
 
         # Generate SCORM Detection for Platform Content
         print("Detecting SCORM content...")
-        contentHierarchyExploded = contentHierarchyDF.withColumn("hierarchy", from_json(col("hierarchy"), schemas.hierarchySchema))
+        childNodesDF = contentHierarchyDF.filter(col("identifier") != col("root_content_id"))
 
-        scorm_detection_df = contentHierarchyExploded \
-            .withColumn("level1_child", explode_outer(col("hierarchy.children"))) \
-            .withColumn("level2_child", explode_outer(col("level1_child.children"))) \
-            .withColumn("lvl1_scorm", when(col("level1_child.mimeType").endswith("html-archive"), 1).otherwise(0)) \
-            .withColumn("lvl2_scorm", when(col("level2_child.mimeType").endswith("html-archive"), 1).otherwise(0)) \
-            .groupBy("courseID") \
-            .agg(
-                F_max("lvl1_scorm").alias("lvl1_flag"),
-                F_max("lvl2_scorm").alias("lvl2_flag")
-            ) \
-            .withColumn("scorm_flag", greatest(col("lvl1_flag"), col("lvl2_flag"))) \
-            .select("courseID", "scorm_flag")
+        # Level 1: direct children of the course
+        level1NodesDF = childNodesDF.filter(col("parent_id") == col("root_content_id"))
+
+        # Level 2: children of level-1 nodes
+        level2NodesDF = childNodesDF.join(
+            level1NodesDF.select("root_content_id", col("identifier").alias("parent_id")),
+            ["root_content_id", "parent_id"],
+            "inner"
+        )
+
+        scorm_detection_df = level1NodesDF.select("root_content_id", "mimeType") \
+            .unionByName(level2NodesDF.select("root_content_id", "mimeType")) \
+            .filter(col("mimeType").endswith("html-archive")) \
+            .select(col("root_content_id").alias("courseID")) \
+            .distinct() \
+            .withColumn("scorm_flag", lit(1))
 
         # Generate Platform Content Warehouse Data
         print("Generating platform content warehouse data...")

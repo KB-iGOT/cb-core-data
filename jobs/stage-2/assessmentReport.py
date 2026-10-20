@@ -47,35 +47,19 @@ class UserAssessmentModel:
             print("Stage 1: Loading assessment data...")
             assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE).filter(
                 col("assessCategory").isin("Standalone Assessment"))
-            hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
+            hierarchyDF = (spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
+                           .select("identifier", "root_content_id", "parent_id", "name", "primaryCategory", "duration"))
             organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
             print("Stage 1: Complete")
 
-            # Stage 2: Add Hierarchy Information
-            print("Stage 2: Adding hierarchy information...")
-            assWithHierarchyData = assessmentDFUtil.add_hierarchy_column(
-                assessmentDF,
-                hierarchyDF,
-                id_col="assessID",
-                as_col="data",
-                spark=spark,
-                children=True,
-                competencies=True,
-                l2_children=True
-            )
-            print("Stage 2: Complete")
-
-            # Stage 3: Transform Assessment Data
-            print("Stage 3: Transforming assessment data...")
-            assessWithHierarchyDF = assessmentDFUtil.transform_assessment_data(assWithHierarchyData, organizationDF)
-            assessWithDetailsDF = assessWithHierarchyDF.drop("children")
-            # kafkaDispatch(withTimestamp(assessWithDetailsDF, timestamp), config.assessmentTopic)
-
-            print("Stage 3: Complete")
+            # Stage 2-3: Transform Assessment Data (flat hierarchy - no nested 'data' parsing needed)
+            print("Stage 2-3: Transforming assessment data...")
+            assessWithDetailsDF = assessmentDFUtil.transform_assessment_data_flat(assessmentDF, organizationDF)
+            print("Stage 2-3: Complete")
 
             # Stage 4: Process Assessment Children
             print("Stage 4: Processing assessment children...")
-            assessChildrenDF = assessmentDFUtil.assessment_children_dataframe(assessWithHierarchyDF)
+            assessChildrenDF = assessmentDFUtil.assessment_children_from_flat_hierarchy(assessmentDF, hierarchyDF)
             print("Stage 4: Complete")
 
             # Stage 5: Process User Assessment Data
@@ -86,11 +70,12 @@ class UserAssessmentModel:
             print("User Assessment Children DataFrame Schema:")
             categories = ["Course", "Program", "Blended Program", "Curated Program", "Moderated Course",
                           "Standalone Assessment", "CuratedCollections"]
-            allCourseProgramDetailsWithCompDF = assessmentDFUtil.all_course_program_details_with_competencies_json_dataframe(
-                spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(
-                    col("category").isin(categories)), hierarchyDF, organizationDF, spark)
-            print("All Course Program Details with Competencies JSON DataFrame Schema:")
-            allCourseProgramDetailsDF = allCourseProgramDetailsWithCompDF.drop("competenciesJson")
+            # Hierarchy join removed: it only produced competenciesJson, which was dropped immediately.
+            allCourseProgramDetailsDF = assessmentDFUtil.add_course_org_details(
+                spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+                .filter(col("category").isin(categories)), organizationDF) \
+                .na.fill(0.0, subset=["courseDuration"]) \
+                .na.fill(0, subset=["courseResourceCount"])
             print("Stage 6: Complete")
 
             # Stage 7: Add Rating Information

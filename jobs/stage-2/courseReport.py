@@ -63,60 +63,82 @@ class CourseReportModel:
 
             print("Stage 1: Loading base parquet sources...")
             allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("courseCategory").isin(course_categories))
-            contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
+            contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
             enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
+            esFinalAssessmentRawDF = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
             print(f"Stage 1: Complete (⏱ {time.time() - stage_start:.2f}s)")
             stage_start = time.time()
 
             print("Stage 2: Building content resource (distinctDF) report...")
-            getContentResourceWithCategoryDF = contentHierarchyDF \
-                .join(allCourseProgramDetailsDF, ["courseID"], "inner") \
-                .select(
-                *[col(c) for c in contentHierarchyDF.columns],
-                allCourseProgramDetailsDF["category"]
+            assessmentMetaDF = esFinalAssessmentRawDF.select(
+                col("Identifier").alias("identifier"),
+                col("name").alias("fa_name"),
+                col("primaryCategory").alias("fa_primaryCategory"),
+                col("expectedDuration").cast("string").alias("fa_expectedDuration")
+            ).dropDuplicates(["identifier"])
+            edgesDF = contentHierarchyDF \
+                .filter(col("parent_id").isNotNull()) \
+                .filter(col("primaryCategory").isNotNull()) \
+                .select("parent_id", "identifier", "name", "primaryCategory",
+                        "duration", "expectedDuration", "mimeType") \
+                .dropDuplicates(["parent_id", "identifier"]).cache() \
+                .join(assessmentMetaDF, ["identifier"], "left") \
+                .withColumn("name", coalesce(col("name"), col("fa_name"))) \
+                .withColumn("primaryCategory", coalesce(col("primaryCategory"), col("fa_primaryCategory"))) \
+                .withColumn("expectedDuration", coalesce(col("expectedDuration"), col("fa_expectedDuration"))) \
+                .drop("fa_name", "fa_primaryCategory", "fa_expectedDuration") \
+                .cache()
+
+            rootsDF = allCourseProgramDetailsDF \
+                .filter(col("category").isin(["Program", "Curated Program", "Course"])) \
+                .select("courseID", "category") \
+                .dropDuplicates()
+
+            # Program / Curated Program -> direct children (the courses).
+            programResDF = rootsDF \
+                .filter(col("category").isin(["Program", "Curated Program"])) \
+                .join(edgesDF, col("courseID") == col("parent_id"), "inner") \
+            .select(
+                col("courseID").alias("content_id"),
+                col("identifier").alias("resource_id"),
+                col("name").alias("resource_name"),
+                col("primaryCategory").alias("resource_type"),
+                col("duration").alias("resource_duration")
             )
 
-            resultDF = getContentResourceWithCategoryDF \
-                .filter(col("category").isin(["Program", "Curated Program", "Course"])) \
-                .withColumn("hierarchy", from_json(col("hierarchy"), schemas.hierarchySchema)) \
+            courseLevel1DF = rootsDF \
+                .filter(col("category") == "Course") \
+                .join(edgesDF, col("courseID") == col("parent_id"), "inner")
+
+            # Course -> direct children that are not Course Units.
+            courseDirectResDF = courseLevel1DF \
+                .filter(coalesce(col("primaryCategory"), lit("")) != "Course Unit") \
                 .select(
                 col("courseID").alias("content_id"),
-                col("category"),
-                explode_outer(col("hierarchy.children")).alias("first_level_child")
-            ).withColumn("second_level_child", explode_outer(col("first_level_child.children"))) \
-                .select(
-                col("content_id"),
-                when(col("category").isin(["Program", "Curated Program"]),
-                     col("first_level_child.identifier"))
-                .otherwise(
-                    when(col("first_level_child.primaryCategory") == "Course Unit",
-                         col("second_level_child.identifier"))
-                    .otherwise(col("first_level_child.identifier"))
-                ).alias("resource_id"),
-                when(col("category").isin(["Program", "Curated Program"]),
-                     col("first_level_child.name"))
-                .otherwise(
-                    when(col("first_level_child.primaryCategory") == "Course Unit",
-                         col("second_level_child.name"))
-                    .otherwise(col("first_level_child.name"))
-                ).alias("resource_name"),
-                when(col("category").isin(["Program", "Curated Program"]),
-                     col("first_level_child.primaryCategory"))
-                .otherwise(
-                    when(col("first_level_child.primaryCategory") == "Course Unit",
-                         col("second_level_child.primaryCategory"))
-                    .otherwise(col("first_level_child.primaryCategory"))
-                ).alias("resource_type"),
-                when(col("category").isin(["Program", "Curated Program"]),
-                     col("first_level_child.duration"))
-                .otherwise(
-                    when(col("first_level_child.primaryCategory") == "Course Unit",
-                         coalesce(col("second_level_child.duration"),
-                                  col("second_level_child.expectedDuration")))
-                    .otherwise(coalesce(col("first_level_child.duration"),
-                                        col("first_level_child.expectedDuration")))
-                ).alias("resource_duration")
+                col("identifier").alias("resource_id"),
+                col("name").alias("resource_name"),
+                col("primaryCategory").alias("resource_type"),
+                coalesce(col("duration"), col("expectedDuration")).alias("resource_duration")
             )
+
+            # Course -> Course Unit -> children of the unit.
+            courseUnitsDF = courseLevel1DF \
+                .filter(col("primaryCategory") == "Course Unit") \
+                .select(col("courseID"), col("identifier").alias("unit_id"))
+
+            courseUnitResDF = courseUnitsDF \
+                .join(edgesDF, col("unit_id") == col("parent_id"), "inner") \
+                .select(
+                col("courseID").alias("content_id"),
+                col("identifier").alias("resource_id"),
+                col("name").alias("resource_name"),
+                col("primaryCategory").alias("resource_type"),
+                coalesce(col("duration"), col("expectedDuration")).alias("resource_duration")
+            )
+
+            resultDF = programResDF \
+                .unionByName(courseDirectResDF) \
+                .unionByName(courseUnitResDF)
 
             # CHANGED: removed .cache() - distinctDF is single-use (written once,
             # never referenced again), so caching here only added overhead with
@@ -328,20 +350,10 @@ class CourseReportModel:
             stage_start = time.time()
 
             print("Stage 7: SCORM detection + platform content warehouse build...")
-            contentHierarchyExploded = contentHierarchyDF.withColumn("hierarchy", from_json(col("hierarchy"), schemas.hierarchySchema))
-
-            scorm_detection_df = contentHierarchyExploded \
-                .withColumn("level1_child", explode_outer(col("hierarchy.children"))) \
-                .withColumn("level2_child", explode_outer(col("level1_child.children"))) \
-                .withColumn("lvl1_scorm", when(col("level1_child.mimeType").endswith("html-archive"), 1).otherwise(0)) \
-                .withColumn("lvl2_scorm", when(col("level2_child.mimeType").endswith("html-archive"), 1).otherwise(0)) \
-                .groupBy("courseID") \
-                .agg(
-                F_max("lvl1_scorm").alias("lvl1_flag"),
-                F_max("lvl2_scorm").alias("lvl2_flag")
-            ) \
-                .withColumn("scorm_flag", greatest(col("lvl1_flag"), col("lvl2_flag"))) \
-                .select("courseID", "scorm_flag")
+            scorm_detection_df = contentHierarchyDF \
+                .filter(col("root_content_id").isNotNull()) \
+                .groupBy(col("root_content_id").alias("courseID")) \
+                .agg(F_max(when(col("mimeType").endswith("html-archive"), 1).otherwise(0)).alias("scorm_flag"))
 
             platformContentWarehouseDF = fullDF \
                 .join(scorm_detection_df, ["courseID"], "left") \
@@ -384,8 +396,7 @@ class CourseReportModel:
             orgComputedDF = spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE) \
                 .select(col("orgId").alias("content_provider_id"),
                         col("orgName").alias("content_provider_name"))
-            es_final_assessment_df = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
-            es_final_assessment_df = es_final_assessment_df.select(
+            es_final_assessment_df = esFinalAssessmentRawDF.select(
                 col("Identifier").alias("content_id"),
                 col("createdFor").getItem(0).alias("content_provider_id"),
                 col("name").alias("content_name"),
@@ -423,6 +434,7 @@ class CourseReportModel:
             # CHANGED: removed coalesce(1) - same fix as above, forces
             # single-task write regardless of data volume.
             df_warehouse.write.mode("overwrite").option("compression", "snappy").parquet(f"{config.warehouseReportDir}/{config.dwCourseTable}")
+            edgesDF.unpersist()
             print(f"Stage 8: Complete - course warehouse written (⏱ {time.time() - stage_start:.2f}s)")
 
             total_time = time.time() - start_time

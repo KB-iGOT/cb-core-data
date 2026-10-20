@@ -5,7 +5,7 @@ findspark.init()
 import time
 from pathlib import Path
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, ArrayType
+from pyspark.sql.types import StringType
 from pyspark.sql.window import Window
 from pyspark.sql.functions import (col, row_number, countDistinct, current_timestamp, date_format, broadcast,
                                    unix_timestamp, when, lit, concat_ws, from_unixtime, format_string, expr,
@@ -47,25 +47,18 @@ class CourseBasedAssessmentModel:
             assessmentDF = spark.read.parquet(ParquetFileConstants.ALL_ASSESSMENT_COMPUTED_PARQUET_FILE) \
                 .filter(
                 col("assessCategory").isin("Course", "Standalone Assessment", "Blended Program", "Curated Program")).filter(~col("assessID").endswith(".img"))
-            hierarchyDF = spark.read.parquet(ParquetFileConstants.HIERARCHY_PARQUET_FILE)
+            hierarchyDF = (spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
+                           .select("identifier", "root_content_id", "parent_id", "name", "primaryCategory", "duration"))
             organizationDF = spark.read.parquet(ParquetFileConstants.ORG_COMPUTED_PARQUET_FILE)
             print(f"Stage 1: Complete (⏱ {time.time() - stage_start:.2f}s)")
             stage_start = time.time()
 
-            print("Stage 2: Adding hierarchy information...")
-            assWithHierarchyData = assessmentDFUtil.add_hierarchy_column(
-                assessmentDF, hierarchyDF, id_col="assessID", as_col="data", spark=spark,
-                children=True, competencies=True, l2_children=True)
-            print(f"Stage 2: Complete (⏱ {time.time() - stage_start:.2f}s)")
+            print("Stage 2-3: Transforming assessment data...")
+            assessWithDetailsDF = assessmentDFUtil.transform_assessment_data_flat(assessmentDF, organizationDF)
+            print(f"Stage 2-3: Complete (⏱ {time.time() - stage_start:.2f}s)")
             stage_start = time.time()
 
-            print("Stage 3: Transforming assessment data...")
-            assessWithHierarchyDF = assessmentDFUtil.transform_assessment_data(assWithHierarchyData, organizationDF)
-            assessWithDetailsDF = assessWithHierarchyDF.drop("children")
-            print(f"Stage 3: Complete (⏱ {time.time() - stage_start:.2f}s)")
-            stage_start = time.time()
-
-            assessChildrenDF = assessmentDFUtil.assessment_children_dataframe(assessWithHierarchyDF)
+            assessChildrenDF = assessmentDFUtil.assessment_children_from_flat_hierarchy(assessmentDF, hierarchyDF)
             print(f"Stage 4: Complete (⏱ {time.time() - stage_start:.2f}s)")
             stage_start = time.time()
 
@@ -101,10 +94,12 @@ class CourseBasedAssessmentModel:
             userAssessChildrenDF = assessmentDFUtil.user_assessment_children_dataframe(userAssessmentDF, assessChildrenDF)
 
             categories = ["Course", "Program", "Blended Program", "Standalone Assessment", "Curated Program"]
-            allCourseProgramDetailsWithCompDF = assessmentDFUtil.all_course_program_details_with_competencies_json_dataframe(
+            # Hierarchy join removed: it only produced competenciesJson, which was dropped immediately.
+            allCourseProgramDetailsDF = assessmentDFUtil.add_course_org_details(
                 spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
-                .filter(col("category").isin(categories)), hierarchyDF, organizationDF, spark)
-            allCourseProgramDetailsDF = allCourseProgramDetailsWithCompDF.drop("competenciesJson")
+                .filter(col("category").isin(categories)), organizationDF) \
+                .na.fill(0.0, subset=["courseDuration"]) \
+                .na.fill(0, subset=["courseResourceCount"])
             print(f"Stage 6: Complete (⏱ {time.time() - stage_start:.2f}s)")
             stage_start = time.time()
 

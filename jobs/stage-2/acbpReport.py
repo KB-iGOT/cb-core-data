@@ -55,14 +55,15 @@ class ACBPModel:
                                                                                                "additionalProperties.externalSystem",
                                                                                                "additionalProperties.externalSystemId")
 
-            contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE)
             allCourseProgramESDF = spark.read.parquet(
                 ParquetFileConstants.ALL_COURSE_PROGRAM_COMPUTED_PARQUET_FILE).filter(
                 col("category").isin(primary_categories))
 
-            allCourseProgramDetailsDF = contentDFUtil.allCourseProgramDetailsWithCompetenciesJsonDataFrame(
-                allCourseProgramESDF, contentHierarchyDF,
-                spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE)).drop("competenciesJson")
+            allCourseProgramDetailsDF = (contentDFUtil.addCourseOrgDetails(
+                allCourseProgramESDF,
+                spark.read.parquet(ParquetFileConstants.ORG_SELECT_PARQUET_FILE))
+                                         .fillna(0.0, subset=["courseDuration"])
+                                         .fillna(0, subset=["courseResourceCount"]))
 
             enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
 

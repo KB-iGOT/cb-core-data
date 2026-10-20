@@ -95,13 +95,12 @@ def main():
 
     # Define processing stages - tuple format: (name, function, needs_config)
     processing_stages = [
+        ("Content hierarchy", contentDFUtil.build_content_hierarchy_from_es, False),
         ("Assessment Master Data", assessmentDFUtil.parse_raw_assessment_data, True),  # This stage needs config
         ("Org Hierarchy Computation", userDFUtil.preComputeOrgWithHierarchy, False),
         ("Content Ratings & Summary", contentDFUtil.preComputeRatingAndSummaryDataFrame, False),
         ("All Course/Program (ES)", contentDFUtil.preComputeAllCourseProgramESDataFrame, False),
         ("Content Master Data", contentDFUtil.preComputeContentDataFrame, False),
-        ("Content Hierarchy Computation", contentDFUtil.precomputeContentHierarchyDataFrame, False),
-        ("Content Hierarchy Computation", contentDFUtil.precomputeContentHierarchyEnhancedDataFrame, False),
         ("Assessment Master Data", assessmentDFUtil.precomputeAssessmentEsDataframe, False),
         ("External Content", contentDFUtil.preComputeExternalContentDataFrame, False),
         ("User Profile Computation", userDFUtil.preComputeUser, False),
