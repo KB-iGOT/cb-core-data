@@ -56,46 +56,89 @@ class PeerValidationNotificationSender:
             .option("driver", "org.postgresql.Driver") \
             .load()
 
-    def update_notification_status(self, resultsDF):
-        """Update status and error_message columns for existing notifications"""
+    def get_pg_connection(self):
+        host, port = self.config.dwPostgresHost.split(":")
+        return psycopg2.connect(
+            host=host,
+            port=port,
+            database=self.config.dwPostgresSchema,
+            user=self.config.dwPostgresUsername,
+            password=self.config.dwPostgresCredential
+        )
+
+    # --- FIX: this now takes a plain Python list of dicts for ONE batch,
+    # not a Spark DataFrame for the whole run. The old version relied on the
+    # caller collecting every processed row (across the entire pending queue)
+    # into a single Spark DataFrame before calling this — that unbounded
+    # accumulation is what caused the driver OOM. Called once per batch now,
+    # so memory use is bounded by batch_size, not by total pending rows.
+    def update_notification_status_batch(self, conn, batch_results):
+        """Update status and error_message columns for one batch of notifications."""
+        if not batch_results:
+            return
+        cursor = conn.cursor()
         try:
-
-            status_updates = resultsDF.select("notification_id", "status", "error_message").collect()
-            
-            if not status_updates:
-                return
-            host, port = self.config.dwPostgresHost.split(":")
-            conn = psycopg2.connect(
-                host=host,
-                port=port,
-                database=self.config.dwPostgresSchema,
-                user=self.config.dwPostgresUsername,
-                password=self.config.dwPostgresCredential
-            )
-            cursor = conn.cursor()
-            
-            try:
-                for row in status_updates:
-                    error_msg = row.error_message.replace("'", "''") if row.error_message else ""
-                    update_sql = f"""
+            for r in batch_results:
+                cursor.execute(
+                    f"""
                         UPDATE {self.config.dwpeerValidationNotificationQueue}
-                        SET status = '{row.status}', 
-                            error_message = '{error_msg}',
+                        SET status = %s,
+                            error_message = %s,
                             updated_at = NOW()
-                        WHERE notification_id = '{row.notification_id}'
-                    """
-                    cursor.execute(update_sql)
-                
-                conn.commit()
-                print(f"[INFO] Updated {len(status_updates)} notification statuses")
-            finally:
-                cursor.close()
-                conn.close()
-
+                        WHERE notification_id = %s
+                    """,
+                    (r["status"], r["error_message"], r["notification_id"])
+                )
+            conn.commit()
         except Exception as e:
-            print(f"[ERROR] Could not update notification status: {str(e)}")
+            conn.rollback()
+            print(f"[ERROR] Could not update notification status batch: {str(e)}")
             raise
+        finally:
+            cursor.close()
 
+    # --- FIX: replaces the old read -> left_anti join -> union -> overwrite pattern.
+    # That pattern re-read dw_peer_validation_form_state from scratch on every
+    # Spark action (.count(), .show(), the write itself), because the DataFrame
+    # was never actually cached. Each of those reads could race against the
+    # overwrite's own TRUNCATE, so the "existing minus processed" join sometimes
+    # saw an empty/partial table and the final write wiped out other forms'
+    # state instead of only updating the ones just processed.
+    #
+    # This does a plain row-level UPSERT instead: no full-table read, no
+    # overwrite, no race condition. Only the forms in latestProcessedDF are
+    # touched; every other row in the table is left alone by construction.
+    #
+    # Uses ON CONFLICT now that dw_peer_validation_form_state has a unique
+    # constraint on form_id. Single atomic upsert per row; only the forms in
+    # latestProcessedDF are touched, everything else is left alone.
+    def update_form_state(self, latestProcessedDF):
+        """Upsert last_processed_date per form_id without touching other rows."""
+        rows = latestProcessedDF.collect()
+        if not rows:
+            return
+
+        conn = self.get_pg_connection()
+        cursor = conn.cursor()
+        try:
+            for row in rows:
+                cursor.execute(f"""
+                    INSERT INTO {self.config.dwpeerValidationFormStateTable}
+                        (form_id, last_processed_date, data_generated_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (form_id) DO UPDATE
+                    SET last_processed_date = EXCLUDED.last_processed_date,
+                        data_generated_at = NOW()
+                """, (row.form_id, row.last_processed_date))
+            conn.commit()
+            print(f"[INFO] Updated form state for {len(rows)} forms")
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] Could not update form state: {str(e)}")
+            raise
+        finally:
+            cursor.close()
+            conn.close()
 
     def send_notification(self):
         try:
@@ -109,25 +152,36 @@ class PeerValidationNotificationSender:
             api_enabled = self.config.apiBasedNotificationEnabled
             api_url = self.config.notificationAPIURL
             batch_size = self.config.notificationBatchSize
-            
-            # Process locally with toLocalIterator to stream data
-            results = []
+
+            # --- FIX: no more unbounded `results = []` accumulating every row
+            # in the whole pending queue. We now update Postgres per batch as
+            # we go, and only keep small running aggregates in the driver:
+            #   - form_last_trigger_end: max first_trigger_end per form, SENT only
+            #   - form_sent_count: count of SENT rows per form
+            # Both are tiny (one entry per form_id), regardless of how many
+            # notifications are processed, so driver memory stays bounded.
+            form_last_trigger_end = {}   # form_id -> max first_trigger_end among SENT rows
+            form_sent_count = {}         # form_id -> count of SENT rows
+            total_sent = 0
+
             session = requests.Session()
+            conn = self.get_pg_connection()
             batch = []
-            
+
             def flush_batch(batch_rows):
-                """Send a batch of notifications and collect results"""
+                """Send a batch of notifications, update Postgres, and update running aggregates."""
+                nonlocal total_sent
                 if not batch_rows:
                     return
-                
+
                 payload_list = []
                 for row in batch_rows:
                     try:
                         payload_dict = json.loads(row.payload)
-                    except Exception as e:
+                    except Exception:
                         payload_dict = {}
                     payload_list.append(payload_dict)
-                
+
                 # Send batch API call
                 try:
                     if api_enabled:
@@ -144,26 +198,29 @@ class PeerValidationNotificationSender:
                 except Exception as e:
                     status_code = 500
                     resp_text = str(e)
-                
-                # Create results for each row in batch
+
                 status = "SENT" if status_code == 200 else "FAILED"
+
+                # Build the small per-batch update list (bounded by batch_size)
+                batch_results = []
                 for row in batch_rows:
-                    results.append(Row(
-                        notification_id=row.notification_id,
-                        user_id=row.user_id,
-                        event_type=row.event_type,
-                        form_id=row.form_id,
-                        course_id=row.course_id,
-                        course_name=row.course_name,
-                        first_completed_on=row.first_completed_on,
-                        status=status,
-                        error_message=resp_text,
-                        payload=row.payload,
-                        first_trigger_end=row.first_trigger_end,
-                        created_at=row.created_at,
-                        updated_at=datetime.now()
-                    ))
-            
+                    batch_results.append({
+                        "notification_id": row.notification_id,
+                        "status": status,
+                        "error_message": resp_text,
+                    })
+                    if status == "SENT":
+                        form_id = row.form_id
+                        current_max = form_last_trigger_end.get(form_id)
+                        if current_max is None or (row.first_trigger_end is not None and row.first_trigger_end > current_max):
+                            form_last_trigger_end[form_id] = row.first_trigger_end
+                        form_sent_count[form_id] = form_sent_count.get(form_id, 0) + 1
+                        total_sent += 1
+
+                # Push this batch's status updates to Postgres immediately —
+                # nothing from this batch is kept in memory afterward.
+                self.update_notification_status_batch(conn, batch_results)
+
             try:
                 # toLocalIterator — streams one partition at a time, not all at once
                 for row in pendingNotificationDF.toLocalIterator():
@@ -175,59 +232,35 @@ class PeerValidationNotificationSender:
                     flush_batch(batch)  # remaining rows
             finally:
                 session.close()
-            
-            if results:
-                schema = StructType([
-                    StructField("notification_id", StringType(), True),
-                    StructField("user_id", StringType(), True),
-                    StructField("event_type", StringType(), True),
-                    StructField("form_id", StringType(), True),
-                    StructField("course_id", StringType(), True),
-                    StructField("course_name", StringType(), True),
-                    StructField("first_completed_on", TimestampType(), True),
-                    StructField("status", StringType(), True),
-                    StructField("error_message", StringType(), True),
-                    StructField("payload", StringType(), True),
-                    StructField("first_trigger_end", TimestampType(), True),
-                    StructField("created_at", TimestampType(), True),
-                    StructField("updated_at", TimestampType(), True),
-                ])
-                resultsDF = self.spark.createDataFrame(results, schema=schema)
-                
-                # Update only status and error_message columns for existing rows
-                self.update_notification_status(resultsDF)
-                
-                successDF = resultsDF.filter(col("status") == "SENT")
-                sent_count = successDF.count()
-                if sent_count > 0:
-                    latestProcessedDF = successDF.groupBy("form_id") \
-                    .agg(max("first_trigger_end").alias("last_processed_date"))
+                conn.close()
 
-                    existingFormStateDF = self.read_postgres_table(self.config.dwpeerValidationFormStateTable)
-                    formsToUpdateDF = existingFormStateDF.join(
-                        latestProcessedDF,
-                        existingFormStateDF["form_id"] == latestProcessedDF["form_id"],
-                        "left_anti"
-                    )
-                    finalFormStateDF = formsToUpdateDF.union(
-                    latestProcessedDF.withColumn("data_generated_at", current_timestamp())
-                    )
-                    self.write_postgres_table(finalFormStateDF, self.config.dwpeerValidationFormStateTable, mode="overwrite")
+            if total_sent > 0:
+                # Build the tiny per-form state DataFrame directly from the
+                # driver-side dict — no giant createDataFrame from raw results.
+                state_rows = [
+                    Row(form_id=form_id, last_processed_date=last_trigger_end)
+                    for form_id, last_trigger_end in form_last_trigger_end.items()
+                ]
+                latestProcessedDF = self.spark.createDataFrame(state_rows)
 
-                    kafkaDF = successDF.groupBy("form_id").count() \
-                        .withColumnRenamed("count", "incrementBy") \
-                        .withColumn("eventType", lit("PEER_SURVEY_NOTIFICATION_SENT")) \
-                        .withColumn("timestamp", lit(int(time.time() * 1000))) \
-                        .select(
-                        col("eventType"),
-                        col("form_id").alias("formId"),
-                        col("incrementBy"),
-                        col("timestamp")
-                    )
-                    from dfutil.utils.utils import dispatch_df_to_kafka
-                    dispatch_df_to_kafka(kafkaDF, self.config.peerValidationKafkaTopic, broker_list=self.config.kpBrokerList)
+                # --- FIX: single safe upsert call replaces the old
+                # read -> left_anti join -> union -> overwrite block.
+                self.update_form_state(latestProcessedDF)
 
-                    print(f"[INFO] {sent_count} notifications sent successfully")
+                kafka_rows = [
+                    Row(
+                        eventType="PEER_SURVEY_NOTIFICATION_SENT",
+                        formId=form_id,
+                        incrementBy=count,
+                        timestamp=int(time.time() * 1000)
+                    )
+                    for form_id, count in form_sent_count.items()
+                ]
+                kafkaDF = self.spark.createDataFrame(kafka_rows)
+                from dfutil.utils.utils import dispatch_df_to_kafka
+                dispatch_df_to_kafka(kafkaDF, self.config.peerValidationKafkaTopic, broker_list=self.config.kpBrokerList)
+
+                print(f"[INFO] {total_sent} notifications sent successfully")
 
         except Exception as e:
             print(f"❌ Error: {str(e)}")
