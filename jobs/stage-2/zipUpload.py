@@ -223,7 +223,8 @@ class ZipUploadModel:
                 return f"✗ Failed {mdoid_folder}: {str(e)}"
         return None
 
-    @staticmethod
+    # This method was written for splat upload where the csvs was requested. Its no longer used and hence commented.
+    '''@staticmethod
     def convert_parquet_to_csv_splat(task):
         folder, warehouse_base, warehouse_output_dir = task
         src = os.path.join(warehouse_base, folder)
@@ -243,41 +244,7 @@ class ZipUploadModel:
         if fixes:
             lf = lf.with_columns(fixes)
         lf.sink_csv(out)          # single CSV, streamed
-        return f"✅ {folder} -> {out}"
-    @staticmethod
-    def convert_parquet_to_csv(args):
-        """
-        Convert a parquet folder to a single CSV using pandas,
-        reading one parquet file at a time to avoid OOM.
-        """
-        folder, warehouse_base, warehouse_output_dir = args
-        folder_path = os.path.join(warehouse_base, folder)
-
-        if not os.path.isdir(folder_path):
-            return None
-
-        parquet_files = [f for f in os.listdir(folder_path) if f.endswith(".parquet")]
-        if not parquet_files:
-            return None
-
-        csv_output = os.path.join(warehouse_output_dir, f"{folder}.csv")
-
-        try:
-            first = True
-            for pf in parquet_files:
-                full_path = os.path.join(folder_path, pf)
-                df = pd.read_parquet(full_path)
-                df.to_csv(
-                    csv_output,
-                    index=False,
-                    mode="w" if first else "a",
-                    header=first,
-                )
-                del df
-                first = False
-            return f"✓ Converted {folder}"
-        except Exception as e:
-            return f"✗ Error processing {folder}: {str(e)}"
+        return f"✅ {folder} -> {out}"'''
 
     @staticmethod
     def copy_file_to_mdoid(args):
