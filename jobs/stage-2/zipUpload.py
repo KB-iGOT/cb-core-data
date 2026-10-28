@@ -20,6 +20,7 @@ import os
 import pandas as pd
 import pyzipper
 import pyminizip
+import polars as pl
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
@@ -29,6 +30,7 @@ from dfutil.enrolment import enrolmentDFUtil
 from dfutil.content import contentDFUtil
 from dfutil.dfexport import dfexportutil
 from dfutil.utils.utils import sync_reports
+from dfutil.utils.utils import sync_reports_splat
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
 from dfutil.utils.redis import Redis
@@ -80,10 +82,10 @@ class ZipUploadModel:
         ministry_ids = [
             row["ministry_id"]
             for row in org_hierarchy_df
-                .select("ministry_id")
-                .filter(F.col("ministry_id").isNotNull() & (F.col("ministry_id") != ""))
-                .distinct()
-                .collect()
+            .select("ministry_id")
+            .filter(F.col("ministry_id").isNotNull() & (F.col("ministry_id") != ""))
+            .distinct()
+            .collect()
         ]
         ministry_password_map = {
             mid: ZipUploadModel.generate_alphanumeric_password(config.password_length)
@@ -96,14 +98,14 @@ class ZipUploadModel:
         orphan_dept_ids = [
             row["department_id"]
             for row in org_hierarchy_df
-                .select("department_id")
-                .filter(
-                    (F.col("ministry_id").isNull() | (F.col("ministry_id") == "")) &
-                    F.col("department_id").isNotNull() &
-                    (F.col("department_id") != "")
-                )
-                .distinct()
-                .collect()
+            .select("department_id")
+            .filter(
+                (F.col("ministry_id").isNull() | (F.col("ministry_id") == "")) &
+                F.col("department_id").isNotNull() &
+                (F.col("department_id") != "")
+            )
+            .distinct()
+            .collect()
         ]
         dept_password_map = {
             did: ZipUploadModel.generate_alphanumeric_password(config.password_length)
@@ -221,6 +223,27 @@ class ZipUploadModel:
                 return f"✗ Failed {mdoid_folder}: {str(e)}"
         return None
 
+    @staticmethod
+    def convert_parquet_to_csv_splat(task):
+        folder, warehouse_base, warehouse_output_dir = task
+        src = os.path.join(warehouse_base, folder)
+        out = os.path.join(warehouse_output_dir, f"{folder}.csv")
+
+        # all part files, skips Spark's _SUCCESS / .crc files
+        lf = pl.scan_parquet(os.path.join(src, "**", "*.parquet"), hive_partitioning=True)
+
+        # CSV can't hold nested columns -> convert struct/list columns to text
+        schema = lf.collect_schema()
+        fixes = []
+        for name, dtype in schema.items():
+            if isinstance(dtype, pl.Struct):
+                fixes.append(pl.col(name).struct.json_encode())
+            elif isinstance(dtype, pl.List):
+                fixes.append(pl.col(name).list.eval(pl.element().cast(pl.String)).list.join(","))
+        if fixes:
+            lf = lf.with_columns(fixes)
+        lf.sink_csv(out)          # single CSV, streamed
+        return f"✅ {folder} -> {out}"
     @staticmethod
     def convert_parquet_to_csv(args):
         """
@@ -435,55 +458,53 @@ class ZipUploadModel:
             org_hierarchy_df.unpersist()
 
             # ------------------ Part 2: Convert Parquet to CSV & Zip ---------- #
+
             if config.createFullReport:
                 warehouse_base       = config.warehouseReportDir
                 warehouse_output_dir = config.warehouseOutputDir
                 warehouse_zip_path   = os.path.join(warehouse_output_dir, "reports.zip")
 
+                # only these warehouse folders go into the zip
+                SELECTED_FOLDERS = ["user_detail", "user_enrolments", "content", "content_resource",
+                                    "cb_plan", "org_hierarchy_new", "assessment_detail", "bp_enrolments", "event_details",
+                                    "event_enrolment_details", "kcm_content_mapping", "kcm_dictionary"]
+
                 if os.path.exists(warehouse_output_dir):
                     shutil.rmtree(warehouse_output_dir)
                 os.makedirs(warehouse_output_dir)
 
-                folders = [
-                    f for f in os.listdir(warehouse_base)
-                    if os.path.isdir(os.path.join(warehouse_base, f))
-                ]
+                available = {f for f in os.listdir(warehouse_base)
+                             if os.path.isdir(os.path.join(warehouse_base, f))}
+                folders = [f for f in SELECTED_FOLDERS if f in available]
+                missing = [f for f in SELECTED_FOLDERS if f not in available]
+                if missing:
+                    print(f"⚠️  Not found in {warehouse_base}, skipping: {missing}")
 
-                print(f"\n📦 Converting {len(folders)} Parquet folders to CSV...")
-                conversion_start  = time.time()
-                conversion_tasks  = [(folder, warehouse_base, warehouse_output_dir) for folder in folders]
-
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    futures = [executor.submit(self.convert_parquet_to_csv, task) for task in conversion_tasks]
-                    for future in as_completed(futures):
-                        result = future.result()
-                        if result:
-                            print(f"  {result}")
-
-                print(f"⏱️  Conversion completed in {time.time() - conversion_start:.2f}s")
-
-                print("\n🗜️  Creating password-protected ZIP for warehouse reports...")
-                zip_start = time.time()
-
-                warehouse_csvs = [
-                    os.path.join(warehouse_output_dir, f)
-                    for f in os.listdir(warehouse_output_dir) if f.endswith(".csv")
-                ]
-
-                if warehouse_csvs:
-                    with ZipFile(warehouse_zip_path, 'w', ZIP_DEFLATED) as zipf:
-                        zipf.setpassword(password.encode())
-                        for csv_path in warehouse_csvs:
-                            zipf.write(csv_path, arcname=os.path.basename(csv_path))
-                    print(f"✅ Warehouse reports zipped at: {warehouse_zip_path}")
+                if folders:
+                    print(f"\n🗜️  Zipping {len(folders)} parquet folders: {folders}")
+                    zip_start = time.time()
+                    # 7z: real password protection (ZipCrypto opens on Windows/Mac/Linux built-in tools),
+                    # -mx=0 = store only (parquet is already compressed, so this is much faster),
+                    # skip Spark's _SUCCESS / .crc files
+                    subprocess.run(
+                        ["7z", "a", "-tzip", "-mx=0", "-mmt=on",
+                         f"-p{config.password}", "-mem=ZipCrypto",
+                         warehouse_zip_path, *folders,
+                         "-xr!_SUCCESS", "-xr!*.crc"],
+                        cwd=warehouse_base, check=True, stdout=subprocess.DEVNULL,
+                    )
+                    size_gb = os.path.getsize(warehouse_zip_path) / 1e9
+                    print(f"✅ Zipped at: {warehouse_zip_path} ({size_gb:.2f} GB)")
                     print(f"⏱️  Zipping completed in {time.time() - zip_start:.2f}s")
-
                     print("\n📤 Syncing warehouse reports to cloud...")
                     sync_start = time.time()
-                    sync_reports(warehouse_zip_path, config.fullReportSyncPath, config)
+                    sync_reports_splat(warehouse_zip_path, config.fullReportSyncPath, config)
                     print(f"⏱️  Sync completed in {time.time() - sync_start:.2f}s")
+                    # only reached if the sync succeeded
+                    os.remove(warehouse_zip_path)
+                    print(f"🗑️  Deleted local zip {warehouse_zip_path}")
                 else:
-                    print("⚠️  No CSV files found to zip")
+                    print("⚠️  None of the selected folders exist - nothing to zip")
 
                 print(f"\n⏱️  Part 2 completed in {time.time() - part2_start:.2f}s")
             else:
@@ -529,4 +550,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- 

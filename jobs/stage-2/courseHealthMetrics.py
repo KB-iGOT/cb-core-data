@@ -7,16 +7,17 @@ from pathlib import Path
 
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.functions import (
-    col, when, count, lit, countDistinct, broadcast
+    col, when, count, lit, explode_outer, from_json, greatest, countDistinct, broadcast
 )
 from pyspark.sql.types import (
-    StructType, StructField, StringType, DoubleType, IntegerType
+    StructType, StructField, StringType, ArrayType, DoubleType, IntegerType
 )
 import redis
 
 import sys
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
+from dfutil.utils.redis import Redis
 from constants.ParquetFileConstants import ParquetFileConstants
 from jobs.config import get_environment_config
 from jobs.default_config import create_config
@@ -266,8 +267,7 @@ class ContentHealthMetricsModel:
                 .filter(col("status") == 2).cache()  # pre-filter completed only
             content_resource_df  = spark.read.parquet(f"{warehouse_path}/{config.dwContentResourceTable}")
             ratings_df           = spark.read.parquet(ParquetFileConstants.RATING_PARQUET_FILE).cache()
-            content_hierarchy_df = (spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
-                                    .select("identifier", "root_content_id", "parent_id", "mimeType"))
+            content_hierarchy_df = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_SELECT_PARQUET_FILE).withColumnRenamed("identifier", "courseID").cache()
             content_df = spark.read.parquet("/home/analytics/pyspark/warehouse/content") \
                 .filter(col("content_type").isin(["Course", "Moderated Course"])) \
                 .cache()
@@ -372,23 +372,41 @@ class ContentHealthMetricsModel:
             # ── SCORM detection ────────────────────────────────────────────────
             print("🔍 Detecting SCORM content...")
 
-            child_nodes = content_hierarchy_df.filter(col("identifier") != col("root_content_id"))
+            child_schema = StructType([
+                StructField("mimeType", StringType(), True),
+                StructField("children", ArrayType(StructType([
+                    StructField("mimeType", StringType(), True)
+                ])), True)
+            ])
+            hierarchy_schema = StructType([
+                StructField("children", ArrayType(child_schema), True)
+            ])
 
-            # Level 1: direct children of the course
-            level1_nodes = child_nodes.filter(col("parent_id") == col("root_content_id"))
-
-            # Level 2: children of level-1 nodes
-            level2_nodes = child_nodes.join(
-                level1_nodes.select("root_content_id", col("identifier").alias("parent_id")),
-                ["root_content_id", "parent_id"],
-                "inner"
+            exploded_df = content_hierarchy_df.withColumn(
+                "hierarchy", from_json(col("hierarchy"), hierarchy_schema)
             )
 
-            scorm_ids = level1_nodes.select("root_content_id", "mimeType") \
-                .unionByName(level2_nodes.select("root_content_id", "mimeType")) \
-                .filter(col("mimeType").endswith("html-archive")) \
-                .select(col("root_content_id").alias("content_id")) \
-                .distinct()
+            level1_df = exploded_df \
+                .withColumn("level1_child", explode_outer(col("hierarchy.children"))) \
+                .withColumn("lvl1_mime_match",
+                            when(col("level1_child.mimeType").endswith("html-archive"), 1).otherwise(0)
+                            ).groupBy("courseID") \
+                .agg(F.max("lvl1_mime_match").alias("lvl1_flag"))
+
+            level2_df = exploded_df \
+                .withColumn("level1_child", explode_outer(col("hierarchy.children"))) \
+                .withColumn("level2_child", explode_outer(col("level1_child.children"))) \
+                .withColumn("lvl2_mime_match",
+                            when(col("level2_child.mimeType").endswith("html-archive"), 1).otherwise(0)
+                            ).groupBy("courseID") \
+                .agg(F.max("lvl2_mime_match").alias("lvl2_flag"))
+
+            scorm_ids = level1_df \
+                .join(level2_df, on="courseID", how="outer") \
+                .na.fill(0, subset=["lvl1_flag", "lvl2_flag"]) \
+                .withColumn("scorm_flag", greatest(col("lvl1_flag"), col("lvl2_flag"))) \
+                .filter(col("scorm_flag") == 1) \
+                .select(col("courseID").alias("content_id"))
 
             print(f"SCORM courses found: {scorm_ids.count()}")
 
@@ -989,6 +1007,7 @@ class ContentHealthMetricsModel:
             ratings_df.unpersist()
             if sentiment_df is not None:
                 sentiment_df.unpersist()
+            content_hierarchy_df.unpersist()
             live_courses.unpersist()
             all_metrics_df.unpersist()
             if last_month_score_df is not None:

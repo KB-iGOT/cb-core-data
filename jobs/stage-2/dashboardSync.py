@@ -54,6 +54,7 @@ from pyspark.sql.window import Window
 from pyspark.sql.types import FloatType, DoubleType, StructType, StructField, StringType, LongType
 from dateutil import tz
 from datetime import datetime, timedelta, timezone
+from pyspark.sql.functions import col, desc, lower
 import pytz
 import requests
 
@@ -1093,7 +1094,7 @@ class DashboardSyncModel:
 
             # Courses under 30 mins (Scala lines 1298-1301)
             content_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
-            cbps_under_30mins_df = content_df.filter(
+            '''cbps_under_30mins_df = content_df.filter(
                 (col("courseStatus") == "Live") &
                 (col("courseDuration") < 1800) &
                 (col("courseCategory").isin("Course")) &
@@ -1104,8 +1105,26 @@ class DashboardSyncModel:
                 courses_under_30mins_str = ",".join(courses_under_30mins)
                 Redis.updateMapField("lhp_trending", "across:under_30_mins", courses_under_30mins_str, conf = config)
                 print(
-                    f"📝 Redis.updateMapField('lhp_trending', 'across:under_30_mins', '{courses_under_30mins_str[:200]}...')")
+                    f"📝 Redis.updateMapField('lhp_trending', 'across:under_30_mins', '{courses_under_30mins_str[:200]}...')")'''
 
+            content_df = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE)
+            LANG_COL = "contentLanguage"      # use the actual column name (e.g. "language")
+
+            cbps_under_30mins_df = (content_df.filter((col("courseStatus") == "Live") &
+                                                      (col("courseDuration") < 1800) &
+                                                      (col("courseCategory").isin("Course")) &
+                                                      ~(col("courseID").endswith("_rc")))
+                                    # works whether the column is a string ("English") or an array (["English"])
+                                    .withColumn("is_english", lower(col(LANG_COL).cast("string")).contains("english")).orderBy(desc("rating")))
+
+            rows = cbps_under_30mins_df.select("courseID", "is_english").collect()   # already sorted by rating
+            if rows:
+                top_english = [r.courseID for r in rows if r.is_english][:4]
+                rest = [r.courseID for r in rows if r.courseID not in set(top_english)]
+                courses_under_30mins = top_english + rest
+                courses_under_30mins_str = ",".join(courses_under_30mins)
+                Redis.updateMapField("lhp_trending", "across:under_30_mins", courses_under_30mins_str, conf=config)
+                print(f"📝 Redis.updateMapField('lhp_trending', 'across:under_30_mins', '{courses_under_30mins_str[:200]}...')")
             # Process trending (Scala line 1310)
             self.process_trending(spark, config)
 
