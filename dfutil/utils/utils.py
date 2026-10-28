@@ -14,7 +14,9 @@ import zipfile
 import shutil
 from confluent_kafka import Producer
 from kafka import KafkaProducer
-
+import boto3
+from botocore.config import Config
+from boto3.s3.transfer import TransferConfig
 
 def druidDFOption(query: str, host: str, result_format: str = "object", limit: int = 10000,
                   spark: SparkSession = None) -> Optional[DataFrame]:
@@ -144,6 +146,46 @@ def sync_reports(local_path, remote_path, config):
                 print(f"✅ Synced: {local_file_path} → gs://{config.gcpBucket}/{gcs_blob_path}")
 
     print(f"REPORT: Finished syncing reports from {local_path} to gs://{config.gcpBucket}/{remote_path}")
+
+def sync_reports_splat(local_path, remote_path, config):
+    """
+    Upload all files from `local_path` to gs://<splatGcpBucket>/<remote_path>
+    using the splat HMAC access key + secret key.
+    """
+    print(f"REPORT: Syncing reports from {local_path} to gs://{config.splatGcpBucket}/{remote_path} ...")
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url="https://storage.googleapis.com",
+        aws_access_key_id=config.splatHmacAccessKey,
+        aws_secret_access_key=config.splatHmacSecretKey,
+        region_name="auto",
+        # CHANGE 1: newer boto3 adds checksum headers that GCS rejects (SignatureDoesNotMatch)
+        config=Config(signature_version="s3v4",
+                      request_checksum_calculation="when_required",
+                      response_checksum_validation="when_required"),
+    )
+
+    # CHANGE 2: GCS rejects boto3's multipart "UploadPart" -> upload each file in one go
+    # (GCS allows up to 5 TB in a single upload)
+    single_put = TransferConfig(multipart_threshold=5 * 1024 ** 4, use_threads=False)
+
+    if os.path.isfile(local_path):   # single file case
+        filename = os.path.basename(local_path)
+        gcs_blob_path = os.path.join(remote_path, filename).replace("\\", "/")
+        s3.upload_file(local_path, config.splatGcpBucket, gcs_blob_path, Config=single_put)
+        print(f"✅ Synced: {local_path} → gs://{config.splatGcpBucket}/{gcs_blob_path}")
+
+    else:   # directory case
+        for root, _, files in os.walk(local_path):
+            for file in files:
+                local_file_path = os.path.join(root, file)
+                relative_path = os.path.relpath(local_file_path, local_path)
+                gcs_blob_path = os.path.join(remote_path, relative_path).replace("\\", "/")
+                s3.upload_file(local_file_path, config.splatGcpBucket, gcs_blob_path, Config=single_put)
+                print(f"✅ Synced: {local_file_path} → gs://{config.splatGcpBucket}/{gcs_blob_path}")
+
+    print(f"REPORT: Finished syncing reports from {local_path} to gs://{config.splatGcpBucket}/{remote_path}")
 
 def zip_and_sync_reports(complete_path: str, report_path: str,config):
     """

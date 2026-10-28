@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 org_hierarchy_job.py
 
@@ -32,6 +31,18 @@ What it writes
          had just written, which is redundant once everything runs in
          one process).
 
+Retry behaviour (both stages)
+-----------------------------
+  Any org whose framework API call fails (non-200 response, timeout,
+  connection error, bad JSON) or whose processing raises is NOT dropped.
+  It is collected, and once the pass over all orgs finishes, only the
+  failed orgs are retried. This repeats for up to MAX_RETRY_PASSES passes
+  (with a pause between passes). If orgs are STILL failing after the last
+  pass, the job does NOT stop: it logs every one of them (org id, name,
+  framework id, last error) under a clear "GAVE UP" summary and carries
+  on, so the rest of the pipeline still gets its data. Search the log for
+  "GAVE UP" to see which orgs, if any, are missing from that day's output.
+
 Known, preserved discrepancy (matches current production, not "fixed"
 here): org_hierarchy_new (now Parquet) and org_hierarchy_lookup /
 mdo_children_lookup (Postgres) are built from two different org sets.
@@ -45,7 +56,7 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 import psycopg2
@@ -83,6 +94,11 @@ ES_SOURCE_FIELDS = [
 ES_INDEX_NAME = "org_v4"
 REQUEST_DELAY_SECONDS = 1  # matches original scripts' time.sleep(1)
 
+# Retry settings
+REQUEST_TIMEOUT_SECONDS = 60   # per framework API call; without this a stalled call can hang/die unpredictably
+MAX_RETRY_PASSES = 5           # 1 initial pass + up to 4 retry passes over whatever is still failing
+RETRY_PASS_DELAY_SECONDS = 30  # pause before each retry pass, to let a struggling API recover
+
 PARQUET_OUTPUT_DIR = "/home/analytics/pyspark/warehouse/org_hierarchy_new"
 
 MAIN_QUERY = {
@@ -115,6 +131,10 @@ HIERARCHY_COLUMNS = ["created_date", "updated_date"]
 for _i in range(len(LEVEL_NAMES)):
     HIERARCHY_COLUMNS.extend([f"l{_i + 1}_id", f"l{_i + 1}_name"])
 HIERARCHY_COLUMNS.extend(["center_state_id", "center_state_name"])
+
+
+class FrameworkFetchError(Exception):
+    """Framework API returned something other than HTTP 200."""
 
 
 class OrgHierarchyJob:
@@ -372,14 +392,72 @@ class OrgHierarchyJob:
                 ))
         return rows
 
-    def fetch_framework(self, framework_id: str) -> Optional[dict]:
+    def fetch_framework(self, framework_id: str) -> dict:
+        """Fetch one framework. Raises on ANY failure (non-200, timeout,
+        connection error, bad JSON) so the caller can queue the org for retry."""
         api_url_template = self.config.api_url_template
         url = api_url_template.format(framework_id)
-        response = requests.get(url)
+        response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
         if response.status_code != 200:
-            logger.warning("Framework fetch failed for %s: HTTP %s", framework_id, response.status_code)
-            return None
+            raise FrameworkFetchError(
+                f"HTTP {response.status_code} for framework {framework_id}")
         return response.json()
+
+    # ------------------------------------------------------------------
+    # Retry runner shared by Stage A and Stage B
+    # ------------------------------------------------------------------
+    def _run_with_retries(self, orgs_df: pd.DataFrame,
+                          process_org: Callable[[dict], None],
+                          stage: str) -> List[dict]:
+        """Run process_org(row) for every org. Orgs that raise are collected
+        and retried in later passes until none are left, or MAX_RETRY_PASSES
+        is reached - in which case every still-failing org is logged and the
+        job carries on. Returns the orgs that never succeeded (empty list
+        when everything was processed)."""
+        pending: List[dict] = orgs_df.to_dict("records")
+        total = len(pending)
+        last_error: Dict[str, str] = {}
+
+        for attempt in range(1, MAX_RETRY_PASSES + 1):
+            if attempt > 1:
+                logger.info("[%s] Retry pass %d/%d for %d failed org(s) - waiting %ds first.",
+                            stage, attempt, MAX_RETRY_PASSES, len(pending), RETRY_PASS_DELAY_SECONDS)
+                time.sleep(RETRY_PASS_DELAY_SECONDS)
+
+            failed: List[dict] = []
+            for i, row in enumerate(pending):
+                org_id = row["identifier"]
+                try:
+                    process_org(row)
+                    last_error.pop(org_id, None)
+                except Exception as e:
+                    last_error[org_id] = f"{type(e).__name__}: {e}"
+                    failed.append(row)
+                    logger.warning("[%s] Pass %d: org %s (%s) failed: %s",
+                                   stage, attempt, org_id, row.get("orgName"), last_error[org_id])
+
+                if (i + 1) % 25 == 0 or (i + 1) == len(pending):
+                    logger.info("[%s] Pass %d: processed %d/%d orgs (%d failed so far).",
+                                stage, attempt, i + 1, len(pending), len(failed))
+
+                time.sleep(REQUEST_DELAY_SECONDS)
+
+            logger.info("[%s] Pass %d complete: %d ok, %d failed (of %d attempted; %d orgs total).",
+                        stage, attempt, len(pending) - len(failed), len(failed), len(pending), total)
+
+            pending = failed
+            if not pending:
+                logger.info("[%s] All %d orgs processed successfully.", stage, total)
+                return []
+
+        logger.error("[%s] GAVE UP: %d of %d org(s) still failing after %d passes. "
+                     "They are missing from this run's output.",
+                     stage, len(pending), total, MAX_RETRY_PASSES)
+        for row in pending:
+            logger.error("[%s] GAVE UP on org %s (%s), framework %s - last error: %s",
+                         stage, row["identifier"], row.get("orgName"),
+                         row.get("orgHierarchyFrameworkId"), last_error.get(row["identifier"]))
+        return pending
 
     # ------------------------------------------------------------------
     # Stage A: org_hierarchy_lookup + mdo_children_lookup (Postgres only)
@@ -392,17 +470,13 @@ class OrgHierarchyJob:
         self.pg_conn.commit()
 
         df = self.get_stage_a_orgs()
-        total = len(df)
 
-        for i, row in df.iterrows():
+        def process_org(row: dict) -> None:
             org_name = row["orgName"]
             org_id = row["identifier"]
             framework_id = row["orgHierarchyFrameworkId"]
-
             try:
                 data = self.fetch_framework(framework_id)
-                if data is None:
-                    continue
                 categories = data.get("result", {}).get("framework", {}).get("categories", [])
 
                 lookup_rows = self.build_lookup_rows(org_id, org_name, categories)
@@ -417,14 +491,13 @@ class OrgHierarchyJob:
                 self.insert_children_rows(children_rows)
 
                 self.pg_conn.commit()
-
-                if (i + 1) % 25 == 0 or (i + 1) == total:
-                    logger.info("[Stage A] Processed %d/%d orgs.", i + 1, total)
-            except Exception as e:
+            except Exception:
+                # Undo any uncommitted inserts for this org so a retry starts
+                # clean (no duplicate lookup rows), then let the runner queue it.
                 self.pg_conn.rollback()
-                logger.error("[Stage A] Error processing framework %s (org %s): %s", framework_id, org_id, e)
+                raise
 
-            time.sleep(REQUEST_DELAY_SECONDS)
+        self._run_with_retries(df, process_org, "Stage A")
 
     # ------------------------------------------------------------------
     # Stage B: org_hierarchy_new rows, built in memory (Parquet only,
@@ -434,37 +507,38 @@ class OrgHierarchyJob:
     def build_stage_b_rows(self) -> List[tuple]:
         logger.info("=== Stage B: org_hierarchy_new rows (Parquet only) ===")
         df = self.get_stage_b_orgs()
-        total = len(df)
-        all_rows: List[tuple] = []
 
-        for i, row in df.iterrows():
+        # Rows are keyed by org so a retried org can never be added twice.
+        rows_by_org: Dict[str, List[tuple]] = {}
+
+        def process_org(row: dict) -> None:
             org_name = row["orgName"]
             org_id = row["identifier"]
             framework_id = row["orgHierarchyFrameworkId"]
             created_date = self.parse_pg_timestamp(row.get("createdDate"))
             updated_date = self.parse_pg_timestamp(row.get("updatedDate"))
 
-            try:
-                data = self.fetch_framework(framework_id)
-                if data is None:
-                    continue
+            data = self.fetch_framework(framework_id)
+            hierarchies = self.parse_framework_data(data)
 
-                hierarchies = self.parse_framework_data(data)
-                for h in hierarchies:
-                    values = [created_date, updated_date]
-                    for lvl in LEVEL_NAMES:
-                        values.extend(h.get(lvl, (None, None)))
-                    values.extend([org_id, org_name])
-                    all_rows.append(tuple(values))
+            org_rows: List[tuple] = []
+            for h in hierarchies:
+                values = [created_date, updated_date]
+                for lvl in LEVEL_NAMES:
+                    values.extend(h.get(lvl, (None, None)))
+                values.extend([org_id, org_name])
+                org_rows.append(tuple(values))
+            rows_by_org[org_id] = org_rows
 
-                if (i + 1) % 25 == 0 or (i + 1) == total:
-                    logger.info("[Stage B] Processed %d/%d orgs (%d rows so far).",
-                                i + 1, total, len(all_rows))
-            except Exception as e:
-                logger.error("[Stage B] Error processing framework %s (org %s): %s", framework_id, org_id, e)
+        gave_up = self._run_with_retries(df, process_org, "Stage B")
 
-            time.sleep(REQUEST_DELAY_SECONDS)
-
+        # Re-assemble in the original ES order. Any org that still failed
+        # after all passes has no entry and is simply skipped (already logged).
+        all_rows: List[tuple] = []
+        for org_id in df["identifier"]:
+            all_rows.extend(rows_by_org.get(org_id, []))
+        logger.info("[Stage B] Built %d rows for %d of %d orgs (%d gave up).",
+                    len(all_rows), len(rows_by_org), len(df), len(gave_up))
         return all_rows
 
     # ------------------------------------------------------------------
@@ -488,7 +562,7 @@ class OrgHierarchyJob:
         # accumulating stale files in the directory.
         output_path = str(output_dir / "part-00000.snappy.parquet")
         table = pa.Table.from_pandas(df, preserve_index=False)
-        pq.write_table(table, output_path, compression="snappy")
+        pq.write_table(table, output_path, compression="snappy", coerce_timestamps="us")
 
         size_mb = Path(output_path).stat().st_size / (1024 * 1024)
         logger.info("Wrote Parquet file: %s (%.2f MB)", output_path, size_mb)
