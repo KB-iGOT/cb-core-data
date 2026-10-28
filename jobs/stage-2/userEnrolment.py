@@ -3,10 +3,10 @@ import findspark
 findspark.init()
 from pathlib import Path
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StringType, DateType, IntegerType
+from pyspark.sql.types import StringType, DateType, IntegerType, StructType, StructField, BooleanType
 from pyspark.sql.functions import col, when, size, lit, expr, date_format, current_timestamp, \
     to_date, round, explode, to_utc_timestamp, from_utc_timestamp, to_timestamp, upper, concat, \
-    row_number, trim, exists, explode_outer, coalesce, format_string, split, from_unixtime, regexp_replace
+    row_number, trim, exists, explode_outer, coalesce, format_string, split, from_unixtime, regexp_replace, from_json
 from pyspark.sql.window import Window
 
 from datetime import datetime
@@ -211,10 +211,16 @@ class UserEnrolmentModel:
             marketPlaceEnrolmentsWithUserDetailsDF = marketPlaceContentEnrolmentsDF.join(userOrgDF, ["userID"], "left")
 
             print("🔄 Processing ACBP data...")
+            course_schema = StructType([
+                StructField("identifier", StringType(), True),
+                StructField("mandatory", BooleanType(), True),
+            ])
 
             # Load and process ACBP data
             acbpAllEnrolmentDF = (spark.read.parquet(ParquetFileConstants.ACBP_COMPUTED_FILE)
-                                  .withColumn("courseID", explode(col("acbpCourseIDList"))) \
+                                  .withColumn("rawCourse", explode(col("acbpCourseIDList"))) \
+                                  .withColumn("parsedCourse", from_json(col("rawCourse"), course_schema)) \
+                                  .withColumn("courseID", coalesce(col("parsedCourse.identifier"), col("rawCourse"))) \
                                   .withColumn("courseID", regexp_replace(col("courseID"), r"^\s*\[|\]\s*$|\s+", "")) \
                                   .withColumn("liveCBPlan", lit(True))
                                   .select(col("userOrgID"), col("courseID"), col("userID"),
