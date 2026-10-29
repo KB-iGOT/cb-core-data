@@ -20,7 +20,6 @@ import os
 import pandas as pd
 import pyzipper
 import pyminizip
-import polars as pl
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
@@ -427,6 +426,7 @@ class ZipUploadModel:
             # ------------------ Part 2: Convert Parquet to CSV & Zip ---------- #
 
             if config.createFullReport:
+                part2_start = time. Time()
                 warehouse_base       = config.warehouseReportDir
                 warehouse_output_dir = config.warehouseOutputDir
                 warehouse_zip_path   = os.path.join(warehouse_output_dir, "reports.zip")

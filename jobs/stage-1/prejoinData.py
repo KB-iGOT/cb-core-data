@@ -113,7 +113,7 @@ def main():
         ("Course Warehouse", contentDFUtil.preComputeContentWarehouseData, False),
         ("Warehouse Parquet Files", contentDFUtil.writeWarehouseParquetFiles, True),  # Only this needs config
         ("Old Assessment Data", assessmentDFUtil.precomputeOldAssessmentDataframe, False),
-        ("ACBP Enrolment Computation", acbpDFUtil_v2310git .preComputeACBPData, False),
+        ("ACBP Enrolment Computation", acbpDFUtil_v2310.preComputeACBPData, False),
     ]
 
     total_stages = len(processing_stages)
