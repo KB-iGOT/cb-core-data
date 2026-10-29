@@ -63,7 +63,7 @@ class CourseReportModel:
 
             print("Stage 1: Loading base parquet sources...")
             allCourseProgramDetailsDF = spark.read.parquet(ParquetFileConstants.CONTENT_COMPUTED_PARQUET_FILE).filter(col("courseCategory").isin(course_categories))
-            contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE).withColumnRenamed("identifier", "courseID")
+            contentHierarchyDF = spark.read.parquet(ParquetFileConstants.CONTENT_HIERARCHY_FLATTENED_ENHANCED_PARQUET_FILE)
             enrolmentDF = spark.read.parquet(ParquetFileConstants.ENROLMENT_COMPUTED_PARQUET_FILE).filter(col('enrolment_status') == 'enrolled')
             esFinalAssessmentRawDF = spark.read.parquet(ParquetFileConstants.FINAL_ASSESSMENT_PARQUET_FILE)
             print(f"Stage 1: Complete (⏱ {time.time() - stage_start:.2f}s)")

@@ -347,7 +347,7 @@ def processUserReport(config):
                         when(col("weekly_claps_day_before_yesterday").isNull() |
                              (col("weekly_claps_day_before_yesterday") == ""),
                              lit(0)).otherwise(col("weekly_claps_day_before_yesterday")))
-        ).cache()
+        )
         print("✅ Step 7 Complete")
 
         # Step 8: Build Warehouse Data (the mdo-wise CSV "user-report" now lives entirely in Step 11,
@@ -846,7 +846,6 @@ def processUserReport(config):
         mdo_wise_slim.unpersist()
         govt_mdo_wise_slim.unpersist()
         non_govt_mdo_wise_slim.unpersist()
-        user_complete_data.unpersist()
         root_agg_df.unpersist()
 
     except Exception as e:
